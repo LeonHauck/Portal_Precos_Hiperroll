@@ -89,5 +89,5 @@ O Portal de Preços foi desenvolvido para rodar no navegador de forma independen
 ---
 
 <div align="center">
-  <p>Desenvolvido com 💼 para a operação comercial da <strong>Hiperroll Embalagens</strong>.</p>
+  <p>Desenvolvido com profissionalismo para a operação comercial da <strong>Hiperroll Embalagens</strong>.</p>
 </div>
