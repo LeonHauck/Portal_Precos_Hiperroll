@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Portal de Preços - Hiperroll</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=2">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
 <body class="login-locked">
@@ -46,6 +46,13 @@
             </div>
         </header>
 
+        <!-- Navegação de Abas -->
+        <nav class="app-tabs">
+            <button class="tab-btn active" onclick="switchTab('tab-order')" id="btn-tab-order">📦 Novo Pedido</button>
+            <button class="tab-btn" onclick="switchTab('tab-history')" id="btn-tab-history">📋 Histórico e Entregas</button>
+        </nav>
+
+        <div id="tab-order" class="tab-content active">
         <main class="dashboard">
 
             <!-- Sidebar: Filters -->
@@ -111,6 +118,10 @@
                         <input type="text" id="orderNumberHiperroll" placeholder="Auto-gerado: 00001" readonly style="background: #e5e7eb; cursor: not-allowed;">
                     </div>
                     <div style="flex: 1; min-width: 220px;">
+                        <label for="loadedDraftNumber">Nº do pedido carregado</label>
+                        <input type="text" id="loadedDraftNumber" placeholder="—" readonly style="background:#f8fafc; cursor:default; border:1px solid #e2e8f0;">
+                    </div>
+                    <div style="flex: 1; min-width: 220px;">
                         <label for="orderNumberClient">Nº do Pedido (cliente)</label>
                         <input type="text" id="orderNumberClient" placeholder="Ex: 2026-001" oninput="updateHeaderInfo()">
                     </div>
@@ -151,49 +162,7 @@
                         </div>
                     </div>
                 </div>
-                <div id="supervisorModal" style="display:none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.6); z-index:1002; align-items:center; justify-content:center;">
-                    <div style="background:white; border-radius:10px; padding:22px; max-width:640px; width:95%; max-height:85vh; overflow-y:auto; box-shadow:0 14px 38px rgba(0,0,0,0.25);">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
-                            <div>
-                                <h3 style="margin:0;">🧑‍💼 Painel Supervisor</h3>
-                                <p style="margin:4px 0 0; color:#475569; font-size:0.95rem;">Visualize o pedido, o responsável e o histórico de aprovações.</p>
-                            </div>
-                            <button onclick="closeSupervisorPanel()" style="background:none; border:none; font-size:1.4rem; cursor:pointer;">✕</button>
-                        </div>
-                        <div id="supervisorOrderSummary" style="display:grid; grid-template-columns: repeat(2, minmax(180px,1fr)); gap:12px; margin-bottom:18px;">
-                            <div style="padding:12px; border:1px solid #e5e7eb; border-radius:8px; background:#f8fafc;">
-                                <div style="font-size:0.85rem; color:#475569;">Criado por</div>
-                                <div id="supervisorCreatedBy" style="font-weight:600; margin-top:4px;">---</div>
-                            </div>
-                            <div style="padding:12px; border:1px solid #e5e7eb; border-radius:8px; background:#f8fafc;">
-                                <div style="font-size:0.85rem; color:#475569;">Criado em</div>
-                                <div id="supervisorCreatedAt" style="font-weight:600; margin-top:4px;">---</div>
-                            </div>
-                            <div style="padding:12px; border:1px solid #e5e7eb; border-radius:8px; background:#f8fafc;">
-                                <div style="font-size:0.85rem; color:#475569;">Status atual</div>
-                                <div id="supervisorCurrentStatus" style="font-weight:600; margin-top:4px;">---</div>
-                            </div>
-                            <div style="padding:12px; border:1px solid #e5e7eb; border-radius:8px; background:#f8fafc;">
-                                <div style="font-size:0.85rem; color:#475569;">Nível de margem</div>
-                                <div id="supervisorRiskLevel" style="font-weight:600; margin-top:4px;">---</div>
-                            </div>
-                        </div>
-                        <div style="margin-bottom:18px; display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
-                            <button onclick="statusManager.changeStatus('aprovado')" style="padding:10px 14px; background:#16a34a; color:white; border:none; border-radius:8px; cursor:pointer;">✅ Aprovar</button>
-                            <button onclick="statusManager.changeStatus('rejeitado')" style="padding:10px 14px; background:#dc2626; color:white; border:none; border-radius:8px; cursor:pointer;">❌ Rejeitar</button>
-                            <button onclick="showStatusHistory()" style="padding:10px 14px; background:#0f172a; color:white; border:none; border-radius:8px; cursor:pointer;">📋 Ver Histórico</button>
-                        </div>
-                        <div id="supervisorHistoryList" style="border-top:1px solid #e5e7eb; padding-top:14px;"></div>
-                        
-                        <!-- Seção: Gerenciar Pedidos Enviados -->
-                        <div style="margin-top:24px; padding-top:18px; border-top:2px solid #e5e7eb;">
-                            <h4 style="margin:0 0 15px; font-size:1.05rem;">📤 Pedidos Enviados para Aprovação</h4>
-                            <div id="supervisorPendingOrdersList" style="max-height:400px; overflow-y:auto;">
-                                <!-- Preenchido por JavaScript -->
-                            </div>
-                        </div>
-                    </div>
-                </div>
+
                 <div style="display: flex; gap: 30px; flex-wrap: wrap;">
                     <div id="totalsPriceContainer" class="totals-price-container" style="flex: 1; min-width: 250px;">
                         <p>Peso Total: <strong id="totalWeight">0.00</strong>&nbsp;Kg</p>
@@ -220,14 +189,45 @@
                 </div>
             </div>
 
+            <div class="drafts-management-panel" style="margin-top: 20px; padding: 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                    <div>
+                        <h3 style="margin:0; font-size:1.05rem;">🗂️ Rascunhos e Pedidos</h3>
+                        <p style="margin:4px 0 0; color:#64748b; font-size:0.95rem;">Salve, carregue e envie seus pedidos de forma organizada.</p>
+                        <p style="margin:6px 0 0; color:#475569; font-size:0.85rem; max-width:480px; line-height:1.35;">Rascunhos são rascunhos internos. O supervisor só analisa o pedido após o envio ao sistema.</p>
+                    </div>
+                    <div id="draftsPanelBadge" style="background:#e2e8f0; color:#0f172a; padding:6px 10px; border-radius:999px; font-weight:700; font-size:0.9rem;">0 rascunho(s)</div>
+                </div>
+                <div id="draftsPanelContent" style="display:grid; gap:10px;"></div>
+            </div>
+
             <!-- Action buttons at bottom -->
             <div style="margin-top: 20px; text-align: right; display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
                 <button style="background:#0f172a; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="showSubmitOrderModal()">📤 Enviar Pedido ao Sistema</button>
                 <button style="background:#111827; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="saveDraftCurrentOrder()">💾 Salvar Rascunho</button>
-                <button style="background:#666666; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="showOrderHistoryModal()">📋 Meus Pedidos Enviados</button>
+                <button style="background:#666666; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="switchTab('tab-history')">📋 Ver Meus Pedidos</button>
                 <button class="btn-export" onclick="exportPdfControlled()">🖨️ Exportar Pedido (PDF)</button>
             </div>
         </section>
+        </div> <!-- End of tab-order -->
+
+        <!-- Tab: Histórico e Faturamento -->
+        <div id="tab-history" class="tab-content" style="display: none;">
+            <section class="card" style="margin-top: 20px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom: 20px;">
+                    <h2>📋 Meus Pedidos</h2>
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <input type="text" id="historySearchInput" placeholder="Buscar por Nº do Pedido, Cliente ou Comprador..." style="padding: 10px; border: 1px solid #ccc; border-radius: 6px; width: 280px;" oninput="renderHistoryTab()">
+                        <button onclick="renderHistoryTab()" style="padding:10px 15px; background:#0054A6; color:white; border:none; border-radius:6px; cursor:pointer;">Atualizar</button>
+                    </div>
+                </div>
+
+                <div id="historyTabContent" style="display: flex; flex-direction: column; gap: 15px;">
+                    <!-- Preenchido via JavaScript -->
+                </div>
+            </section>
+        </div>
+
     </div>
 
     <!-- Modal: Enviar Pedido ao Sistema -->
@@ -239,6 +239,13 @@
             </div>
             <div style="margin-bottom:20px;">
                 <p style="color:#475569; margin-bottom:15px;">Seu pedido será enviado para aprovação do supervisor. Após essa ação, não será possível modificar os itens. Se quiser, você também pode salvar um rascunho antes de enviar.</p>
+                <div style="margin-bottom:14px;">
+                    <label for="submitDraftSelect" style="display:block; font-weight:600; margin-bottom:8px;">Selecione o pedido a enviar</label>
+                    <select id="submitDraftSelect" style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px; background:white;">
+                        <option value="__new__">Enviar como novo pedido</option>
+                    </select>
+                    <div id="submitDraftHint" style="margin-top:8px; font-size:0.9rem; color:#475569;">Escolha um rascunho salvo para enviar diretamente ou deixe como novo pedido.</div>
+                </div>
                 <div style="background:#f0fdf4; border:1px solid #86efac; border-radius:8px; padding:15px; margin-bottom:15px;">
                     <strong style="color:#15803d;">✓ Pedido está pronto para envio</strong>
                     <div style="margin-top:8px; font-size:0.9rem; color:#000;">
@@ -257,21 +264,28 @@
         </div>
     </div>
 
-    <!-- Modal: Histórico de Pedidos Enviados -->
-    <div id="orderHistoryModal" style="display:none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.5); z-index:1003; align-items:center; justify-content:center;">
-        <div style="background:white; border-radius:12px; padding:24px; max-width:700px; width:95%; max-height:85vh; overflow-y:auto; box-shadow:0 14px 38px rgba(0,0,0,0.25);">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; gap:12px; flex-wrap:wrap;">
-                <h3 style="margin:0;">📋 Histórico de Pedidos e Rascunhos</h3>
-                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-                    <button onclick="deleteSelectedSubmissions()" style="background:#dc2626; color:white; padding:10px 14px; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Excluir Selecionados</button>
-                    <button onclick="closeOrderHistoryModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer;">✕</button>
+    <!-- Supervisor Modal (fora das abas para funcionar independentemente) -->
+    <div id="supervisorModal" style="display:none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.6); z-index:1002; align-items:center; justify-content:center;">
+        <div style="background:white; border-radius:10px; padding:22px; max-width:640px; width:95%; max-height:85vh; overflow-y:auto; box-shadow:0 14px 38px rgba(0,0,0,0.25);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
+                <div>
+                    <h3 style="margin:0;">🧑‍💼 Painel Supervisor</h3>
+                    <p style="margin:4px 0 0; color:#475569; font-size:0.95rem;">Gerencie os pedidos enviados para aprovação.</p>
                 </div>
+                <button onclick="closeSupervisorPanel()" style="background:none; border:none; font-size:1.4rem; cursor:pointer;">✕</button>
             </div>
-            <div id="orderHistoryList" style="border-top:1px solid #e5e7eb; padding-top:15px;">
-                <!-- Preenchido por JavaScript -->
+            
+            <!-- Seção: Gerenciar Pedidos Enviados -->
+            <div style="margin-top:24px; padding-top:18px; border-top:2px solid #e5e7eb;">
+                <h4 style="margin:0 0 15px; font-size:1.05rem;">📤 Pedidos Enviados para Aprovação</h4>
+                <div id="supervisorPendingOrdersList" style="max-height:400px; overflow-y:auto;">
+                    <!-- Preenchido por JavaScript -->
+                </div>
             </div>
         </div>
     </div>
+
+    <div id="orderHistoryModal" style="display:none;"></div>
 
     <!-- Full screen login page prior to app access -->
     <div id="loginScreen" class="login-screen active">
@@ -283,15 +297,11 @@
             <div class="login-body">
                 <input id="loginUsername" placeholder="Usuário" autocomplete="username">
                 <input id="loginPassword" type="password" placeholder="Senha" autocomplete="current-password">
-                <select id="loginRole">
-                    <option value="vendedor">Vendedor</option>
-                    <option value="supervisor">Supervisor</option>
-                </select>
                 <div class="login-actions">
-                    <button onclick="registerUser()" type="button">Registrar</button>
+                    <button onclick="registerUser()" type="button">Registrar Vendedor</button>
                     <button onclick="loginUser()" type="button">Entrar</button>
                 </div>
-                <div class="login-note">Ao registrar você cria um usuário local (armazenado no navegador). Para integração com servidor, trocaremos a persistência.</div>
+                <div class="login-note">Apenas registro de vendedores é permitido aqui. O supervisor terá um login exclusivo configurado separadamente.</div>
                 <div id="loginMessage" class="login-message"></div>
             </div>
         </div>
@@ -299,8 +309,8 @@
 
     <!-- html2pdf for controlled PDF export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js"></script>
-    <script src="data.js"></script>
-    <script src="script.js"></script>
+    <script src="data.js?v=5"></script>
+    <script src="script_v5.js"></script>
 </body>
 
 </html>

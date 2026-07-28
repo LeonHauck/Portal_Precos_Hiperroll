@@ -12,6 +12,24 @@ const cart = []; // Store order items
 let currentOrderMargin = 0;
 let activeDraftId = null;
 
+function getMarginStatus(margin) {
+    if (margin > 15) {
+        return { label: 'Verde', color: '#15803d', description: 'Margem segura' };
+    }
+    if (margin >= 11) {
+        return { label: 'Amarelo', color: '#b45309', description: 'Margem de atenção' };
+    }
+    return { label: 'Vermelho', color: '#c53030', description: 'Margem crítica' };
+}
+
+function setLoadedOrderReference(reference = '') {
+    const input = document.getElementById('loadedDraftNumber');
+    if (input) {
+        input.value = reference || '';
+    }
+    updateHeaderInfo();
+}
+
 // ========== SISTEMA DE STATUS E HISTÓRICO ==========
 const statusManager = {
     currentStatus: 'rascunho',
@@ -177,7 +195,7 @@ const authManager = {
                 } else {
                     memo[username] = {
                         passwordHash: value.passwordHash || '',
-                        role: value.role || 'vendedor'
+                        role: String(value.role || 'vendedor').trim().toLowerCase()
                     };
                 }
                 return memo;
@@ -187,26 +205,46 @@ const authManager = {
         }
         const currentUserEntry = this.findUser(current);
         this.currentUser = currentUserEntry ? currentUserEntry.username : null;
-        this.currentRole = currentUserEntry ? (currentUserEntry.user.role || 'vendedor') : null;
+        this.currentRole = currentUserEntry ? String(currentUserEntry.user.role || 'vendedor').trim().toLowerCase() : null;
 
         // Garantir usuário padrão Leon como Desenvolvedor
         const defaultDevUser = 'Leon';
         const defaultDevPass = 'l24598';
-        const hash = await this.hashPassword(defaultDevPass);
-        const existing = this.findUser(defaultDevUser);
-        if (!existing) {
-            this.users[defaultDevUser] = { passwordHash: hash, role: 'desenvolvedor' };
-            this.save();
+        const defaultSupervisorUser = 'Gabriel.Ferreira';
+        const defaultSupervisorPass = 'gf2026';
+
+        const devHash = await this.hashPassword(defaultDevPass);
+        const supervisorHash = await this.hashPassword(defaultSupervisorPass);
+
+        const existingDev = this.findUser(defaultDevUser);
+        if (!existingDev) {
+            this.users[defaultDevUser] = { passwordHash: devHash, role: 'desenvolvedor' };
         } else {
-            if (existing.user.passwordHash !== hash) {
-                this.users[existing.username].passwordHash = hash;
+            if (existingDev.user.passwordHash !== devHash) {
+                this.users[existingDev.username].passwordHash = devHash;
             }
-            if (existing.user.role !== 'desenvolvedor') {
-                this.users[existing.username].role = 'desenvolvedor';
+            if (existingDev.user.role !== 'desenvolvedor') {
+                this.users[existingDev.username].role = 'desenvolvedor';
             }
-            this.save();
         }
 
+        const existingSupervisor = this.findUser(defaultSupervisorUser);
+        if (!existingSupervisor) {
+            this.users[defaultSupervisorUser] = { passwordHash: supervisorHash, role: 'supervisor' };
+        } else {
+            if (existingSupervisor.user.passwordHash !== supervisorHash) {
+                this.users[existingSupervisor.username].passwordHash = supervisorHash;
+            }
+            if (existingSupervisor.user.role !== 'supervisor') {
+                this.users[existingSupervisor.username].role = 'supervisor';
+            }
+        }
+
+        if (this.currentUser && this.users[this.currentUser]) {
+            this.currentRole = this.users[this.currentUser].role;
+        }
+
+        this.save();
         this.updateUI();
     },
 
@@ -222,9 +260,10 @@ const authManager = {
         if (!normalized || !password) throw new Error('Usuário ou senha inválidos');
         if (this.findUser(username)) throw new Error('Usuário já existe');
         const h = await this.hashPassword(password);
-        this.users[username.trim()] = { passwordHash: h, role };
+        const normalizedRole = String(role || 'vendedor').trim().toLowerCase();
+        this.users[username.trim()] = { passwordHash: h, role: normalizedRole };
         this.currentUser = username.trim();
-        this.currentRole = role;
+        this.currentRole = normalizedRole;
         this.save();
         this.updateUI();
         return true;
@@ -242,7 +281,7 @@ const authManager = {
             throw new Error('Credenciais incorretas');
         }
         this.currentUser = found.username;
-        this.currentRole = found.user.role || 'vendedor';
+        this.currentRole = String(found.user.role || 'vendedor').trim().toLowerCase();
         this.save();
         this.updateUI();
         return true;
@@ -266,7 +305,7 @@ const authManager = {
     },
 
     getCurrentUserRole() {
-        return this.currentRole || 'vendedor';
+        return String(this.currentRole || 'vendedor').trim().toLowerCase();
     },
 
     updateUI() {
@@ -292,6 +331,16 @@ const authManager = {
             currentUserName.textContent = '--';
             supervisorBtn.style.display = 'none';
         }
+        // Refresh drafts, history and supervisor panel when UI changes (login/logout)
+        try {
+            if (typeof renderDraftsPanel === 'function') renderDraftsPanel();
+        } catch (e) {}
+        try {
+            if (typeof renderHistoryTab === 'function') renderHistoryTab();
+        } catch (e) {}
+        try {
+            if (typeof updateSupervisorPanel === 'function') updateSupervisorPanel();
+        } catch (e) {}
     }
 };
 
@@ -427,15 +476,36 @@ const orderSubmissionManager = {
     },
 
     getPending() {
+        if (!this.submissions) return [];
         return Object.values(this.submissions).filter(s => s.status === 'analise');
     },
 
     getDrafts() {
+        if (!this.submissions) return [];
         return Object.values(this.submissions).filter(s => s.status === 'rascunho');
     },
 
     getUserSubmissions(user) {
-        return Object.values(this.submissions).filter(s => s.submittedBy === user || s.savedBy === user);
+        const normalizedUser = authManager.normalizeUsername(user);
+        return Object.values(this.submissions).filter(s =>
+            authManager.normalizeUsername(s.submittedBy) === normalizedUser ||
+            authManager.normalizeUsername(s.savedBy) === normalizedUser
+        );
+    },
+
+    calculateMargin(submission) {
+        if (!submission || !Array.isArray(submission.cart) || submission.cart.length === 0) return 0;
+        let totalWeightedMargin = 0;
+        let totalQty = 0;
+        submission.cart.forEach(item => {
+            const negotiatedPrice = Math.max(item.negotiatedPrice || item.cif || 0, 0);
+            const fob = parseFloat(item.fob || 0) || 0;
+            const marginPercent = negotiatedPrice > 0 ? ((negotiatedPrice - fob) / negotiatedPrice) * 100 : 0;
+            const qty = parseFloat(item.qty || 0) || 0;
+            totalWeightedMargin += marginPercent * qty;
+            totalQty += qty;
+        });
+        return totalQty > 0 ? totalWeightedMargin / totalQty : 0;
     },
 
     approve(submissionIds, approvedBy, supervisorNote = '') {
@@ -464,6 +534,14 @@ const orderSubmissionManager = {
             }
         });
         this.save();
+    },
+
+    setSupervisorNote(submissionId, note) {
+        const submission = this.submissions[submissionId];
+        if (!submission) return false;
+        submission.supervisorNote = note || '';
+        this.save();
+        return true;
     },
 
     getById(id) {
@@ -652,6 +730,8 @@ async function init() {
     document.getElementById('weightTier').addEventListener('change', updateResults);
 
     updateHeaderInfo();
+
+    renderDraftsPanel();
 
     if (!authManager.getCurrentUser()) {
         showLoginModal();
@@ -1007,14 +1087,12 @@ function removeFromCart(idx) {
 
 function updateHeaderInfo() {
     const orderNumberHiperroll = document.getElementById('orderNumberHiperroll')?.value.trim() || '---';
-    const orderNumberClient = document.getElementById('orderNumberClient')?.value.trim() || '---';
     const dateStr = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 
     const headerOrderNumberEl = document.getElementById('headerOrderNumber');
     const headerOrderDateEl = document.getElementById('headerOrderDate');
     
-    // Mostrar número do cliente se preenchido, senão mostrar Hiper Roll
-    const displayNumber = orderNumberClient !== '---' ? orderNumberClient : orderNumberHiperroll;
+    const displayNumber = orderNumberHiperroll;
     
     if (headerOrderNumberEl) headerOrderNumberEl.textContent = displayNumber;
     if (headerOrderDateEl) headerOrderDateEl.textContent = dateStr;
@@ -1035,7 +1113,8 @@ function createPdfExportNode() {
     const contract = parseFloat(document.getElementById('orderContract').value) || 0;
     const orderNumberHiperroll = document.getElementById('orderNumberHiperroll')?.value.trim() || '---';
     const orderNumberClient = document.getElementById('orderNumberClient')?.value.trim() || '---';
-    const orderNumber = orderNumberClient || orderNumberHiperroll; // Usar cliente se preenchido
+    const loadedDraftNumber = document.getElementById('loadedDraftNumber')?.value.trim() || '';
+    const orderNumber = loadedDraftNumber || orderNumberClient || orderNumberHiperroll;
     const clientName = document.getElementById('clientName')?.value.trim() || '---';
     const representativeName = document.getElementById('representativeName')?.value.trim() || '---';
     const proposalValidity = document.getElementById('proposalValidity')?.value.trim() || '---';
@@ -1429,22 +1508,28 @@ async function loginUser() {
         closeLoginModal();
         updateSupervisorPanel();
     } catch (e) {
-        if (msg) { msg.style.display = 'block'; msg.textContent = e.message; }
+        if (msg) { msg.style.display = 'block'; msg.textContent = e.message || 'Erro no login.'; }
     }
 }
 
 async function registerUser() {
     const u = document.getElementById('loginUsername')?.value.trim();
     const p = document.getElementById('loginPassword')?.value || '';
-    const role = document.getElementById('loginRole')?.value || 'vendedor';
     const msg = document.getElementById('loginMessage');
     try {
-        await authManager.register(u, p, role);
+        await authManager.register(u, p, 'vendedor');
         if (msg) { msg.style.display = 'none'; }
         closeLoginModal();
         updateSupervisorPanel();
     } catch (e) {
-        if (msg) { msg.style.display = 'block'; msg.textContent = e.message; }
+        if (msg) {
+            msg.style.display = 'block';
+            if (e.message === 'Usuário já existe') {
+                msg.textContent = 'Este usuário já existe. Tente outro login ou faça login.';
+            } else {
+                msg.textContent = e.message || 'Erro ao registrar usuário.';
+            }
+        }
     }
 }
 
@@ -1454,12 +1539,201 @@ function logoutUser() {
     showLoginModal();
 }
 
+function getCurrentUserDrafts() {
+    const currentUser = authManager.getCurrentUser();
+    if (!currentUser) return [];
+
+    return orderSubmissionManager.getUserSubmissions(currentUser)
+        .filter(submission => submission.status === 'rascunho')
+        .sort((a, b) => new Date(b.savedAt || b.submittedAt || 0) - new Date(a.savedAt || a.submittedAt || 0));
+}
+
+function renderDraftsPanel() {
+    const panel = document.getElementById('draftsPanelContent');
+    const badge = document.getElementById('draftsPanelBadge');
+    if (!panel) return;
+
+    const drafts = getCurrentUserDrafts();
+    if (badge) {
+        badge.textContent = `${drafts.length} rascunho(s)`;
+    }
+
+    if (drafts.length === 0) {
+        panel.innerHTML = '<div style="padding:14px; border:1px dashed #cbd5e1; border-radius:10px; background:#f8fafc; color:#64748b; text-align:center;">Nenhum rascunho salvo ainda. Quando você salvar o pedido atual, ele aparecerá aqui para continuar ou enviar.</div>';
+        return;
+    }
+
+    panel.innerHTML = drafts.map(draft => {
+        const isActive = draft.id === activeDraftId;
+        const savedDate = draft.savedAt ? new Date(draft.savedAt).toLocaleString('pt-BR') : '---';
+        const itemCount = (draft.cart || []).reduce((sum, item) => sum + (item.qty || 0), 0);
+        const orderNumber = draft.orderNumber || '(Sem número)';
+        const clientName = draft.clientName || '(Não informado)';
+        const averageMargin = orderSubmissionManager.calculateMargin(draft);
+        const marginStatus = getMarginStatus(averageMargin);
+        // Build collapsible items table HTML (show first 3 rows, hide rest)
+        let visibleRows = '';
+        let hiddenRows = '';
+        let total = 0;
+        if (draft.cart && draft.cart.length) {
+            draft.cart.forEach((item, idx) => {
+                const qty = item.qty || 0;
+                const unit = parseFloat(item.negotiatedPrice || item.cif || 0) || 0;
+                const subtotal = unit * qty;
+                total += subtotal;
+                const shortDesc = (item.descricao || '').replace(/"/g, '');
+                const rowHtml = `<tr><td>${item.codigo}</td><td>${shortDesc}</td><td style="width:70px; text-align:center">${qty}</td><td style="width:120px; text-align:right">R$ ${unit.toFixed(2)}</td><td style="width:120px; text-align:right">R$ ${subtotal.toFixed(2)}</td></tr>`;
+                if (idx < 3) visibleRows += rowHtml; else hiddenRows += rowHtml;
+            });
+
+            const hiddenSection = hiddenRows ? `<tbody id="draftHidden_${draft.id}" class="draft-hidden-rows">${hiddenRows}</tbody>` : '';
+
+            itemsHtml = `
+                <table class="draft-items-table">
+                    <thead>
+                        <tr>
+                            <th style="width:12%">Cód</th>
+                            <th>Descrição</th>
+                            <th style="width:70px; text-align:center">Qtd</th>
+                            <th style="width:120px; text-align:right">Valor Unit.</th>
+                            <th style="width:120px; text-align:right">Subtotal</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${visibleRows}
+                    </tbody>
+                    ${hiddenSection}
+                </table>
+                <div class="draft-items-total">Total: R$ ${total.toFixed(2)}</div>
+            `;
+        } else {
+            itemsHtml = '<div style="margin-top:10px; color:#64748b;">Sem itens no rascunho.</div>';
+        }
+
+        // Toggle button (only if there are hidden rows)
+        const toggleBtn = (hiddenRows) ? `<button class="draft-toggle-btn" id="draftToggle_${draft.id}" onclick="toggleDraftItems('${draft.id}')">+</button>` : '';
+
+        return `
+            <div class="draft-card ${isActive ? 'active' : ''}">
+                <div style="flex:1;">
+                    <div style="display:flex; align-items:center; gap:12px;">
+                        <div class="draft-card-title">${orderNumber}</div>
+                        ${toggleBtn}
+                    </div>
+                    <div class="draft-card-meta">Cliente: <strong>${clientName}</strong></div>
+                    <div class="draft-card-meta">Itens: <strong>${itemCount}</strong> • Salvo em: <strong>${savedDate}</strong></div>
+                    <div class="draft-card-meta">Margem: <strong style="color:${marginStatus.color};">${averageMargin.toFixed(2)}%</strong> <span style="color:${marginStatus.color}; font-weight:700;">${marginStatus.label}</span></div>
+                    ${itemsHtml}
+                </div>
+                <div class="draft-card-actions">
+                    <button class="btn-load" onclick="loadDraftToCurrentOrder('${draft.id}', true)">Carregar</button>
+                    <button class="btn-send" onclick="prepareDraftForSubmission('${draft.id}')">Enviar</button>
+                    <button class="btn-delete" onclick="deleteSubmission('${draft.id}')">Excluir</button>
+                    <button class="btn-load" onclick="showDraftModal('${draft.id}')" style="background:#64748b; margin-left:6px;">Ver</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function toggleDraftItems(draftId) {
+    const hidden = document.getElementById('draftHidden_' + draftId);
+    const btn = document.getElementById('draftToggle_' + draftId);
+    if (!hidden || !btn) return;
+    if (hidden.style.display === 'none' || hidden.style.display === '') {
+        hidden.style.display = 'table-row-group';
+        btn.textContent = '−';
+    } else {
+        hidden.style.display = 'none';
+        btn.textContent = '+';
+    }
+}
+
+function showDraftModal(submissionId) {
+    const submission = orderSubmissionManager.getById(submissionId);
+    if (!submission) return;
+
+    // Remove existing modal if present
+    const existing = document.getElementById('draftModalBackdrop');
+    if (existing) existing.remove();
+
+    const backdrop = document.createElement('div');
+    backdrop.id = 'draftModalBackdrop';
+    backdrop.className = 'draft-modal-backdrop';
+
+    const modal = document.createElement('div');
+    modal.className = 'draft-modal';
+
+    let itemsHtml = '<table class="draft-items-table"><thead><tr><th>Cód</th><th>Descrição</th><th>Qtd</th><th>Valor Unit.</th><th>Subtotal</th></tr></thead><tbody>';
+    let total = 0;
+    (submission.cart || []).forEach(item => {
+        const qty = item.qty || 0;
+        const unit = parseFloat(item.negotiatedPrice || item.cif || 0) || 0;
+        const subtotal = unit * qty;
+        total += subtotal;
+        itemsHtml += `<tr><td>${item.codigo}</td><td>${(item.descricao||'').replace(/"/g,'')}</td><td style="text-align:center">${qty}</td><td style="text-align:right">R$ ${unit.toFixed(2)}</td><td style="text-align:right">R$ ${subtotal.toFixed(2)}</td></tr>`;
+    });
+    itemsHtml += `</tbody></table><div class="draft-items-total">Total: R$ ${total.toFixed(2)}</div>`;
+
+    let invoicesHtml = '';
+    if (submission.invoices && submission.invoices.length) {
+        invoicesHtml = '<div style="margin-top:12px;"><strong>Notas Fiscais anexadas:</strong><div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">';
+        submission.invoices.forEach((inv, idx) => {
+            const name = inv.name || `NF_${idx+1}`;
+            const href = inv.data || '';
+            invoicesHtml += `<a class="invoice-link" href="${href}" download="${name}_${submission.orderNumber || ''}">${name}</a>`;
+        });
+        invoicesHtml += '</div></div>';
+    }
+
+    modal.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;"><h3>Pedido: ${submission.orderNumber || '(Sem número)'}</h3><button onclick="document.getElementById('draftModalBackdrop').remove()" style="background:none; border:none; font-size:20px; cursor:pointer;">✕</button></div>
+        <div><strong>Cliente:</strong> ${submission.clientName || '(Não informado)'}</div>
+        <div style="margin-top:10px;">${itemsHtml}</div>
+        ${invoicesHtml}
+        <div style="margin-top:14px; display:flex; justify-content:flex-end;"><button onclick="document.getElementById('draftModalBackdrop').remove()" style="padding:8px 12px; background:#ccc; border:none; border-radius:6px; cursor:pointer;">Fechar</button></div>
+    `;
+
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+}
+
+function populateSubmitOrderDraftSelection() {
+    const select = document.getElementById('submitDraftSelect');
+    if (!select) return;
+
+    const drafts = getCurrentUserDrafts();
+    const currentValue = activeDraftId && drafts.some(draft => draft.id === activeDraftId) ? activeDraftId : '';
+
+    select.innerHTML = '<option value="__new__">Enviar como novo pedido</option>' + drafts.map(draft => {
+        const label = `${draft.orderNumber || '(Sem número)'} • ${draft.clientName || '(Não informado)'}`;
+        return `<option value="${draft.id}" ${currentValue === draft.id ? 'selected' : ''}>${label}</option>`;
+    }).join('');
+
+    if (currentValue) {
+        select.value = currentValue;
+    } else {
+        select.value = '__new__';
+    }
+}
+
+function prepareDraftForSubmission(submissionId) {
+    loadDraftToCurrentOrder(submissionId, true);
+    const select = document.getElementById('submitDraftSelect');
+    if (select) {
+        select.value = submissionId;
+    }
+    setTimeout(() => showSubmitOrderModal(), 60);
+}
+
 // ===== Funções de Submissão de Pedidos =====
 function showSubmitOrderModal() {
     if (cart.length === 0) {
         alert('Adicione itens ao pedido antes de enviar.');
         return;
     }
+
+    populateSubmitOrderDraftSelection();
 
     const orderNumberHiperroll = document.getElementById('orderNumberHiperroll')?.value.trim() || '';
     const orderNumberClient = document.getElementById('orderNumberClient')?.value.trim() || '';
@@ -1502,6 +1776,7 @@ function submitOrder() {
         return;
     }
 
+    const selectedDraftValue = document.getElementById('submitDraftSelect')?.value || '';
     const orderNumberHiperroll = document.getElementById('orderNumberHiperroll')?.value.trim() || '';
     const orderNumberClient = document.getElementById('orderNumberClient')?.value.trim() || '';
     const clientName = document.getElementById('clientName')?.value.trim() || '';
@@ -1513,13 +1788,14 @@ function submitOrder() {
         // Usar número do cliente se preenchido, senão usar Hiper Roll
         const orderNumberToUse = orderNumberClient || orderNumberHiperroll;
         
+        const draftIdToUse = selectedDraftValue && selectedDraftValue !== '__new__' ? selectedDraftValue : null;
         const submissionId = orderSubmissionManager.submitOrder(
             orderNumberToUse,
             clientName,
             representativeName,
             cart,
             currentUser,
-            activeDraftId
+            draftIdToUse
         );
 
         if (msg) {
@@ -1528,10 +1804,13 @@ function submitOrder() {
         }
 
         activeDraftId = null;
+        setLoadedOrderReference('');
         setTimeout(() => {
             closeSubmitOrderModal();
             cart.length = 0;
             updateOrderTable();
+            renderDraftsPanel();
+            renderHistoryTab();
             
             // Gerar novo número Hiper Roll para o próximo pedido
             const nextNumber = hiperrollOrderNumberManager.getNextOrderNumber();
@@ -1540,6 +1819,13 @@ function submitOrder() {
             document.getElementById('clientName').value = '';
             document.getElementById('representativeName').value = '';
             alert('Pedido enviado com sucesso! Aguardando aprovação do supervisor.');
+            const searchInput = document.getElementById('historySearchInput');
+            if (searchInput) {
+                searchInput.value = '';
+            }
+            switchTab('tab-history');
+            renderHistoryTab();
+            setTimeout(() => highlightHistoryCard(submissionId), 250);
         }, 1500);
     } catch (e) {
         if (msg) {
@@ -1574,13 +1860,15 @@ function saveDraftCurrentOrder() {
             activeDraftId
         );
         activeDraftId = draftId;
-        alert('Rascunho salvo com sucesso. Você pode continuar editando ou enviar quando estiver pronto.');
+        renderDraftsPanel();
+        renderHistoryTab();
+        alert('Rascunho salvo com sucesso. Ele já está disponível no painel de rascunhos.');
     } catch (e) {
         alert(e.message);
     }
 }
 
-function loadDraftToCurrentOrder(submissionId) {
+function loadDraftToCurrentOrder(submissionId, silent = false) {
     const submission = orderSubmissionManager.getById(submissionId);
     if (!submission) {
         alert('Rascunho não encontrado.');
@@ -1588,15 +1876,17 @@ function loadDraftToCurrentOrder(submissionId) {
     }
 
     activeDraftId = submissionId;
-    // Colocar o número salvo no campo de número do cliente (mais genérico)
-    document.getElementById('orderNumberClient').value = submission.orderNumber || '';
+    setLoadedOrderReference(submission.orderNumber || '');
     document.getElementById('clientName').value = submission.clientName || '';
     document.getElementById('representativeName').value = submission.representativeName || '';
     cart.length = 0;
-    submission.cart.forEach(item => cart.push(JSON.parse(JSON.stringify(item))));
+    (Array.isArray(submission.cart) ? submission.cart : []).forEach(item => cart.push(JSON.parse(JSON.stringify(item))));
     updateOrderTable();
+    renderDraftsPanel();
     closeOrderHistoryModal();
-    alert('Rascunho carregado. Edite o pedido ou envie quando estiver pronto.');
+    if (!silent) {
+        alert('Rascunho carregado. Edite o pedido ou envie quando estiver pronto.');
+    }
 }
 
 function repeatOrder(submissionId) {
@@ -1607,119 +1897,31 @@ function repeatOrder(submissionId) {
     }
 
     activeDraftId = null;
-    // Colocar o número salvo no campo de número do cliente (mais genérico)
+    const nextNumber = hiperrollOrderNumberManager.getNextOrderNumber();
+    document.getElementById('orderNumberHiperroll').value = nextNumber;
+    setLoadedOrderReference('');
     document.getElementById('orderNumberClient').value = submission.orderNumber || '';
     document.getElementById('clientName').value = submission.clientName || '';
     document.getElementById('representativeName').value = submission.representativeName || '';
     cart.length = 0;
-    submission.cart.forEach(item => cart.push(JSON.parse(JSON.stringify(item))));
+    (Array.isArray(submission.cart) ? submission.cart : []).forEach(item => cart.push(JSON.parse(JSON.stringify(item))));
     updateOrderTable();
+    renderDraftsPanel();
     closeOrderHistoryModal();
-    alert('Pedido repetido. Ajuste os dados se necessário e envie novamente.');
+    alert('Pedido repetido como novo pedido. Ajuste os dados se necessário e envie novamente.');
 }
 
 function showOrderHistoryModal() {
-    const currentUser = authManager.getCurrentUser();
-    const submissions = orderSubmissionManager.getUserSubmissions(currentUser);
-    const drafts = submissions.filter(s => s.status === 'rascunho');
-    const sentOrders = submissions.filter(s => s.status !== 'rascunho');
+    switchTab('tab-history');
+    renderHistoryTab();
+}
 
-    const historyList = document.getElementById('orderHistoryList');
-    if (submissions.length === 0) {
-        historyList.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">Nenhum rascunho ou pedido enviado ainda.</div>';
-    } else {
-        let html = '';
-
-        if (drafts.length) {
-            html += '<div style="margin-bottom:16px; font-size:1.05rem; font-weight:700;">Rascunhos</div>';
-            drafts.forEach(submission => {
-                const savedDate = submission.savedAt ? new Date(submission.savedAt).toLocaleString('pt-BR') : '---';
-                const totalItems = submission.cart.reduce((sum, item) => sum + item.qty, 0);
-                html += `
-                    <div style="border:1px solid #e5e7eb; border-radius:8px; padding:15px; margin-bottom:12px; background:#f8fafc; display:flex; gap:12px; align-items:flex-start;">
-                        <label style="display:flex; align-items:center; gap:8px; font-size:0.95rem; margin-top:4px;">
-                            <input type="checkbox" class="history-selection-checkbox" value="${submission.id}" />
-                            Selecionar
-                        </label>
-                        <div style="flex:1;">
-                            <div style="font-weight:700; font-size:1.05rem;">Rascunho: <strong>${submission.orderNumber || '(Sem número)'}</strong></div>
-                            <div style="margin-top:8px; font-size:0.95rem; color:#475569;">
-                                <div>Cliente: <strong>${submission.clientName || '(Não informado)'}</strong></div>
-                                <div>Itens: <strong>${totalItems}</strong></div>
-                                <div>Salvo: <strong>${savedDate}</strong></div>
-                            </div>
-                        </div>
-                        <div style="text-align:right; display:flex; flex-direction:column; gap:8px;">
-                            <button onclick="loadDraftToCurrentOrder('${submission.id}')" style="background:#000000; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.9rem;">Carregar Rascunho</button>
-                        </div>
-                    </div>
-                `;
-            });
-        }
-
-        if (sentOrders.length) {
-            html += '<div style="margin:24px 0 16px; font-size:1.05rem; font-weight:700;">Pedidos Enviados</div>';
-            sentOrders.forEach(submission => {
-                const statusColor = {
-                    'analise': '#f59e0b',
-                    'aprovado': '#10b981',
-                    'rejeitado': '#ef4444'
-                }[submission.status] || '#999';
-
-                const statusLabel = {
-                    'analise': 'Em Análise',
-                    'aprovado': 'Aprovado',
-                    'rejeitado': 'Rejeitado'
-                }[submission.status] || 'Status Desconhecido';
-
-                const submittedDate = submission.submittedAt ? new Date(submission.submittedAt).toLocaleString('pt-BR') : '---';
-                const totalItems = submission.cart.reduce((sum, item) => sum + item.qty, 0);
-
-                html += `
-                    <div style="border:1px solid #e5e7eb; border-radius:8px; padding:15px; margin-bottom:12px; display:flex; gap:12px; align-items:flex-start;">
-                        <label style="display:flex; align-items:center; gap:8px; font-size:0.95rem; margin-top:4px;">
-                            <input type="checkbox" class="history-selection-checkbox" value="${submission.id}" />
-                            Selecionar
-                        </label>
-                        <div style="flex:1;">
-                            <div style="font-weight:700; font-size:1.05rem;">Pedido: <strong>${submission.orderNumber}</strong></div>
-                            <div style="margin-top:8px; font-size:0.95rem; color:#475569;">
-                                <div>Cliente: <strong>${submission.clientName || '(Não informado)'}</strong></div>
-                                <div>Itens: <strong>${totalItems}</strong></div>
-                                <div>Enviado: <strong>${submittedDate}</strong></div>
-                            </div>
-                        </div>
-                        <div style="text-align:right; display:flex; flex-direction:column; gap:8px;">
-                                <div style="background:${statusColor}; color:white; padding:8px 16px; border-radius:6px; font-weight:600; margin-bottom:10px;">
-                                    ${statusLabel}
-                                </div>
-                                ${submission.status === 'rejeitado' && submission.rejectionReason ? `
-                                    <div style="background:#fee2e2; border:1px solid #fca5a5; border-radius:6px; padding:10px; margin-bottom:10px; font-size:0.9rem;">
-                                        <strong style="color:#b91c1c;">Motivo da Rejeição:</strong><br>
-                                        <div style="margin-top:5px; color:#000;">${submission.rejectionReason}</div>
-                                    </div>
-                                ` : ''}
-                                ${submission.supervisorNote ? `
-                                    <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; padding:10px; margin-bottom:10px; font-size:0.9rem;">
-                                        <strong style="color:#1d4ed8;">Observação do Supervisor:</strong><br>
-                                        <div style="margin-top:5px; color:#000;">${submission.supervisorNote}</div>
-                                    </div>
-                                ` : ''}
-                                <button onclick="repeatOrder('${submission.id}')" style="background:#0f172a; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.9rem; margin-bottom:8px;">Repetir Pedido</button>
-                                <button onclick="deleteSubmission('${submission.id}')" style="background:#dc2626; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.9rem; margin-bottom:8px;">Excluir</button>
-                                <button onclick="showSubmissionDetails('${submission.id}')" style="background:#64748b; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.9rem;">Ver Detalhes</button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            });
-        }
-
-        historyList.innerHTML = html;
-    }
-
-    const modal = document.getElementById('orderHistoryModal');
-    if (modal) modal.style.display = 'flex';
+function highlightHistoryCard(submissionId) {
+    const card = document.getElementById(`historyCard_${submissionId}`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.add('history-card-highlight');
+    setTimeout(() => card.classList.remove('history-card-highlight'), 5000);
 }
 
 function closeOrderHistoryModal() {
@@ -1733,6 +1935,11 @@ function deleteSubmission(submissionId) {
 
     const deleted = orderSubmissionManager.deleteSubmission(submissionId);
     if (deleted) {
+        if (activeDraftId === submissionId) {
+            activeDraftId = null;
+        }
+        renderDraftsPanel();
+        renderHistoryTab();
         alert('Pedido excluído com sucesso.');
         showOrderHistoryModal();
     } else {
@@ -1770,6 +1977,8 @@ function showSubmissionDetails(submissionId) {
     const submission = orderSubmissionManager.getById(submissionId);
     if (!submission) return;
 
+    const averageMargin = orderSubmissionManager.calculateMargin(submission);
+    const marginStatus = getMarginStatus(averageMargin);
     const statusLabel = {
         'rascunho': 'Rascunho',
         'analise': 'Em Análise',
@@ -1783,17 +1992,128 @@ function showSubmissionDetails(submissionId) {
     alert(`Pedido: ${submission.orderNumber}
 Cliente: ${submission.clientName}
 Representante: ${submission.representativeName}
+Criado por: ${submission.submittedBy || submission.savedBy || '(Sem usuário)'}
 Status: ${statusLabel}
+Margem média: ${averageMargin.toFixed(2)}% (${marginStatus.label})
 ${submission.status === 'rascunho' ? 'Salvo em:' : 'Enviado em:'} ${dateLabel}
 ${submission.rejectionReason ? `Motivo da Rejeição: ${submission.rejectionReason}
 ` : ''}${submission.supervisorNote ? `Observação do Supervisor: ${submission.supervisorNote}` : ''}`);
 }
 
+function openSupervisorOrderActions(submissionId) {
+    const submission = orderSubmissionManager.getById(submissionId);
+    const currentUser = authManager.getCurrentUser();
+    const currentRole = authManager.getCurrentUserRole();
+    if (!submission) return;
+    if (!['supervisor', 'desenvolvedor'].includes(currentRole)) {
+        alert('Acesso negado. Apenas supervisor ou desenvolvedor podem gerenciar este pedido.');
+        return;
+    }
+
+    const existing = document.getElementById('supervisorActionModalBackdrop');
+    if (existing) existing.remove();
+
+    const statusLabel = {
+        'rascunho': 'Rascunho',
+        'analise': 'Em Análise',
+        'aprovado': 'Aprovado',
+        'rejeitado': 'Rejeitado'
+    }[submission.status] || submission.status;
+
+    const timestamp = submission.status === 'rascunho' ? submission.savedAt : submission.submittedAt;
+    const dateLabel = timestamp ? new Date(timestamp).toLocaleString('pt-BR') : '---';
+
+    let itemsHtml = `<table class="draft-items-table" style="width:100%; margin-top:10px;"><thead><tr><th>Cód</th><th>Descrição</th><th>Qtd</th><th style="text-align:right">Unit.</th><th style="text-align:right">Subtotal</th></tr></thead><tbody>`;
+    let total = 0;
+    (submission.cart || []).forEach(item => {
+        const qty = item.qty || 0;
+        const unit = parseFloat(item.negotiatedPrice || item.cif || 0) || 0;
+        const subtotal = unit * qty;
+        total += subtotal;
+        itemsHtml += `<tr><td>${item.codigo}</td><td>${(item.descricao || '').replace(/"/g, '')}</td><td style="text-align:center">${qty}</td><td style="text-align:right">R$ ${unit.toFixed(2)}</td><td style="text-align:right">R$ ${subtotal.toFixed(2)}</td></tr>`;
+    });
+    itemsHtml += `</tbody></table><div style="text-align:right; margin-top:10px; font-weight:700;">Total: R$ ${total.toFixed(2)}</div>`;
+
+    const backdrop = document.createElement('div');
+    backdrop.id = 'supervisorActionModalBackdrop';
+    backdrop.style = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:2001; display:flex; align-items:center; justify-content:center; padding:16px;';
+    backdrop.innerHTML = `
+        <div style="background:white; border-radius:12px; padding:22px; max-width:680px; width:100%; max-height:calc(100vh - 40px); overflow-y:auto; box-shadow:0 14px 38px rgba(0,0,0,0.2);">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:18px;">
+                <div>
+                    <h3 style="margin:0 0 6px 0;">🧑‍💼 Ações do Supervisor</h3>
+                    <div style="font-size:0.95rem; color:#475569; line-height:1.5;">
+                        Pedido: <strong>${submission.orderNumber || '(Sem número)'}</strong><br>
+                        Cliente: <strong>${submission.clientName || '(Não informado)'}</strong><br>
+                        Enviado por: <strong>${submission.submittedBy || submission.savedBy || '(Sem usuário)'}</strong><br>
+                        Status atual: <strong>${statusLabel}</strong><br>
+                        ${submission.status === 'rascunho' ? 'Salvo em' : 'Enviado em'}: <strong>${dateLabel}</strong>
+                    </div>
+                </div>
+                <button onclick="closeSupervisorActionModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer;">✕</button>
+            </div>
+            ${itemsHtml}
+            <div style="margin-top:20px; display:grid; gap:14px;">
+                <div>
+                    <label style="display:block; font-weight:600; margin-bottom:6px;">Observação do Supervisor</label>
+                    <textarea id="supervisorActionNote" style="width:100%; min-height:110px; padding:12px; border:1px solid #d1d5db; border-radius:10px; font-family:inherit;">${submission.supervisorNote || ''}</textarea>
+                </div>
+                <div>
+                    <label style="display:block; font-weight:600; margin-bottom:6px;">Motivo da Rejeição</label>
+                    <textarea id="supervisorActionRejectionReason" placeholder="Preencha apenas se for rejeitar." style="width:100%; min-height:110px; padding:12px; border:1px solid #d1d5db; border-radius:10px; font-family:inherit;">${submission.rejectionReason || ''}</textarea>
+                </div>
+            </div>
+            <div style="margin-top:18px; display:flex; flex-wrap:wrap; gap:12px; justify-content:flex-end;">
+                <button onclick="handleSupervisorAction('${submission.id}', 'saveNote')" style="padding:11px 18px; background:#0f172a; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600;">💬 Salvar Observação</button>
+                <button onclick="handleSupervisorAction('${submission.id}', 'approve')" style="padding:11px 18px; background:#10b981; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600;">✅ Aprovar</button>
+                <button onclick="handleSupervisorAction('${submission.id}', 'reject')" style="padding:11px 18px; background:#ef4444; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600;">❌ Rejeitar</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(backdrop);
+}
+
+function handleSupervisorAction(submissionId, action) {
+    const currentUser = authManager.getCurrentUser();
+    const note = document.getElementById('supervisorActionNote')?.value.trim() || '';
+    const reason = document.getElementById('supervisorActionRejectionReason')?.value.trim() || '';
+
+    if (action === 'approve') {
+        orderSubmissionManager.approve(submissionId, currentUser, note);
+        alert('Pedido aprovado com sucesso.');
+    } else if (action === 'reject') {
+        if (!reason) {
+            alert('Informe o motivo da rejeição antes de rejeitar o pedido.');
+            return;
+        }
+        orderSubmissionManager.reject(submissionId, reason, currentUser, note);
+        alert('Pedido rejeitado com sucesso.');
+    } else if (action === 'saveNote') {
+        orderSubmissionManager.setSupervisorNote(submissionId, note);
+        alert('Observação salva com sucesso.');
+    }
+    closeSupervisorActionModal();
+    renderHistoryTab();
+    updateSupervisorPanel();
+}
+
+function closeSupervisorActionModal() {
+    const modal = document.getElementById('supervisorActionModalBackdrop');
+    if (modal) modal.remove();
+}
+
 function showSupervisorPanel() {
     const modal = document.getElementById('supervisorModal');
-    if (!modal) return;
-    updateSupervisorPanel();
+    if (!modal) { console.error('supervisorModal não encontrado no HTML'); return; }
     modal.style.display = 'flex';
+    try {
+        updateSupervisorPanel();
+    } catch(e) {
+        console.error('Erro ao atualizar painel supervisor:', e);
+        const list = document.getElementById('supervisorPendingOrdersList');
+        if (list) list.innerHTML = '<div style="padding:15px; text-align:center; color:#c53030;">Erro ao carregar pedidos. Verifique o console (F12).</div>';
+    }
 }
 
 function closeSupervisorPanel() {
@@ -1815,51 +2135,7 @@ function updateSupervisorPanel() {
     if (btn) {
         btn.style.display = ['supervisor', 'desenvolvedor'].includes(currentUserRole) ? 'inline-flex' : 'none';
     }
-    if (!modal || modal.style.display !== 'flex') return;
-
-    const statusLabel = {
-        'rascunho': '📝 Rascunho',
-        'analise': '🔍 Em Análise',
-        'aprovado': '✅ Aprovado',
-        'rejeitado': '❌ Rejeitado'
-    }[statusManager.currentStatus] || statusManager.currentStatus;
-
-    const risk = getMarginRiskLevel(currentOrderMargin);
-
-    const createdByEl = document.getElementById('supervisorCreatedBy');
-    const createdAtEl = document.getElementById('supervisorCreatedAt');
-    const currentStatusEl = document.getElementById('supervisorCurrentStatus');
-    const riskLevelEl = document.getElementById('supervisorRiskLevel');
-    const historyEl = document.getElementById('supervisorHistoryList');
-
-    if (createdByEl) createdByEl.textContent = orderManager.getCreatorLabel();
-    if (createdAtEl) createdAtEl.textContent = orderManager.getCreatedAtLabel();
-    if (currentStatusEl) currentStatusEl.textContent = statusLabel;
-    if (riskLevelEl) {
-        riskLevelEl.textContent = `${risk.label} (${currentOrderMargin.toFixed(2)}%)`;
-        riskLevelEl.style.color = risk.color;
-    }
-
-    if (historyEl) {
-        const history = statusManager.getFormattedHistory();
-        const sortedHistory = [...history].reverse();
-        historyEl.innerHTML = sortedHistory.map(entry => {
-            const statusIcon = {
-                'rascunho': '📝',
-                'analise': '🔍',
-                'aprovado': '✅',
-                'rejeitado': '❌'
-            }[entry.statusNovo] || '•';
-            return `
-                <div style="padding:12px; border-bottom:1px solid #e5e7eb; background:#f8fafc; margin-bottom:10px; border-radius:8px;">
-                    <div style="font-weight:600; margin-bottom:4px;">${statusIcon} ${entry.labelStatus}</div>
-                    <div style="font-size:0.9rem; color:#475569;">${entry.dataFormatada}</div>
-                    <div style="font-size:0.9rem; color:#475569;">Usuário: <strong>${entry.usuario}</strong></div>
-                    ${entry.razao ? `<div style="font-size:0.9rem; color:#475569; margin-top:4px;">Motivo: <em>${entry.razao}</em></div>` : ''}
-                </div>
-            `;
-        }).join('');
-    }
+    if (!modal) return;
 
     // Atualizar lista de pedidos enviados
     const pendingList = document.getElementById('supervisorPendingOrdersList');
@@ -1872,24 +2148,22 @@ function updateSupervisorPanel() {
             let html = '<div style="display:flex; flex-direction:column; gap:12px;">';
             
             pending.forEach((submission, idx) => {
-                const totalItems = submission.cart.reduce((sum, item) => sum + item.qty, 0);
+                const cartArray = Array.isArray(submission.cart) ? submission.cart : [];
+                const totalItems = cartArray.reduce((sum, item) => sum + (item.qty || 0), 0);
                 const submittedDate = new Date(submission.submittedAt).toLocaleString('pt-BR');
                 
                 html += `
-                    <div style="border:1px solid #ddd; border-radius:8px; padding:12px; background:#fafafa;">
-                        <div style="display:flex; align-items:start; gap:12px; margin-bottom:10px;">
-                            <input type="checkbox" class="pending-order-checkbox" value="${submission.id}" style="margin-top:2px;">
-                            <div style="flex:1;">
-                                <div style="font-weight:600;">Pedido: <strong>${submission.orderNumber}</strong></div>
-                                <div style="font-size:0.9rem; color:#666; margin-top:4px;">
-                                    Cliente: <strong>${submission.clientName}</strong><br>
-                                    Enviado por: <strong>${submission.submittedBy}</strong><br>
-                                    Em: <strong>${submittedDate}</strong><br>
-                                    Itens: <strong>${totalItems}</strong>
+                    <div style="border:1px solid #ddd; border-radius:8px; padding:15px; background:#fafafa; display:flex; align-items:center; justify-content:space-between; gap:15px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                        <div style="display:flex; align-items:center; gap:15px; flex:1;">
+                            <input type="checkbox" class="pending-order-checkbox" value="${submission.id}" style="width:20px; height:20px; flex-shrink:0; margin:0; cursor:pointer;">
+                            <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
+                                <div style="font-weight:700; font-size:1.05rem; color:#0f172a;">Pedido: ${submission.orderNumber}</div>
+                                <div style="font-size:0.9rem; color:#475569;">
+                                    Cliente: <strong style="color:#1e293b;">${submission.clientName}</strong> &bull; Enviado por: <strong>${submission.submittedBy}</strong> &bull; Em: <strong>${submittedDate}</strong> &bull; Itens: <strong>${totalItems}</strong>
                                 </div>
                             </div>
                         </div>
-                        <button onclick="showPendingOrderDetails('${submission.id}')" style="background:#0054A6; color:white; padding:6px 12px; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem;">Ver Detalhes</button>
+                        <button onclick="showPendingOrderDetails('${submission.id}')" style="background:#0f172a; color:white; padding:8px 14px; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; flex-shrink:0;">Ver Detalhes</button>
                     </div>
                 `;
             });
@@ -1963,29 +2237,485 @@ function showPendingOrderDetails(submissionId) {
     const submission = orderSubmissionManager.getById(submissionId);
     if (!submission) return;
 
-    let itemsText = 'ITENS DO PEDIDO:\n';
+    const averageMargin = orderSubmissionManager.calculateMargin(submission);
+    const orderMarginStatus = getMarginStatus(averageMargin);
+
+    const existing = document.getElementById('detailsModalBackdrop');
+    if (existing) existing.remove();
+
+    const backdrop = document.createElement('div');
+    backdrop.id = 'detailsModalBackdrop';
+    backdrop.style = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:2005; display:flex; align-items:center; justify-content:center; padding:16px; font-family:"Outfit", sans-serif;';
+    
+    let itemsHtml = `
+        <div style="max-height: 400px; overflow-y: auto; margin-top: 15px; border: 1px solid #e2e8f0; border-radius: 6px;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
+                <thead style="background:#f8fafc; position:sticky; top:0;">
+                    <tr>
+                        <th style="padding:10px; text-align:left; border-bottom:1px solid #e2e8f0;">Cód</th>
+                        <th style="padding:10px; text-align:left; border-bottom:1px solid #e2e8f0;">Descrição</th>
+                        <th style="padding:10px; text-align:center; border-bottom:1px solid #e2e8f0;">Qtd</th>
+                        <th style="padding:10px; text-align:right; border-bottom:1px solid #e2e8f0;">Preço (CIF)</th>
+                        <th style="padding:10px; text-align:right; border-bottom:1px solid #e2e8f0;">Margem</th>
+                        <th style="padding:10px; text-align:right; border-bottom:1px solid #e2e8f0;">Subtotal</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+
     let totalCif = 0;
-    submission.cart.forEach(item => {
-        const subtotal = item.negotiatedPrice * (1 - parseFloat(document.getElementById('orderDiscount')?.value || 0) / 100) * item.qty;
+    const cartArray = Array.isArray(submission.cart) ? submission.cart : [];
+    cartArray.forEach(item => {
+        const qty = item.qty || 0;
+        const negotiatedPrice = Math.max(item.negotiatedPrice || item.cif || 0, 0);
+        const subtotal = negotiatedPrice * qty;
         totalCif += subtotal;
-        itemsText += `\n${item.codigo} - ${item.descricao}\n  Qtd: ${item.qty} | Preço Unit: R$ ${item.cif.toFixed(2)} | Subtotal: R$ ${subtotal.toFixed(2)}`;
+        const marginPercent = negotiatedPrice > 0 ? ((negotiatedPrice - item.fob) / negotiatedPrice) * 100 : 0;
+        const itemMarginColor = marginPercent > 15 ? '#15803d' : marginPercent >= 11 ? '#b45309' : '#c53030';
+        
+        itemsHtml += `
+            <tr style="border-bottom:1px solid #e2e8f0;">
+                <td style="padding:10px;">${item.codigo}</td>
+                <td style="padding:10px;">${(item.descricao||'').replace(/"/g,'')}</td>
+                <td style="padding:10px; text-align:center; font-weight:600;">${qty}</td>
+                <td style="padding:10px; text-align:right;">R$ ${negotiatedPrice.toFixed(2)}</td>
+                <td style="padding:10px; text-align:right; color:${itemMarginColor}; font-weight:600;">${marginPercent.toFixed(2)}%</td>
+                <td style="padding:10px; text-align:right; font-weight:600;">R$ ${subtotal.toFixed(2)}</td>
+            </tr>
+        `;
     });
 
-    alert(`
-PEDIDO: ${submission.orderNumber}
-CLIENTE: ${submission.clientName}
-REPRESENTANTE: ${submission.representativeName}
-ENVIADO POR: ${submission.submittedBy}
-EM: ${new Date(submission.submittedAt).toLocaleString('pt-BR')}
+    itemsHtml += `
+                </tbody>
+            </table>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:15px; padding:15px; background:#f8fafc; border-radius:6px; border:1px solid #e2e8f0;">
+            <div>
+                <span style="color:#475569; font-size:0.9rem;">Margem Média:</span><br>
+                <strong style="color:${orderMarginStatus.color}; font-size:1.1rem;">${averageMargin.toFixed(2)}%</strong> 
+                <span style="color:${orderMarginStatus.color}; font-weight:600; font-size:0.9rem;">(${orderMarginStatus.label})</span>
+            </div>
+            <div style="text-align:right;">
+                <span style="color:#475569; font-size:0.9rem;">Valor Total:</span><br>
+                <strong style="font-size:1.2rem; color:#0f172a;">R$ ${totalCif.toFixed(2)}</strong>
+            </div>
+        </div>
+    `;
 
-${itemsText}
+    const modal = document.createElement('div');
+    modal.style = 'background:white; padding:25px; border-radius:12px; width:90%; max-width:800px; box-shadow:0 10px 25px rgba(0,0,0,0.2); position:relative;';
+    
+    const submittedDate = new Date(submission.submittedAt).toLocaleString('pt-BR');
+    
+    modal.innerHTML = `
+        <button onclick="document.getElementById('detailsModalBackdrop').remove()" style="position:absolute; top:20px; right:20px; background:none; border:none; font-size:1.5rem; cursor:pointer; color:#64748b;">&times;</button>
+        <h2 style="margin:0 0 5px 0; color:#0f172a; font-size:1.3rem;">Detalhes do Pedido: ${submission.orderNumber}</h2>
+        <div style="color:#64748b; font-size:0.95rem; margin-bottom:20px;">
+            Enviado por <strong>${submission.submittedBy}</strong> em <strong>${submittedDate}</strong> para o cliente <strong>${submission.clientName}</strong>
+        </div>
+        ${itemsHtml}
+        <div style="text-align:right; margin-top:20px;">
+            <button onclick="document.getElementById('detailsModalBackdrop').remove()" style="background:#0f172a; color:white; padding:10px 20px; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Fechar</button>
+        </div>
+    `;
 
-TOTAL CIF: R$ ${totalCif.toFixed(2)}
-${submission.supervisorNote ? `
-Observação do Supervisor: ${submission.supervisorNote}` : ''}
-    `);
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
 }
 
 // ==========================================
 
 // ========================================
+
+// ==========================================
+// TABS E HISTÓRICO MELHORADO
+// ==========================================
+
+function switchTab(tabId) {
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    
+    const targetTab = document.getElementById(tabId);
+    if(targetTab) targetTab.classList.add('active');
+    const btn = document.getElementById('btn-' + tabId);
+    if(btn) btn.classList.add('active');
+
+    if(tabId === 'tab-history') {
+        const searchInput = document.getElementById('historySearchInput');
+        if (searchInput) {
+            searchInput.value = '';
+        }
+        renderHistoryTab();
+    }
+}
+
+// Sobrescrevendo a exibição antiga de histórico (para quando clicar em 'Meus Pedidos')
+// Extensão do orderSubmissionManager para suportar faturamento e notas fiscais
+if (!orderSubmissionManager.registerBilling) {
+    orderSubmissionManager.registerBilling = function(submissionId, billedItemsMap, invoiceBase64, invoiceName) {
+        const submission = this.submissions[submissionId];
+        if (!submission) return false;
+
+        if (!submission.billedQuantities) submission.billedQuantities = {};
+        if (!submission.invoices) submission.invoices = [];
+        if (!submission.billedQuantities) submission.billedQuantities = {};
+
+        let allComplete = true;
+        let anyBilled = false;
+
+        const cartItems = Array.isArray(submission.cart) ? submission.cart : [];
+        cartItems.forEach(item => {
+            const addedQty = billedItemsMap[item.codigo] || 0;
+            const currentTotal = (submission.billedQuantities[item.codigo] || 0) + addedQty;
+            submission.billedQuantities[item.codigo] = Math.min(currentTotal, item.qty);
+
+            if (submission.billedQuantities[item.codigo] > 0) anyBilled = true;
+            if (submission.billedQuantities[item.codigo] < item.qty) allComplete = false;
+        });
+
+        if (anyBilled && allComplete) {
+            submission.billingStatus = 'completo';
+        } else if (anyBilled) {
+            submission.billingStatus = 'parcial';
+        } else {
+            submission.billingStatus = 'pendente';
+        }
+
+        const now = new Date();
+        const nextPred = new Date();
+        nextPred.setDate(now.getDate() + 7);
+
+        if (!submission.billingHistory) submission.billingHistory = [];
+        submission.billingHistory.push({
+            date: now.toISOString(),
+            predictedNextDate: allComplete ? null : nextPred.toISOString(),
+            billedMap: billedItemsMap
+        });
+
+        if (invoiceBase64) {
+            submission.invoices.push({
+                name: invoiceName || 'Nota Fiscal',
+                data: invoiceBase64,
+                date: now.toISOString()
+            });
+        }
+
+        this.save();
+        return true;
+    };
+}
+
+function renderHistoryTab() {
+  try {
+    const historyContainer = document.getElementById('historyTabContent');
+    if (!historyContainer) { console.error('historyTabContent não encontrado'); return; }
+    const searchTerm = (document.getElementById('historySearchInput')?.value || '').toLowerCase();
+    
+    const currentUser = authManager.getCurrentUser();
+    const role = authManager.getCurrentUserRole();
+    
+    let submissions = orderSubmissionManager.getAll();
+    
+    // Vendedor vê só os seus, Supervisor vê todos
+    if (role === 'vendedor') {
+        const normalizedCurrent = authManager.normalizeUsername(currentUser);
+        submissions = submissions.filter(s =>
+            authManager.normalizeUsername(s.submittedBy) === normalizedCurrent ||
+            authManager.normalizeUsername(s.savedBy) === normalizedCurrent
+        );
+    }
+    
+    // Sort por data mais recente
+    submissions.sort((a, b) => {
+        const dateA = new Date(a.submittedAt || a.savedAt || 0);
+        const dateB = new Date(b.submittedAt || b.savedAt || 0);
+        return dateB - dateA;
+    });
+
+    if (searchTerm) {
+        submissions = submissions.filter(s => 
+            (s.orderNumber && s.orderNumber.toLowerCase().includes(searchTerm)) ||
+            (s.clientName && s.clientName.toLowerCase().includes(searchTerm)) ||
+            (s.submittedBy && s.submittedBy.toLowerCase().includes(searchTerm)) ||
+            (s.savedBy && s.savedBy.toLowerCase().includes(searchTerm)) ||
+            (s.id && s.id.toLowerCase().includes(searchTerm))
+        );
+    }
+
+    const roleNote = role === 'vendedor'
+        ? 'Você vê apenas seus próprios pedidos e rascunhos.'
+        : 'Supervisor/desenvolvedor vê todos os pedidos, inclusive os seus.';
+
+    if (submissions.length === 0) {
+        historyContainer.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">Nenhum pedido encontrado.</div>';
+        return;
+    }
+
+    let html = '';
+    html += `<div style="padding:12px 14px; margin-bottom:12px; border:1px solid #e2e8f0; border-radius:10px; background:#f8fafc; color:#0f172a; font-size:0.95rem;">
+        ${roleNote}
+    </div>`;
+    submissions.forEach(submission => {
+        const isDraft = submission.status === 'rascunho';
+        const dateStr = new Date(submission.submittedAt || submission.savedAt).toLocaleString('pt-BR');
+        
+        let statusBadge = '';
+        if(isDraft) statusBadge = `<span style="background:#f1f5f9; padding:4px 8px; border-radius:4px; font-weight:600;">📝 Rascunho</span>`;
+        else if(submission.status === 'analise') statusBadge = `<span style="background:#fef3c7; color:#92400e; padding:4px 8px; border-radius:4px; font-weight:600;">🔍 Em Análise</span>`;
+        else if(submission.status === 'aprovado') statusBadge = `<span style="background:#dcfce7; color:#15803d; padding:4px 8px; border-radius:4px; font-weight:600;">✅ Aprovado</span>`;
+        else if(submission.status === 'rejeitado') statusBadge = `<span style="background:#fee2e2; color:#b91c1c; padding:4px 8px; border-radius:4px; font-weight:600;">❌ Rejeitado</span>`;
+
+        let billingBadge = '';
+        const billingStatus = submission.billingStatus || (submission.status === 'aprovado' ? 'pendente' : null);
+        if (billingStatus) {
+            if (billingStatus === 'completo') billingBadge = `<span class="billing-progress complete">✅ Faturado completamente</span>`;
+            else if (billingStatus === 'parcial') billingBadge = `<span class="billing-progress partial">📦 Faturado parcialmente</span>`;
+            else if (billingStatus === 'pendente') billingBadge = `<span class="billing-progress pending">⏳ Aguardando faturamento</span>`;
+        }
+
+        const averageMargin = orderSubmissionManager.calculateMargin(submission);
+        const marginStatus = getMarginStatus(averageMargin);
+
+        const hasBillingInfo = submission.billedQuantities && Object.keys(submission.billedQuantities).length > 0;
+        const cartArray = Array.isArray(submission.cart) ? submission.cart : [];
+        const totalOrdered = cartArray.reduce((sum, item) => sum + (item.qty || 0), 0);
+        const totalBilled = cartArray.reduce((sum, item) => sum + ((submission.billedQuantities && submission.billedQuantities[item.codigo]) || 0), 0);
+
+        let billingSummaryHtml = '';
+        if (billingStatus) {
+            billingSummaryHtml = `<div style="margin-top:12px; font-size:0.95rem; color:#334155;"><strong>Faturamento:</strong> ${totalBilled} / ${totalOrdered} unidades</div>`;
+        }
+
+        let itemsHtml = `
+            <table class="history-item-table">
+                <tr>
+                    <th>Item</th>
+                    <th>Qtd Pedida</th>
+                    ${hasBillingInfo || submission.status === 'aprovado' ? '<th>Qtd Faturada</th>' : ''}
+                    <th>Valor Unit. (Negociado)</th>
+                    <th>Margem</th>
+                    <th>Subtotal</th>
+                </tr>
+        `;
+        
+        let totalCif = 0;
+        cartArray.forEach(item => {
+            const negotiated = Math.max(item.negotiatedPrice || item.cif, 0);
+            const subtotal = negotiated * item.qty; 
+            totalCif += subtotal;
+            const marginPercent = negotiated > 0 ? ((negotiated - item.fob) / negotiated) * 100 : 0;
+            const itemMarginColor = marginPercent > 15 ? '#15803d' : marginPercent >= 11 ? '#b45309' : '#c53030';
+            
+            let billedStr = '';
+            if (hasBillingInfo || submission.status === 'aprovado') {
+                const billed = (submission.billedQuantities && submission.billedQuantities[item.codigo]) || 0;
+                billedStr = `<td><strong>${billed} / ${item.qty}</strong></td>`;
+            }
+
+            itemsHtml += `
+                <tr>
+                    <td>${item.codigo} - ${item.descricao}</td>
+                    <td>${item.qty}</td>
+                    ${billedStr}
+                    <td>R$ ${negotiated.toFixed(2)}</td>
+                    <td style="text-align:center; color:${itemMarginColor};"><strong>${marginPercent.toFixed(2)}%</strong></td>
+                    <td>R$ ${subtotal.toFixed(2)}</td>
+                </tr>
+            `;
+        });
+        itemsHtml += `</table>`;
+
+        // Alertas de Rejeição/Supervisor
+        let notesHtml = '';
+        if (submission.status === 'rejeitado' && submission.rejectionReason) {
+            notesHtml += `<div style="background:#fee2e2; border:1px solid #fca5a5; padding:10px; margin-top:10px; border-radius:6px;">
+                <strong style="color:#b91c1c;">Motivo da Rejeição:</strong><br>
+                ${submission.rejectionReason}
+            </div>`;
+        }
+        if (submission.supervisorNote) {
+            notesHtml += `<div style="background:#eff6ff; border:1px solid #bfdbfe; padding:10px; margin-top:10px; border-radius:6px;">
+                <strong style="color:#1d4ed8;">Observação do Supervisor:</strong><br>
+                ${submission.supervisorNote}
+            </div>`;
+        }
+
+        // Histórico de Faturamento e Previsões
+        let billingHistoryHtml = '';
+        if (submission.billingHistory && submission.billingHistory.length > 0) {
+            billingHistoryHtml += `<div style="margin-top:10px; padding:10px; background:#f8fafc; border-radius:6px;">
+                <strong>Histórico de Faturamentos:</strong>
+                <ul style="margin:5px 0 0 20px; font-size:0.9rem;">`;
+            (Array.isArray(submission.billingHistory) ? submission.billingHistory : []).forEach(bh => {
+                const bDate = new Date(bh.date).toLocaleDateString('pt-BR');
+                const predDate = bh.predictedNextDate ? new Date(bh.predictedNextDate).toLocaleDateString('pt-BR') : 'Concluído';
+                billingHistoryHtml += `<li>Faturado em ${bDate} | Previsão próxima etapa: <strong>${predDate}</strong></li>`;
+            });
+            billingHistoryHtml += `</ul></div>`;
+        }
+
+        // Notas Fiscais anexadas
+        let invoicesHtml = '';
+        if (submission.invoices && submission.invoices.length > 0) {
+            invoicesHtml += `<div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">`;
+            (Array.isArray(submission.invoices) ? submission.invoices : []).forEach((inv, i) => {
+                invoicesHtml += `<a href="${inv.data}" download="${inv.name}_${submission.orderNumber}.pdf" style="background:#1e293b; color:white; padding:6px 12px; border-radius:4px; text-decoration:none; font-size:0.85rem; font-weight:600;">📄 Baixar ${inv.name}</a>`;
+            });
+            invoicesHtml += `</div>`;
+        }
+
+        // Ações
+        let actionsHtml = `<div style="margin-top:15px; display:flex; gap:10px; flex-wrap:wrap;">`;
+        if (isDraft) {
+            actionsHtml += `<button onclick="loadDraftToCurrentOrder('${submission.id}')" style="background:#0f172a; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">✏️ Continuar Rascunho</button>`;
+        } else {
+            actionsHtml += `<button onclick="repeatOrder('${submission.id}')" style="background:#64748b; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">🔁 Repetir Pedido</button>`;
+        }
+        
+        // Ações para Supervisor (Faturar)
+        if (role === 'supervisor' || role === 'desenvolvedor') {
+            if (submission.status === 'aprovado' && submission.billingStatus !== 'completo') {
+                actionsHtml += `<button onclick="openBillingModal('${submission.id}')" style="background:#0054A6; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">📦 Faturar / Anexar NF</button>`;
+            }
+        }
+        
+        actionsHtml += `<button onclick="deleteSubmission('${submission.id}')" style="background:#dc2626; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">🗑️ Excluir</button>`;
+        actionsHtml += `</div>`;
+
+        html += `
+            <div id="historyCard_${submission.id}" style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:10px;">
+                    <div>
+                        <h3 style="margin:0 0 5px 0;">Pedido: ${submission.orderNumber || 'Sem número'}</h3>
+                        <div style="font-size:0.95rem; color:#475569; line-height:1.4;">
+                            ID: <strong style="color:#0f172a;">${submission.id}</strong><br>
+                            Pedido: <strong>${submission.orderNumber || 'Sem número'}</strong><br>
+                            Cliente: <strong>${submission.clientName || 'Não informado'}</strong><br>
+                            Comprador / Usuário: <strong>${submission.submittedBy || submission.savedBy || '(Sem usuário)'}</strong><br>
+                            Margem média: <strong style="color:${marginStatus.color};">${averageMargin.toFixed(2)}%</strong> <span style="color:${marginStatus.color}; font-weight:700;">${marginStatus.label}</span><br>
+                            Data: ${dateStr}
+                        </div>
+                    </div>
+                    <div style="text-align:right; display:flex; flex-direction:column; gap:5px; align-items:flex-end;">
+                        ${statusBadge}
+                        ${billingBadge}
+                    </div>
+                </div>
+                ${itemsHtml}
+                ${notesHtml}
+                ${billingSummaryHtml}
+                ${billingHistoryHtml}
+                ${invoicesHtml}
+                ${actionsHtml}
+            </div>
+        `;
+    });
+
+    historyContainer.innerHTML = html;
+  } catch(e) {
+    console.error('Erro ao renderizar histórico:', e);
+    const hc = document.getElementById('historyTabContent');
+    if (hc) hc.innerHTML = `<div style="padding:20px; text-align:center; color:#c53030;"><strong>Erro ao carregar histórico:</strong> ${e.message}<br>Abra o console (F12) para detalhes.</div>`;
+  }
+}
+
+// Faturamento Modal (Supervisor)
+function openBillingModal(submissionId) {
+    const submission = orderSubmissionManager.getById(submissionId);
+    if(!submission) return;
+
+    let itemsHtml = '';
+    (Array.isArray(submission.cart) ? submission.cart : []).forEach((item, idx) => {
+        const billed = (submission.billedQuantities && submission.billedQuantities[item.codigo]) || 0;
+        const remaining = item.qty - billed;
+        if (remaining > 0) {
+            itemsHtml += `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:10px;">
+                    <div style="flex:1;">
+                        <strong>${item.codigo}</strong><br>
+                        <small>${item.descricao}</small><br>
+                        <small>Pedida: ${item.qty} | Já Faturada: ${billed} | Restante: ${remaining}</small>
+                    </div>
+                    <div>
+                        <input type="number" id="billQty_${idx}" class="bill-qty-input" data-codigo="${item.codigo}" data-max="${remaining}" value="${remaining}" min="0" max="${remaining}" style="width:80px; padding:5px;">
+                    </div>
+                </div>
+            `;
+        }
+    });
+
+    // Construir Modal Dinamicamente
+    const modalId = 'billingModalDynamic';
+    let modal = document.getElementById(modalId);
+    if(modal) modal.remove();
+
+    modal = document.createElement('div');
+    modal.id = modalId;
+    modal.style = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:2000; display:flex; align-items:center; justify-content:center;";
+    
+    modal.innerHTML = `
+        <div style="background:white; border-radius:8px; padding:20px; width:90%; max-width:500px; max-height:90vh; overflow-y:auto;">
+            <h3 style="margin-top:0;">📦 Registrar Faturamento</h3>
+            <p>Pedido: <strong>${submission.orderNumber}</strong></p>
+            <div style="margin:20px 0;">
+                ${itemsHtml}
+            </div>
+            <div style="margin:20px 0;">
+                <label style="font-weight:600; display:block; margin-bottom:8px;">Anexar Nota Fiscal (PDF ou Imagem)</label>
+                <input type="file" id="billingInvoiceFile" accept="application/pdf,image/*" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px;">
+                <small style="color:#666; display:block; margin-top:4px;">*O arquivo será convertido para base64 e salvo (limite recomendado: 2MB).</small>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button onclick="document.getElementById('${modalId}').remove()" style="padding:10px 15px; background:#ccc; border:none; border-radius:6px; cursor:pointer;">Cancelar</button>
+                <button onclick="submitBilling('${submissionId}')" style="padding:10px 15px; background:#0054A6; color:white; border:none; border-radius:6px; cursor:pointer;">Confirmar Faturamento</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+}
+
+function submitBilling(submissionId) {
+    const inputs = document.querySelectorAll('.bill-qty-input');
+    const billedMap = {};
+    let hasItems = false;
+    
+    inputs.forEach(inp => {
+        const val = parseInt(inp.value) || 0;
+        const code = inp.getAttribute('data-codigo');
+        if (val > 0) {
+            billedMap[code] = val;
+            hasItems = true;
+        }
+    });
+
+    const fileInput = document.getElementById('billingInvoiceFile');
+    const file = fileInput.files[0];
+
+    if (!hasItems && !file) {
+        alert("Informe alguma quantidade ou anexe uma Nota Fiscal.");
+        return;
+    }
+
+    if (file) {
+        if (file.size > 2 * 1024 * 1024) { 
+            alert("Para esta demonstração local, por favor selecione um arquivo menor que 2MB.");
+            return;
+        }
+        
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const base64Data = e.target.result;
+            orderSubmissionManager.registerBilling(submissionId, billedMap, base64Data, file.name);
+            document.getElementById('billingModalDynamic').remove();
+            renderHistoryTab();
+            alert("Faturamento registrado com sucesso!");
+        };
+        reader.readAsDataURL(file);
+    } else {
+        orderSubmissionManager.registerBilling(submissionId, billedMap, null, null);
+        document.getElementById('billingModalDynamic').remove();
+        renderHistoryTab();
+        alert("Faturamento registrado com sucesso!");
+    }
+}
