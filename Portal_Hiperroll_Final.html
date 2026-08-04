@@ -298,8 +298,8 @@
                 <input id="loginUsername" placeholder="Usuário" autocomplete="username">
                 <input id="loginPassword" type="password" placeholder="Senha" autocomplete="current-password">
                 <div class="login-actions">
-                    <button onclick="registerUser()" type="button">Registrar Vendedor</button>
-                    <button onclick="loginUser()" type="button">Entrar</button>
+                    <button type="button" id="registerUserButton">Registrar Vendedor</button>
+                    <button type="button" id="loginUserButton">Entrar</button>
                 </div>
                 <div class="login-note">Apenas registro de vendedores é permitido aqui. O supervisor terá um login exclusivo configurado separadamente.</div>
                 <div id="loginMessage" class="login-message"></div>
@@ -310,7 +310,48 @@
     <!-- html2pdf for controlled PDF export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js"></script>
     <script src="data.js?v=5"></script>
-    <script src="script_v5.js"></script>
+    <script>
+        (function () {
+            function showLoginMessage(message) {
+                var element = document.getElementById('loginMessage');
+                if (element) {
+                    element.style.display = 'block';
+                    element.textContent = message;
+                }
+            }
+
+            function bindLoginFallback() {
+                var button = document.getElementById('loginUserButton');
+                if (!button || button.dataset.boundFallback) return;
+                button.dataset.boundFallback = 'true';
+                button.addEventListener('click', function () {
+                    if (typeof window.loginUser === 'function') {
+                        window.loginUser();
+                    } else {
+                        showLoginMessage('O módulo de login não foi carregado. Verifique se o arquivo script_v5.js está na mesma pasta.');
+                    }
+                });
+            }
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', bindLoginFallback);
+            } else {
+                bindLoginFallback();
+            }
+        }());
+    </script>
+    <script src="script_v5.js?v=20260731b"></script>
+    <script>
+        window.addEventListener('load', function () {
+            if (typeof window.loginUser !== 'function') {
+                var message = document.getElementById('loginMessage');
+                if (message) {
+                    message.style.display = 'block';
+                    message.textContent = 'O sistema não carregou o módulo de login. Reabra esta página ou use um servidor local.';
+                }
+            }
+        });
+    </script>
 </body>
 
 </html>

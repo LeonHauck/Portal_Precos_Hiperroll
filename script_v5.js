@@ -86,15 +86,24 @@ const statusManager = {
             return;
         }
 
-        const allowedByRole = {
-            'vendedor': ['rascunho', 'analise'],
-            'supervisor': ['rascunho', 'analise', 'aprovado', 'rejeitado'],
-            'desenvolvedor': ['rascunho', 'analise', 'aprovado', 'rejeitado']
-        };
+        // Todos os usuários autenticados podem definir Rascunho ou Em Análise
+        if (['rascunho', 'analise'].includes(newStatus)) {
+            if (newStatus !== this.currentStatus) {
+                orderManager.ensureCreator(user);
+                this.addHistoryEntry(newStatus, '', user);
+                this.currentStatus = newStatus;
+                this.updateUI();
+                updateSupervisorPanel();
+            }
+            return;
+        }
 
-        const role = userRole || 'vendedor';
-        if (!allowedByRole[role].includes(newStatus)) {
-            alert('Você não tem permissão para alterar para esse status.');
+        // Para aprovar/rejeitar, permitir somente usuários específicos (Leon e Gabriel)
+        const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
+        const currentNormalized = normalize(user);
+        const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
+        if (!allowedApprovers.includes(currentNormalized)) {
+            alert('Apenas Gabriel ou Leon podem aprovar ou rejeitar pedidos.');
             return;
         }
 
@@ -131,9 +140,11 @@ const statusManager = {
             statusSelect.style.color = color.text;
             statusSelect.style.fontWeight = '600';
             statusSelect.style.border = `2px solid ${color.text}`;
-            const role = (typeof authManager !== 'undefined') ? authManager.getCurrentUserRole() : 'vendedor';
+            const currentUser = (typeof authManager !== 'undefined') ? authManager.getCurrentUser() : null;
+            const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
+            const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
             Array.from(statusSelect.options).forEach(opt => {
-                if (role === 'vendedor' && ['aprovado', 'rejeitado'].includes(opt.value)) {
+                if (['aprovado', 'rejeitado'].includes(opt.value) && !allowedApprovers.includes(normalize(currentUser))) {
                     opt.disabled = true;
                     opt.style.color = '#999';
                 } else {
@@ -172,7 +183,8 @@ const authManager = {
     currentRole: null,
 
     normalizeUsername(username) {
-        return String(username || '').trim().toLowerCase();
+        const normalized = String(username || '').trim().toLowerCase();
+        return normalized === 'gabriel' ? 'gabriel.ferreira' : normalized;
     },
 
     findUser(username) {
@@ -194,8 +206,8 @@ const authManager = {
                     memo[username] = { passwordHash: value, role: 'vendedor' };
                 } else {
                     memo[username] = {
-                        passwordHash: value.passwordHash || '',
-                        role: String(value.role || 'vendedor').trim().toLowerCase()
+                        passwordHash: value && value.passwordHash ? value.passwordHash : '',
+                        role: String((value && value.role) || 'vendedor').trim().toLowerCase()
                     };
                 }
                 return memo;
@@ -249,9 +261,19 @@ const authManager = {
     },
 
     async hashPassword(password) {
+        const fallbackHashes = {
+            l24598: '1367a34fa85547737f3e5f23eaf4dea178c49f17b16bc8b599849663313e69b1',
+            gf2026: '31df622c549e72945b4ad2405dc7c0ae00ff845b5a715dd86f7f4500075c8251'
+        };
+        if (!globalThis.crypto || !globalThis.crypto.subtle) {
+            if (Object.prototype.hasOwnProperty.call(fallbackHashes, password)) {
+                return fallbackHashes[password];
+            }
+            throw new Error('A segurança do navegador está indisponível. Abra o portal por um servidor local.');
+        }
         const enc = new TextEncoder();
         const data = enc.encode(password);
-        const hash = await crypto.subtle.digest('SHA-256', data);
+        const hash = await globalThis.crypto.subtle.digest('SHA-256', data);
         return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
     },
 
@@ -515,6 +537,9 @@ const orderSubmissionManager = {
                 this.submissions[id].status = 'aprovado';
                 this.submissions[id].approvalAt = new Date().toISOString();
                 this.submissions[id].approvalBy = approvedBy;
+                const approvalDate = new Date(this.submissions[id].approvalAt);
+                const predictedBilling = new Date(approvalDate.getTime() + 8 * 24 * 60 * 60 * 1000);
+                this.submissions[id].predictedBillingDate = predictedBilling.toISOString();
                 this.submissions[id].rejectionReason = '';
                 this.submissions[id].supervisorNote = supervisorNote || this.submissions[id].supervisorNote || '';
             }
@@ -1502,14 +1527,64 @@ async function loginUser() {
     const u = document.getElementById('loginUsername')?.value.trim();
     const p = document.getElementById('loginPassword')?.value || '';
     const msg = document.getElementById('loginMessage');
+    const loginButton = document.querySelector('.login-actions button:last-child');
+    if (loginButton) loginButton.disabled = true;
     try {
         await authManager.login(u, p);
         if (msg) { msg.style.display = 'none'; }
         closeLoginModal();
         updateSupervisorPanel();
     } catch (e) {
-        if (msg) { msg.style.display = 'block'; msg.textContent = e.message || 'Erro no login.'; }
+        if (msg) {
+            msg.style.display = 'block';
+            msg.textContent = e.message || 'Não foi possível entrar. Confira usuário e senha.';
+        }
+    } finally {
+        if (loginButton) loginButton.disabled = false;
     }
+}
+
+function showLoginError(message) {
+    const msg = document.getElementById('loginMessage');
+    if (msg) {
+        msg.style.display = 'block';
+        msg.textContent = message || 'Não foi possível carregar o login.';
+    }
+}
+
+function bindLoginControls() {
+    const loginButton = document.querySelector('.login-actions button:last-child');
+    const registerButton = document.querySelector('.login-actions button:first-child');
+    const passwordInput = document.getElementById('loginPassword');
+
+    if (loginButton && !loginButton.dataset.bound) {
+        loginButton.dataset.bound = 'true';
+        loginButton.addEventListener('click', loginUser);
+    }
+    if (registerButton && !registerButton.dataset.bound) {
+        registerButton.dataset.bound = 'true';
+        registerButton.addEventListener('click', registerUser);
+    }
+    if (passwordInput && !passwordInput.dataset.bound) {
+        passwordInput.dataset.bound = 'true';
+        passwordInput.addEventListener('keydown', event => {
+            if (event.key === 'Enter') loginUser();
+        });
+    }
+}
+
+window.addEventListener('error', event => {
+    if (document.getElementById('loginScreen')) {
+        showLoginError(`Erro ao carregar o sistema: ${event.message || 'verifique o arquivo script_v5.js'}`);
+    }
+});
+
+window.loginUser = loginUser;
+window.registerUser = registerUser;
+if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', bindLoginControls);
+} else {
+    bindLoginControls();
 }
 
 async function registerUser() {
@@ -2037,6 +2112,18 @@ function openSupervisorOrderActions(submissionId) {
     const backdrop = document.createElement('div');
     backdrop.id = 'supervisorActionModalBackdrop';
     backdrop.style = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:2001; display:flex; align-items:center; justify-content:center; padding:16px;';
+    const normalizeBtn = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
+    const allowedApproversBtns = [normalizeBtn('Leon'), normalizeBtn('Gabriel.Ferreira')];
+    const currentNormalizedBtn = normalizeBtn(currentUser);
+
+    const approveBtnHtml = allowedApproversBtns.includes(currentNormalizedBtn)
+        ? `<button onclick="handleSupervisorAction('${submission.id}', 'approve')" style="padding:11px 18px; background:#10b981; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600;">✅ Aprovar</button>`
+        : `<button disabled title="Apenas Gabriel ou Leon podem aprovar" style="padding:11px 18px; background:#94d3b6; color:#093f2a; border:none; border-radius:8px;">✅ Aprovar</button>`;
+
+    const rejectBtnHtml = allowedApproversBtns.includes(currentNormalizedBtn)
+        ? `<button onclick="handleSupervisorAction('${submission.id}', 'reject')" style="padding:11px 18px; background:#ef4444; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600;">❌ Rejeitar</button>`
+        : `<button disabled title="Apenas Gabriel ou Leon podem rejeitar" style="padding:11px 18px; background:#f7a8a8; color:#5a1a1a; border:none; border-radius:8px;">❌ Rejeitar</button>`;
+
     backdrop.innerHTML = `
         <div style="background:white; border-radius:12px; padding:22px; max-width:680px; width:100%; max-height:calc(100vh - 40px); overflow-y:auto; box-shadow:0 14px 38px rgba(0,0,0,0.2);">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:18px;">
@@ -2065,8 +2152,8 @@ function openSupervisorOrderActions(submissionId) {
             </div>
             <div style="margin-top:18px; display:flex; flex-wrap:wrap; gap:12px; justify-content:flex-end;">
                 <button onclick="handleSupervisorAction('${submission.id}', 'saveNote')" style="padding:11px 18px; background:#0f172a; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600;">💬 Salvar Observação</button>
-                <button onclick="handleSupervisorAction('${submission.id}', 'approve')" style="padding:11px 18px; background:#10b981; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600;">✅ Aprovar</button>
-                <button onclick="handleSupervisorAction('${submission.id}', 'reject')" style="padding:11px 18px; background:#ef4444; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600;">❌ Rejeitar</button>
+                ${approveBtnHtml}
+                ${rejectBtnHtml}
             </div>
         </div>
     `;
@@ -2078,11 +2165,22 @@ function handleSupervisorAction(submissionId, action) {
     const currentUser = authManager.getCurrentUser();
     const note = document.getElementById('supervisorActionNote')?.value.trim() || '';
     const reason = document.getElementById('supervisorActionRejectionReason')?.value.trim() || '';
+    const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
+    const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
+    const currentNormalized = normalize(currentUser);
 
     if (action === 'approve') {
+        if (!allowedApprovers.includes(currentNormalized)) {
+            alert('Apenas Gabriel ou Leon podem aprovar pedidos.');
+            return;
+        }
         orderSubmissionManager.approve(submissionId, currentUser, note);
         alert('Pedido aprovado com sucesso.');
     } else if (action === 'reject') {
+        if (!allowedApprovers.includes(currentNormalized)) {
+            alert('Apenas Gabriel ou Leon podem rejeitar pedidos.');
+            return;
+        }
         if (!reason) {
             alert('Informe o motivo da rejeição antes de rejeitar o pedido.');
             return;
@@ -2090,6 +2188,7 @@ function handleSupervisorAction(submissionId, action) {
         orderSubmissionManager.reject(submissionId, reason, currentUser, note);
         alert('Pedido rejeitado com sucesso.');
     } else if (action === 'saveNote') {
+        // Any supervisor or developer can save notes; keep existing behavior
         orderSubmissionManager.setSupervisorNote(submissionId, note);
         alert('Observação salva com sucesso.');
     }
@@ -2198,6 +2297,13 @@ function approvePendingOrders() {
     }
 
     const currentUser = authManager.getCurrentUser();
+    const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
+    const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
+    if (!allowedApprovers.includes(normalize(currentUser))) {
+        alert('Apenas Gabriel ou Leon podem aprovar pedidos.');
+        return;
+    }
+
     const supervisorNote = document.getElementById('supervisorObservationTextarea')?.value.trim() || '';
     orderSubmissionManager.approve(selected, currentUser, supervisorNote);
     updateSupervisorPanel();
@@ -2213,7 +2319,6 @@ function rejectPendingOrders() {
         alert('Selecione ao menos um pedido para rejeitar.');
         return;
     }
-
     const reason = document.getElementById('rejectionReasonTextarea')?.value.trim() || '';
     if (!reason) {
         alert('Insira um motivo para a rejeição.');
@@ -2221,6 +2326,13 @@ function rejectPendingOrders() {
     }
 
     const currentUser = authManager.getCurrentUser();
+    const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
+    const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
+    if (!allowedApprovers.includes(normalize(currentUser))) {
+        alert('Apenas Gabriel ou Leon podem rejeitar pedidos.');
+        return;
+    }
+
     const supervisorNote = document.getElementById('supervisorObservationTextarea')?.value.trim() || '';
     orderSubmissionManager.reject(selected, reason, currentUser, supervisorNote);
     updateSupervisorPanel();
@@ -2382,8 +2494,8 @@ if (!orderSubmissionManager.registerBilling) {
         }
 
         const now = new Date();
-        const nextPred = new Date();
-        nextPred.setDate(now.getDate() + 7);
+        const nextPred = new Date(now);
+        nextPred.setDate(nextPred.getDate() + 4);
 
         if (!submission.billingHistory) submission.billingHistory = [];
         submission.billingHistory.push({
@@ -2391,6 +2503,10 @@ if (!orderSubmissionManager.registerBilling) {
             predictedNextDate: allComplete ? null : nextPred.toISOString(),
             billedMap: billedItemsMap
         });
+
+        if (anyBilled) {
+            submission.predictedBillingDate = allComplete ? null : nextPred.toISOString();
+        }
 
         if (invoiceBase64) {
             submission.invoices.push({
@@ -2473,6 +2589,12 @@ function renderHistoryTab() {
             else if (billingStatus === 'pendente') billingBadge = `<span class="billing-progress pending">⏳ Aguardando faturamento</span>`;
         }
 
+        const predictedBillingDate = submission.predictedBillingDate ? new Date(submission.predictedBillingDate).toLocaleDateString('pt-BR') : null;
+        let predictedBillingBadge = '';
+        if (predictedBillingDate && submission.status === 'aprovado' && billingStatus !== 'completo') {
+            predictedBillingBadge = `<span style="background:#e0f2fe; color:#0369a1; padding:4px 8px; border-radius:4px; font-weight:600; display:inline-block;">📅 Previsão faturamento: ${predictedBillingDate}</span>`;
+        }
+
         const averageMargin = orderSubmissionManager.calculateMargin(submission);
         const marginStatus = getMarginStatus(averageMargin);
 
@@ -2484,6 +2606,11 @@ function renderHistoryTab() {
         let billingSummaryHtml = '';
         if (billingStatus) {
             billingSummaryHtml = `<div style="margin-top:12px; font-size:0.95rem; color:#334155;"><strong>Faturamento:</strong> ${totalBilled} / ${totalOrdered} unidades</div>`;
+        }
+
+        let predictedBillingHtml = '';
+        if (submission.status === 'aprovado' && billingStatus !== 'completo' && predictedBillingDate) {
+            predictedBillingHtml = `<div style="margin-top:8px; font-size:0.95rem; color:#334155;"><strong>Previsão de faturamento:</strong> ${predictedBillingDate}</div>`;
         }
 
         let itemsHtml = `
@@ -2599,11 +2726,13 @@ function renderHistoryTab() {
                     <div style="text-align:right; display:flex; flex-direction:column; gap:5px; align-items:flex-end;">
                         ${statusBadge}
                         ${billingBadge}
+                        ${predictedBillingBadge}
                     </div>
                 </div>
                 ${itemsHtml}
                 ${notesHtml}
                 ${billingSummaryHtml}
+                ${predictedBillingHtml}
                 ${billingHistoryHtml}
                 ${invoicesHtml}
                 ${actionsHtml}
