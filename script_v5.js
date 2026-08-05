@@ -90,7 +90,8 @@ const statusManager = {
         if (['rascunho', 'analise'].includes(newStatus)) {
             if (newStatus !== this.currentStatus) {
                 orderManager.ensureCreator(user);
-                this.addHistoryEntry(newStatus, '', user);
+                // Alteração temporária do seletor/visual não deve criar entrada no histórico.
+                // Histórico será criado apenas ao salvar/enviar (saveDraft / submitOrder).
                 this.currentStatus = newStatus;
                 this.updateUI();
                 updateSupervisorPanel();
@@ -542,6 +543,15 @@ const orderSubmissionManager = {
                 this.submissions[id].predictedBillingDate = predictedBilling.toISOString();
                 this.submissions[id].rejectionReason = '';
                 this.submissions[id].supervisorNote = supervisorNote || this.submissions[id].supervisorNote || '';
+                try {
+                    if (typeof statusManager !== 'undefined' && statusManager && typeof statusManager.addHistoryEntry === 'function') {
+                        statusManager.addHistoryEntry('aprovado', 'Aprovado por supervisor', approvedBy);
+                        statusManager.currentStatus = 'aprovado';
+                        statusManager.updateUI();
+                    }
+                } catch (e) {
+                    console.warn('Não foi possível registrar histórico de aprovação:', e);
+                }
             }
         });
         this.save();
@@ -556,6 +566,15 @@ const orderSubmissionManager = {
                 this.submissions[id].rejectionBy = rejectedBy;
                 this.submissions[id].rejectionAt = new Date().toISOString();
                 this.submissions[id].supervisorNote = supervisorNote || this.submissions[id].supervisorNote || '';
+                try {
+                    if (typeof statusManager !== 'undefined' && statusManager && typeof statusManager.addHistoryEntry === 'function') {
+                        statusManager.addHistoryEntry('rejeitado', reason || 'Rejeitado pelo supervisor', rejectedBy);
+                        statusManager.currentStatus = 'rejeitado';
+                        statusManager.updateUI();
+                    }
+                } catch (e) {
+                    console.warn('Não foi possível registrar histórico de rejeição:', e);
+                }
             }
         });
         this.save();
@@ -1878,6 +1897,15 @@ function submitOrder() {
             msg.style.color = '#15803d';
         }
 
+        // Registrar no histórico apenas quando o pedido for efetivamente enviado
+        try {
+            statusManager.addHistoryEntry('analise', 'Enviado para análise', currentUser);
+            statusManager.currentStatus = 'analise';
+            statusManager.updateUI();
+        } catch (e) {
+            console.warn('Não foi possível registrar histórico de envio:', e);
+        }
+
         activeDraftId = null;
         setLoadedOrderReference('');
         setTimeout(() => {
@@ -1937,6 +1965,14 @@ function saveDraftCurrentOrder() {
         activeDraftId = draftId;
         renderDraftsPanel();
         renderHistoryTab();
+        // Registrar no histórico apenas quando o rascunho for efetivamente salvo
+        try {
+            statusManager.addHistoryEntry('rascunho', 'Rascunho salvo', currentUser);
+            statusManager.currentStatus = 'rascunho';
+            statusManager.updateUI();
+        } catch (e) {
+            console.warn('Não foi possível registrar histórico do rascunho:', e);
+        }
         alert('Rascunho salvo com sucesso. Ele já está disponível no painel de rascunhos.');
     } catch (e) {
         alert(e.message);
