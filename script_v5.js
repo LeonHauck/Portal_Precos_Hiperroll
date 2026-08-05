@@ -12,6 +12,8 @@ const cart = []; // Store order items
 let currentOrderMargin = 0;
 let activeDraftId = null;
 
+console.log('[Portal Hiperroll] script_v5.js loaded');
+
 function getMarginStatus(margin) {
     if (margin > 15) {
         return { label: 'Verde', color: '#15803d', description: 'Margem segura' };
@@ -1891,11 +1893,19 @@ function submitOrder() {
             currentUser,
             draftIdToUse
         );
+        console.log('[Portal Hiperroll] submitOrder() saved submission', {
+            submissionId,
+            newCount: Object.keys(orderSubmissionManager.submissions || {}).length,
+            submission: orderSubmissionManager.getById(submissionId)
+        });
 
         if (msg) {
             msg.textContent = '✓ Pedido enviado para análise! ID: ' + submissionId;
             msg.style.color = '#15803d';
         }
+
+        console.log('[Portal Hiperroll] submitOrder() called, submissionId=', submissionId);
+        console.log('[Portal Hiperroll] orderSubmissionManager count before save =', Object.keys(orderSubmissionManager.submissions || {}).length);
 
         // Registrar no histórico apenas quando o pedido for efetivamente enviado
         try {
@@ -1906,8 +1916,15 @@ function submitOrder() {
             console.warn('Não foi possível registrar histórico de envio:', e);
         }
 
+        const historySearchInput = document.getElementById('historySearchInput');
+        if (historySearchInput) {
+            historySearchInput.value = '';
+        }
         activeDraftId = null;
         setLoadedOrderReference('');
+        switchTab('tab-history');
+        renderHistoryTab();
+
         setTimeout(() => {
             closeSubmitOrderModal();
             cart.length = 0;
@@ -1922,10 +1939,6 @@ function submitOrder() {
             document.getElementById('clientName').value = '';
             document.getElementById('representativeName').value = '';
             alert('Pedido enviado com sucesso! Aguardando aprovação do supervisor.');
-            const searchInput = document.getElementById('historySearchInput');
-            if (searchInput) {
-                searchInput.value = '';
-            }
             switchTab('tab-history');
             renderHistoryTab();
             setTimeout(() => highlightHistoryCard(submissionId), 250);
@@ -2229,6 +2242,8 @@ function handleSupervisorAction(submissionId, action) {
         alert('Observação salva com sucesso.');
     }
     closeSupervisorActionModal();
+    const searchInput = document.getElementById('historySearchInput');
+    if (searchInput) searchInput.value = '';
     renderHistoryTab();
     updateSupervisorPanel();
 }
@@ -2342,7 +2357,11 @@ function approvePendingOrders() {
 
     const supervisorNote = document.getElementById('supervisorObservationTextarea')?.value.trim() || '';
     orderSubmissionManager.approve(selected, currentUser, supervisorNote);
+    console.log('[Portal Hiperroll] approvePendingOrders() called, selected=', selected);
     updateSupervisorPanel();
+    const searchInput = document.getElementById('historySearchInput');
+    if (searchInput) searchInput.value = '';
+    renderHistoryTab();
     alert(`${selected.length} pedido(s) aprovado(s) com sucesso!`);
     if (document.getElementById('supervisorObservationTextarea')) {
         document.getElementById('supervisorObservationTextarea').value = '';
@@ -2372,6 +2391,9 @@ function rejectPendingOrders() {
     const supervisorNote = document.getElementById('supervisorObservationTextarea')?.value.trim() || '';
     orderSubmissionManager.reject(selected, reason, currentUser, supervisorNote);
     updateSupervisorPanel();
+    const searchInput = document.getElementById('historySearchInput');
+    if (searchInput) searchInput.value = '';
+    renderHistoryTab();
     alert(`${selected.length} pedido(s) rejeitado(s) com sucesso!`);
     if (document.getElementById('rejectionReasonTextarea')) {
         document.getElementById('rejectionReasonTextarea').value = '';
@@ -2480,15 +2502,21 @@ function showPendingOrderDetails(submissionId) {
 // ==========================================
 
 function switchTab(tabId) {
-    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => {
+        t.classList.remove('active');
+        t.style.display = 'none';
+    });
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     
     const targetTab = document.getElementById(tabId);
-    if(targetTab) targetTab.classList.add('active');
+    if (targetTab) {
+        targetTab.classList.add('active');
+        targetTab.style.display = 'block';
+    }
     const btn = document.getElementById('btn-' + tabId);
-    if(btn) btn.classList.add('active');
+    if (btn) btn.classList.add('active');
 
-    if(tabId === 'tab-history') {
+    if (tabId === 'tab-history') {
         const searchInput = document.getElementById('historySearchInput');
         if (searchInput) {
             searchInput.value = '';
@@ -2567,6 +2595,12 @@ function renderHistoryTab() {
     const role = authManager.getCurrentUserRole();
     
     let submissions = orderSubmissionManager.getAll();
+    console.log('[Portal Hiperroll] renderHistoryTab start', {
+        currentUser,
+        role,
+        totalSubmissions: submissions.length,
+        searchTerm
+    });
     
     // Vendedor vê só os seus, Supervisor vê todos
     if (role === 'vendedor') {
@@ -2576,6 +2610,11 @@ function renderHistoryTab() {
             authManager.normalizeUsername(s.savedBy) === normalizedCurrent
         );
     }
+    console.log('[Portal Hiperroll] renderHistoryTab after role filter', {
+        role,
+        filteredCount: submissions.length,
+        filteredIds: submissions.map(s => ({ id: s.id, status: s.status, orderNumber: s.orderNumber, submittedBy: s.submittedBy }))
+    });
     
     // Sort por data mais recente
     submissions.sort((a, b) => {

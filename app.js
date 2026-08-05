@@ -730,7 +730,7 @@ function setupEventListeners() {
                     let width = img.width;
                     let height = img.height;
 
-                    // Mantém proporï¿½ï¿½o da imagem ao redimensionar
+                    // Mantém proporcao da imagem ao redimensionar
                     if (width > height) {
                         if (width > maxWidth) {
                             height = Math.round((height * maxWidth) / width);
