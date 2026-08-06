@@ -2113,12 +2113,20 @@ function showSubmissionDetails(submissionId) {
     const timestamp = submission.status === 'rascunho' ? submission.savedAt : submission.submittedAt;
     const dateLabel = timestamp ? new Date(timestamp).toLocaleString('pt-BR') : '---';
 
+    let total = 0;
+    (submission.cart || []).forEach(item => {
+        const qty = item.qty || 0;
+        const unit = parseFloat(item.negotiatedPrice || item.cif || 0) || 0;
+        total += qty * unit;
+    });
+
     alert(`Pedido: ${submission.orderNumber}
 Cliente: ${submission.clientName}
 Representante: ${submission.representativeName}
 Criado por: ${submission.submittedBy || submission.savedBy || '(Sem usuário)'}
 Status: ${statusLabel}
 Margem média: ${averageMargin.toFixed(2)}% (${marginStatus.label})
+Valor Total do Pedido: R$ ${total.toFixed(2)}
 ${submission.status === 'rascunho' ? 'Salvo em:' : 'Enviado em:'} ${dateLabel}
 ${submission.rejectionReason ? `Motivo da Rejeição: ${submission.rejectionReason}
 ` : ''}${submission.supervisorNote ? `Observação do Supervisor: ${submission.supervisorNote}` : ''}`);
@@ -2678,6 +2686,13 @@ function renderHistoryTab() {
         const totalOrdered = cartArray.reduce((sum, item) => sum + (item.qty || 0), 0);
         const totalBilled = cartArray.reduce((sum, item) => sum + ((submission.billedQuantities && submission.billedQuantities[item.codigo]) || 0), 0);
 
+        let totalCif = 0;
+        cartArray.forEach(item => {
+            const negotiated = Math.max(item.negotiatedPrice || item.cif, 0);
+            const subtotal = negotiated * item.qty; 
+            totalCif += subtotal;
+        });
+
         let billingSummaryHtml = '';
         if (billingStatus) {
             billingSummaryHtml = `<div style="margin-top:12px; font-size:0.95rem; color:#334155;"><strong>Faturamento:</strong> ${totalBilled} / ${totalOrdered} unidades</div>`;
@@ -2700,11 +2715,9 @@ function renderHistoryTab() {
                 </tr>
         `;
         
-        let totalCif = 0;
         cartArray.forEach(item => {
             const negotiated = Math.max(item.negotiatedPrice || item.cif, 0);
             const subtotal = negotiated * item.qty; 
-            totalCif += subtotal;
             const marginPercent = negotiated > 0 ? ((negotiated - item.fob) / negotiated) * 100 : 0;
             const itemMarginColor = marginPercent > 15 ? '#15803d' : marginPercent >= 11 ? '#b45309' : '#c53030';
             
@@ -2795,6 +2808,7 @@ function renderHistoryTab() {
                             Cliente: <strong>${submission.clientName || 'Não informado'}</strong><br>
                             Comprador / Usuário: <strong>${submission.submittedBy || submission.savedBy || '(Sem usuário)'}</strong><br>
                             Margem média: <strong style="color:${marginStatus.color};">${averageMargin.toFixed(2)}%</strong> <span style="color:${marginStatus.color}; font-weight:700;">${marginStatus.label}</span><br>
+                            Total do Pedido: <strong>R$ ${totalCif.toFixed(2)}</strong><br>
                             Data: ${dateStr}
                         </div>
                     </div>
