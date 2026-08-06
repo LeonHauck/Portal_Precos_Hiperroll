@@ -79,7 +79,17 @@ O Portal de Preços foi desenvolvido para rodar no navegador de forma independen
 
 ---
 
-## 📊 Fluxo de Geração de Pedidos
+## � Configuração de Usuários e Credenciais
+
+- O projeto também suporta variáveis de ambiente locais em um arquivo `.env`.
+- Use o arquivo `.env.example` como modelo e nunca comite o `.env` no Git.
+- O `auth.php` usa `.env` apenas como fallback de desenvolvimento local.
+- A fonte principal de contas continua sendo `users.json`.
+- Por isso, mantenha o `.env` fora do repositório e use `users.json` apenas para armazenar usuários já registrados.
+
+---
+
+## �📊 Fluxo de Geração de Pedidos
 
 1. **Definição de Localidade:** O vendedor escolhe o Estado e o Tipo de Região para travar a base tarifária.
 2. **Seleção de Produtos:** Adição dos itens no carrinho (o sistema consulta o peso e custo FOB base).
