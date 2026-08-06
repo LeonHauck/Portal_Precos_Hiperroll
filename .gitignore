@@ -1,0 +1,6 @@
+.env
+users.json
+/node_modules
+/vendor
+.DS_Store
+.env.local
