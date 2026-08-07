@@ -86,6 +86,7 @@ O Portal de Preços foi desenvolvido para rodar no navegador de forma independen
 - O `auth.php` usa `.env` apenas como fallback de desenvolvimento local.
 - A fonte principal de contas continua sendo `users.json`.
 - Por isso, mantenha o `.env` fora do repositório e use `users.json` apenas para armazenar usuários já registrados.
+- ⚠️ Não comite `users.json` se ele contiver dados reais de usuários ou credenciais de acesso.
 
 ---
 
