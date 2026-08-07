@@ -4,3 +4,4 @@ users.json
 /vendor
 .DS_Store
 .env.local
+users.json
