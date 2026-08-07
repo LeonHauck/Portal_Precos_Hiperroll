@@ -156,7 +156,8 @@ Arquivos como `index_backup.html`, `data_backup.js` e os documentos de validaç�
 
 ## Licença e uso
 
-Este projeto é destinado ao uso interno da operação comercial da Hiperroll.
+Este projeto é destinado ao uso interno da operação comercial da Hiperroll, caso ocorra a intenção de utilizar a mesma ferramenta altere a parte que consta nomes e documentação da empresa Hiperroll.
+##
 
 <div align="center">
   <p>Desenvolvido para apoiar a operação comercial da <strong>Hiperroll Embalagens</strong>.</p>
