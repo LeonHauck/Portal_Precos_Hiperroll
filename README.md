@@ -79,7 +79,7 @@ O Portal de Preços foi desenvolvido para rodar no navegador de forma independen
 
 ---
 
-## � Configuração de Usuários e Credenciais
+## ⚙️ Configuração de Usuários e Credenciais
 
 - O projeto também suporta variáveis de ambiente locais em um arquivo `.env`.
 - Use o arquivo `.env.example` como modelo e nunca comite o `.env` no Git.
@@ -90,7 +90,7 @@ O Portal de Preços foi desenvolvido para rodar no navegador de forma independen
 
 ---
 
-## �📊 Fluxo de Geração de Pedidos
+## 📊 Fluxo de Geração de Pedidos
 
 1. **Definição de Localidade:** O vendedor escolhe o Estado e o Tipo de Região para travar a base tarifária.
 2. **Seleção de Produtos:** Adição dos itens no carrinho (o sistema consulta o peso e custo FOB base).
