@@ -638,6 +638,106 @@ const hiperrollOrderNumberManager = {
     }
 };
 
+// ========== GERENCIADOR DE EXCLUSÕES (HISTÓRICO/LIXEIRA) ==========
+const deletedSubmissionsManager = {
+    deletedKey: 'orderDeletions',
+    deleted: {}, // id -> { id, originalSubmission, deletedAt, deletedBy, reason }
+
+    init() {
+        const saved = localStorage.getItem(this.deletedKey);
+        try {
+            this.deleted = saved ? JSON.parse(saved) : {};
+        } catch (e) {
+            this.deleted = {};
+        }
+    },
+
+    save() {
+        localStorage.setItem(this.deletedKey, JSON.stringify(this.deleted));
+    },
+
+    archiveSubmission(submissionId, submission, deletedBy = 'Sistema', reason = '') {
+        if (!submission) return false;
+        
+        const now = new Date().toISOString();
+        this.deleted[submissionId] = {
+            id: submissionId,
+            orderNumber: submission.orderNumber,
+            clientName: submission.clientName,
+            representativeName: submission.representativeName,
+            status: submission.status,
+            cart: JSON.parse(JSON.stringify(submission.cart)),
+            submittedAt: submission.submittedAt,
+            submittedBy: submission.submittedBy,
+            deletedAt: now,
+            deletedBy: deletedBy,
+            reason: reason || ''
+        };
+        
+        this.save();
+        return true;
+    },
+
+    getAll() {
+        return Object.values(this.deleted).sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
+    },
+
+    getById(id) {
+        return this.deleted[id] || null;
+    },
+
+    deleteByUser(user) {
+        return Object.values(this.deleted).filter(d => 
+            authManager.normalizeUsername(d.deletedBy) === authManager.normalizeUsername(user)
+        );
+    },
+
+    deleteByOrderNumber(orderNumber) {
+        return Object.values(this.deleted).find(d => d.orderNumber === orderNumber);
+    },
+
+    restore(submissionId) {
+        if (!this.deleted[submissionId]) return null;
+        
+        const submission = this.deleted[submissionId];
+        const restored = {
+            id: submissionId,
+            orderNumber: submission.orderNumber,
+            clientName: submission.clientName,
+            representativeName: submission.representativeName,
+            cart: JSON.parse(JSON.stringify(submission.cart)),
+            status: 'rascunho', // Restaurado como rascunho
+            submittedAt: submission.submittedAt,
+            submittedBy: submission.submittedBy,
+            savedAt: new Date().toISOString(),
+            savedBy: authManager.getCurrentUser(),
+            rejectionReason: '',
+            rejectionBy: '',
+            rejectionAt: '',
+            approvalAt: '',
+            approvalBy: '',
+            supervisorNote: ''
+        };
+        
+        delete this.deleted[submissionId];
+        this.save();
+        return restored;
+    },
+
+    permanentlyDelete(submissionId) {
+        if (this.deleted[submissionId]) {
+            delete this.deleted[submissionId];
+            this.save();
+            return true;
+        }
+        return false;
+    },
+
+    count() {
+        return Object.keys(this.deleted).length;
+    }
+};
+
 // =========================================================
 
 async function init() {
@@ -647,6 +747,7 @@ async function init() {
     statusManager.init();
     orderSubmissionManager.init();
     hiperrollOrderNumberManager.init();
+    deletedSubmissionsManager.init();
     
     // Gerar número Hiper Roll se não existir
     const orderNumberField = document.getElementById('orderNumberHiperroll');
@@ -2054,17 +2155,26 @@ function closeOrderHistoryModal() {
 }
 
 function deleteSubmission(submissionId) {
-    const ok = confirm('Deseja realmente excluir este pedido? Esta ação não pode ser desfeita.');
+    const submission = orderSubmissionManager.getById(submissionId);
+    if (!submission) {
+        alert('Pedido não encontrado.');
+        return;
+    }
+
+    const ok = confirm('Deseja realmente excluir este pedido? Os dados serão armazenados no histórico de exclusões.');
     if (!ok) return;
 
-    const deleted = orderSubmissionManager.deleteSubmission(submissionId);
-    if (deleted) {
+    const deletedBy = authManager.getCurrentUser() || 'Sistema';
+    if (deletedSubmissionsManager.archiveSubmission(submissionId, submission, deletedBy, '')) {
+        orderSubmissionManager.deleteSubmission(submissionId);
+        
         if (activeDraftId === submissionId) {
             activeDraftId = null;
         }
         renderDraftsPanel();
         renderHistoryTab();
-        alert('Pedido excluído com sucesso.');
+        updateTrashBadge();
+        alert(`Pedido excluído com sucesso. Histórico preservado em "Lixeira".`);
         showOrderHistoryModal();
     } else {
         alert('Não foi possível excluir o pedido.');
@@ -2078,24 +2188,173 @@ function deleteSelectedSubmissions() {
         return;
     }
 
-    const ok = confirm(`Deseja realmente excluir os ${selected.length} pedido(s) selecionado(s)? Esta ação não pode ser desfeita.`);
+    const ok = confirm(`Deseja realmente excluir os ${selected.length} pedido(s) selecionado(s)? Os dados serão armazenados no histórico de exclusões.`);
     if (!ok) return;
 
     let deletedCount = 0;
+    const deletedBy = authManager.getCurrentUser() || 'Sistema';
+    
     selected.forEach(id => {
-        if (orderSubmissionManager.deleteSubmission(id)) {
-            deletedCount += 1;
+        const submission = orderSubmissionManager.getById(id);
+        if (submission) {
+            if (deletedSubmissionsManager.archiveSubmission(id, submission, deletedBy, '')) {
+                orderSubmissionManager.deleteSubmission(id);
+                deletedCount += 1;
+            }
         }
     });
 
     if (deletedCount > 0) {
-        alert(`${deletedCount} pedido(s) excluído(s) com sucesso.`);
+        alert(`${deletedCount} pedido(s) excluído(s) com sucesso. Histórico preservado em "Lixeira".`);
+        updateTrashBadge();
+        renderHistoryTab();
     } else {
         alert('Nenhum pedido pôde ser excluído.');
     }
 
     showOrderHistoryModal();
 }
+
+// ========== FUNÇÕES DE GERENCIAMENTO DE LIXEIRA ==========
+function showTrashModal() {
+    const deletedSubmissions = deletedSubmissionsManager.getAll();
+    
+    if (deletedSubmissions.length === 0) {
+        alert('Nenhum pedido foi excluído ainda.');
+        return;
+    }
+
+    let html = `
+    <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+        <thead>
+            <tr style="background: #f3f4f6; border-bottom: 2px solid #e5e7eb;">
+                <th style="padding: 10px; text-align: left;">Nº Pedido</th>
+                <th style="padding: 10px; text-align: left;">Cliente</th>
+                <th style="padding: 10px; text-align: left;">Status</th>
+                <th style="padding: 10px; text-align: left;">Excluído em</th>
+                <th style="padding: 10px; text-align: left;">Excluído por</th>
+                <th style="padding: 10px; text-align: center;">Ações</th>
+            </tr>
+        </thead>
+        <tbody>
+    `;
+
+    deletedSubmissions.forEach(deletion => {
+        const deletedDate = new Date(deletion.deletedAt).toLocaleString('pt-BR');
+        const status = {
+            'rascunho': '📝 Rascunho',
+            'analise': '🔍 Em Análise',
+            'aprovado': '✅ Aprovado',
+            'rejeitado': '❌ Rejeitado'
+        }[deletion.status] || deletion.status;
+
+        html += `
+            <tr style="border-bottom: 1px solid #e5e7eb;">
+                <td style="padding: 10px;"><strong>${deletion.orderNumber || '---'}</strong></td>
+                <td style="padding: 10px;">${deletion.clientName || '---'}</td>
+                <td style="padding: 10px;">${status}</td>
+                <td style="padding: 10px;">${deletedDate}</td>
+                <td style="padding: 10px;">${deletion.deletedBy || 'Sistema'}</td>
+                <td style="padding: 10px; text-align: center;">
+                    <button onclick="restoreSubmission('${deletion.id}')" style="background: #059669; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; margin-right: 6px;">↩️ Restaurar</button>
+                    <button onclick="permanentlyDeleteSubmission('${deletion.id}')" style="background: #dc2626; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85rem;">🗑️ Deletar</button>
+                </td>
+            </tr>
+        `;
+    });
+
+    html += `
+        </tbody>
+    </table>
+    `;
+
+    const trashContent = document.getElementById('trashContent');
+    if (trashContent) {
+        trashContent.innerHTML = html;
+        document.getElementById('trashModal').style.display = 'flex';
+    }
+}
+
+function closeTrashModal() {
+    const modal = document.getElementById('trashModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function restoreSubmission(submissionId) {
+    const ok = confirm('Deseja restaurar este pedido como rascunho?');
+    if (!ok) return;
+
+    const restored = deletedSubmissionsManager.restore(submissionId);
+    if (restored) {
+        orderSubmissionManager.submissions[submissionId] = restored;
+        orderSubmissionManager.save();
+        updateTrashBadge();
+        alert('Pedido restaurado com sucesso como rascunho!');
+        closeTrashModal();
+        showTrashModal(); // Reabrir o modal para atualizar a lista
+        renderHistoryTab();
+        renderDraftsPanel();
+    } else {
+        alert('Não foi possível restaurar o pedido.');
+    }
+}
+
+function permanentlyDeleteSubmission(submissionId) {
+    const ok = confirm('Tem certeza? Esta ação não pode ser desfeita. O pedido será deletado permanentemente.');
+    if (!ok) return;
+
+    if (deletedSubmissionsManager.permanentlyDelete(submissionId)) {
+        updateTrashBadge();
+        alert('Pedido deletado permanentemente.');
+        closeTrashModal();
+        showTrashModal();
+    } else {
+        alert('Não foi possível deletar o pedido.');
+    }
+}
+
+function emptyTrash() {
+    const count = deletedSubmissionsManager.count();
+    if (count === 0) {
+        alert('A lixeira já está vazia.');
+        return;
+    }
+
+    const ok = confirm(`Tem certeza? Todos os ${count} pedido(s) na lixeira serão deletados permanentemente. Esta ação não pode ser desfeita.`);
+    if (!ok) return;
+
+    deletedSubmissionsManager.getAll().forEach(deletion => {
+        deletedSubmissionsManager.permanentlyDelete(deletion.id);
+    });
+
+    alert('Lixeira esvaziada com sucesso.');
+    closeTrashModal();
+    updateTrashBadge();
+}
+
+function updateTrashBadge() {
+    const trashBtn = document.querySelector('[onclick="showTrashModal()"]');
+    if (!trashBtn) return;
+    
+    const count = deletedSubmissionsManager.count();
+    if (count > 0) {
+        let badge = trashBtn.querySelector('.trash-badge');
+        if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'trash-badge';
+            badge.style.cssText = 'display:inline-block; background:#fca5a5; color:#991b1b; font-weight:700; font-size:0.75rem; padding:2px 6px; border-radius:999px; margin-left:4px;';
+            trashBtn.appendChild(badge);
+        }
+        badge.textContent = count;
+    } else {
+        const badge = trashBtn.querySelector('.trash-badge');
+        if (badge) badge.remove();
+    }
+}
+// ===================================================
+
 
 function showSubmissionDetails(submissionId) {
     const submission = orderSubmissionManager.getById(submissionId);
