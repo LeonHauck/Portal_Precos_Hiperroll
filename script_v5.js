@@ -2178,7 +2178,14 @@ function deleteSubmission(submissionId) {
         return;
     }
 
-    const ok = confirm('Deseja realmente excluir este pedido? Os dados serão armazenados no histórico de exclusões.');
+    let confirmMsg = 'Deseja realmente excluir este pedido? Os dados serão armazenados no histórico de exclusões.';
+    if (submission.status === 'analise') {
+        confirmMsg += '\n\n⚠️ Aviso: Este pedido está em análise. Ele permanecerá visível no painel do supervisor para que possa dar andamento.';
+    } else if (submission.status === 'aprovado') {
+        confirmMsg += '\n\n⚠️ Aviso: Este pedido já foi aprovado. Ele permanecerá visível no painel do supervisor para rastreamento.';
+    }
+
+    const ok = confirm(confirmMsg);
     if (!ok) return;
 
     const deletedBy = authManager.getCurrentUser() || 'Sistema';
@@ -2191,7 +2198,13 @@ function deleteSubmission(submissionId) {
         renderDraftsPanel();
         renderHistoryTab();
         updateTrashBadge();
-        alert(`Pedido excluído com sucesso. Histórico preservado em "Lixeira".`);
+        updateSupervisorPanel();
+        
+        let successMsg = 'Pedido excluído com sucesso. Histórico preservado em "Lixeira".';
+        if (['analise', 'aprovado'].includes(submission.status)) {
+            successMsg += '\n\nO pedido continua visível no painel do supervisor.';
+        }
+        alert(successMsg);
         showOrderHistoryModal();
     } else {
         alert('Não foi possível excluir o pedido.');
@@ -2570,7 +2583,12 @@ ${submission.rejectionReason ? `Motivo da Rejeição: ${submission.rejectionReas
 }
 
 function openSupervisorOrderActions(submissionId) {
-    const submission = orderSubmissionManager.getById(submissionId);
+    // Procurar pedido nos ativos primeiro, depois na trash
+    let submission = orderSubmissionManager.getById(submissionId);
+    if (!submission) {
+        submission = deletedSubmissionsManager.getById(submissionId);
+    }
+    
     const currentUser = authManager.getCurrentUser();
     const currentRole = authManager.getCurrentUserRole();
     if (!submission) return;
@@ -2735,7 +2753,20 @@ function updateSupervisorPanel() {
     // Atualizar lista de pedidos enviados
     const pendingList = document.getElementById('supervisorPendingOrdersList');
     if (pendingList) {
-        const pending = orderSubmissionManager.getPending();
+        // Obter pedidos pendentes ativos
+        let pending = orderSubmissionManager.getPending();
+        
+        // Adicionar pedidos deletados que estejam em análise ou aprovados
+        const deletedInAnalysis = deletedSubmissionsManager.getAll().filter(deletion => 
+            ['analise', 'aprovado'].includes(deletion.status)
+        );
+        
+        // Combinar e remover duplicatas
+        const allPending = [...pending, ...deletedInAnalysis];
+        const uniquePending = allPending.filter((item, index, self) => 
+            index === self.findIndex(t => t.id === item.id)
+        );
+        pending = uniquePending.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
         
         if (pending.length === 0) {
             pendingList.innerHTML = '<div style="padding:15px; text-align:center; color:#999;">Nenhum pedido pendente.</div>';
@@ -2747,12 +2778,20 @@ function updateSupervisorPanel() {
                 const totalItems = cartArray.reduce((sum, item) => sum + (item.qty || 0), 0);
                 const submittedDate = new Date(submission.submittedAt).toLocaleString('pt-BR');
                 
+                // Verificar se foi deletado
+                const isDeleted = !orderSubmissionManager.getById(submission.id);
+                const deletedBadge = isDeleted ? '🗑️ Deletado' : '';
+                const bgColor = isDeleted ? '#fef2f2' : '#fafafa';
+                const borderColor = isDeleted ? '#fecaca' : '#ddd';
+                
                 html += `
-                    <div style="border:1px solid #ddd; border-radius:8px; padding:15px; background:#fafafa; display:flex; align-items:center; justify-content:space-between; gap:15px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                    <div style="border:1px solid ${borderColor}; border-radius:8px; padding:15px; background:${bgColor}; display:flex; align-items:center; justify-content:space-between; gap:15px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
                         <div style="display:flex; align-items:center; gap:15px; flex:1;">
                             <input type="checkbox" class="pending-order-checkbox" value="${submission.id}" style="width:20px; height:20px; flex-shrink:0; margin:0; cursor:pointer;">
                             <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
-                                <div style="font-weight:700; font-size:1.05rem; color:#0f172a;">Pedido: ${submission.orderNumber}</div>
+                                <div style="font-weight:700; font-size:1.05rem; color:#0f172a;">
+                                    Pedido: ${submission.orderNumber} ${deletedBadge}
+                                </div>
                                 <div style="font-size:0.9rem; color:#475569;">
                                     Cliente: <strong style="color:#1e293b;">${submission.clientName}</strong> &bull; Enviado por: <strong>${submission.submittedBy}</strong> &bull; Em: <strong>${submittedDate}</strong> &bull; Itens: <strong>${totalItems}</strong>
                                 </div>
@@ -2849,7 +2888,11 @@ function rejectPendingOrders() {
 }
 
 function showPendingOrderDetails(submissionId) {
-    const submission = orderSubmissionManager.getById(submissionId);
+    // Procurar pedido nos ativos primeiro, depois na trash
+    let submission = orderSubmissionManager.getById(submissionId);
+    if (!submission) {
+        submission = deletedSubmissionsManager.getById(submissionId);
+    }
     if (!submission) return;
 
     const averageMargin = orderSubmissionManager.calculateMargin(submission);
