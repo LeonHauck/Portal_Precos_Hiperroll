@@ -735,6 +735,23 @@ const deletedSubmissionsManager = {
 
     count() {
         return Object.keys(this.deleted).length;
+    },
+
+    updateBilledQuantities(submissionId, billedItemsMap) {
+        const deletion = this.deleted[submissionId];
+        if (!deletion) return false;
+        
+        if (!deletion.billedQuantities) deletion.billedQuantities = {};
+        
+        // Atualizar quantidades faturadas
+        (Array.isArray(deletion.cart) ? deletion.cart : []).forEach(item => {
+            const addedQty = billedItemsMap[item.codigo] || 0;
+            const currentTotal = (deletion.billedQuantities[item.codigo] || 0) + addedQty;
+            deletion.billedQuantities[item.codigo] = Math.min(currentTotal, item.qty);
+        });
+        
+        this.save();
+        return true;
     }
 };
 
@@ -2225,12 +2242,15 @@ function showTrashModal() {
     }
 
     let html = `
+    <div style="max-height: 600px; overflow-y: auto;">
     <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
-        <thead>
+        <thead style="position: sticky; top: 0; background: white;">
             <tr style="background: #f3f4f6; border-bottom: 2px solid #e5e7eb;">
+                <th style="padding: 10px; text-align: center; width: 30px;"></th>
                 <th style="padding: 10px; text-align: left;">Nº Pedido</th>
                 <th style="padding: 10px; text-align: left;">Cliente</th>
                 <th style="padding: 10px; text-align: left;">Status</th>
+                <th style="padding: 10px; text-align: left;">Faturamento</th>
                 <th style="padding: 10px; text-align: left;">Excluído em</th>
                 <th style="padding: 10px; text-align: left;">Excluído por</th>
                 <th style="padding: 10px; text-align: center;">Ações</th>
@@ -2247,17 +2267,44 @@ function showTrashModal() {
             'aprovado': '✅ Aprovado',
             'rejeitado': '❌ Rejeitado'
         }[deletion.status] || deletion.status;
+        
+        // Determinar status de faturamento
+        let billingBadge = '---';
+        if (deletion.billedQuantities && Object.keys(deletion.billedQuantities).length > 0) {
+            // Verificar se é completo ou parcial
+            let totalPedido = 0;
+            let totalFaturado = 0;
+            (Array.isArray(deletion.cart) ? deletion.cart : []).forEach(item => {
+                totalPedido += item.qty || 0;
+                totalFaturado += deletion.billedQuantities[item.codigo] || 0;
+            });
+            
+            if (totalFaturado === totalPedido) {
+                billingBadge = '✅ Completo';
+            } else {
+                billingBadge = '📦 Parcial';
+            }
+        }
 
         html += `
             <tr style="border-bottom: 1px solid #e5e7eb;">
+                <td style="padding: 10px; text-align: center;">
+                    <button onclick="toggleTrashDetails('${deletion.id}')" class="trash-expand-btn" data-id="${deletion.id}" style="background: none; border: none; cursor: pointer; font-size: 1rem; padding: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;">▶</button>
+                </td>
                 <td style="padding: 10px;"><strong>${deletion.orderNumber || '---'}</strong></td>
                 <td style="padding: 10px;">${deletion.clientName || '---'}</td>
                 <td style="padding: 10px;">${status}</td>
+                <td style="padding: 10px;">${billingBadge}</td>
                 <td style="padding: 10px;">${deletedDate}</td>
                 <td style="padding: 10px;">${deletion.deletedBy || 'Sistema'}</td>
                 <td style="padding: 10px; text-align: center;">
                     <button onclick="restoreSubmission('${deletion.id}')" style="background: #059669; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; margin-right: 6px;">↩️ Restaurar</button>
                     <button onclick="permanentlyDeleteSubmission('${deletion.id}')" style="background: #dc2626; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85rem;">🗑️ Deletar</button>
+                </td>
+            </tr>
+            <tr id="trash-details-${deletion.id}" style="display: none; background: #f9fafb;">
+                <td colspan="7" style="padding: 20px; border-bottom: 2px solid #e5e7eb;">
+                    <div id="trash-details-content-${deletion.id}"></div>
                 </td>
             </tr>
         `;
@@ -2266,6 +2313,7 @@ function showTrashModal() {
     html += `
         </tbody>
     </table>
+    </div>
     `;
 
     const trashContent = document.getElementById('trashContent');
@@ -2273,6 +2321,136 @@ function showTrashModal() {
         trashContent.innerHTML = html;
         document.getElementById('trashModal').style.display = 'flex';
     }
+}
+
+function toggleTrashDetails(deletionId) {
+    const detailsRow = document.getElementById(`trash-details-${deletionId}`);
+    const deletion = deletedSubmissionsManager.getById(deletionId);
+    
+    if (!detailsRow) return;
+    
+    const btn = document.querySelector(`[data-id="${deletionId}"]`);
+    
+    if (detailsRow.style.display === 'none') {
+        // Expandir
+        detailsRow.style.display = 'table-row';
+        renderTrashDetails(deletionId, deletion);
+        
+        // Mudar o ícone
+        if (btn) {
+            btn.textContent = '▼';
+        }
+    } else {
+        // Colapsar
+        detailsRow.style.display = 'none';
+        
+        // Mudar o ícone de volta
+        if (btn) {
+            btn.textContent = '▶';
+        }
+    }
+}
+
+function renderTrashDetails(deletionId, deletion) {
+    const contentDiv = document.getElementById(`trash-details-content-${deletionId}`);
+    if (!contentDiv || !deletion || !deletion.cart) return;
+
+    let html = `
+        <div>
+            <h4 style="margin: 0 0 15px; color: #1f2937; font-size: 1rem;">
+                📦 Produtos do Pedido ${deletion.orderNumber}
+            </h4>
+            
+            <div style="background: white; border-radius: 6px; border: 1px solid #e5e7eb; overflow: hidden;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+                    <thead>
+                        <tr style="background: #f3f4f6; border-bottom: 1px solid #e5e7eb;">
+                            <th style="padding: 10px; text-align: left;">Produto</th>
+                            <th style="padding: 10px; text-align: center;">Qtd</th>
+                            <th style="padding: 10px; text-align: center;">Qtd Faturada</th>
+                            <th style="padding: 10px; text-align: right;">Valor Unit.</th>
+                            <th style="padding: 10px; text-align: right;">Subtotal</th>
+                            <th style="padding: 10px; text-align: center;">Margem</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+    `;
+
+    let totalValue = 0;
+    deletion.cart.forEach(item => {
+        const qty = item.qty || item.quantity || 0;
+        const negotiatedPrice = item.negotiatedPrice || item.finalPrice || 0;
+        const itemTotal = negotiatedPrice * qty;
+        totalValue += itemTotal;
+        
+        // Quantidade faturada (verificar billedQuantities)
+        const billedQty = deletion.billedQuantities?.[item.codigo] || 0;
+        const pendingQty = qty - billedQty;
+        
+        // Calcular margem: ((negotiatedPrice - fob) / negotiatedPrice) * 100
+        let marginPercent = 0;
+        if (item.fob && negotiatedPrice > 0) {
+            marginPercent = ((negotiatedPrice - item.fob) / negotiatedPrice) * 100;
+        }
+        
+        const marginColor = marginPercent > 15 ? '#15803d' : marginPercent >= 11 ? '#b45309' : '#c53030';
+        
+        // Cor para a quantidade faturada (verde se completo, amarelo se parcial, cinza se nenhum)
+        const billingColor = billedQty === qty ? '#15803d' : billedQty > 0 ? '#f59e0b' : '#9ca3af';
+        
+        html += `
+            <tr style="border-bottom: 1px solid #e5e7eb;">
+                <td style="padding: 10px;">
+                    <strong>${item.codigo}</strong> - ${item.descricao || ''}
+                </td>
+                <td style="padding: 10px; text-align: center;">${qty}</td>
+                <td style="padding: 10px; text-align: center; color: ${billingColor}; font-weight: 600;">
+                    ${billedQty} ${pendingQty > 0 ? `<span style="font-size: 0.85rem; color: #6b7280;">/ ${qty}</span>` : ''}
+                </td>
+                <td style="padding: 10px; text-align: right;">R$ ${negotiatedPrice.toFixed(2).replace('.', ',')}</td>
+                <td style="padding: 10px; text-align: right; font-weight: 600;">R$ ${itemTotal.toFixed(2).replace('.', ',')}</td>
+                <td style="padding: 10px; text-align: center; color: ${marginColor}; font-weight: 600;">
+                    ${marginPercent.toFixed(2)}%
+                </td>
+            </tr>
+        `;
+    });
+
+    html += `
+                    </tbody>
+                </table>
+            </div>
+            
+            <div style="margin-top: 15px; padding: 12px; background: white; border-radius: 6px; border-left: 4px solid #3b82f6;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="font-weight: 600;">Total do Pedido:</span>
+                    <span style="font-weight: 600; color: #1f2937;">R$ ${totalValue.toFixed(2).replace('.', ',')}</span>
+                </div>
+                
+                ${deletion.billedQuantities && Object.keys(deletion.billedQuantities).length > 0 ? `
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px; padding: 8px; background: #f0fdf4; border-radius: 4px; border-left: 3px solid #15803d;">
+                    <span style="font-weight: 600; color: #15803d;">Status de Faturamento:</span>
+                    <span style="font-weight: 600; color: #15803d;">✅ Faturado (parcial/completo)</span>
+                </div>
+                ` : ''}
+                
+                ${deletion.representativeName ? `
+                <div style="display: flex; justify-content: space-between; font-size: 0.9rem; color: #6b7280;">
+                    <span>Representante:</span>
+                    <span>${deletion.representativeName}</span>
+                </div>
+                ` : ''}
+                ${deletion.submittedAt ? `
+                <div style="display: flex; justify-content: space-between; font-size: 0.9rem; color: #6b7280;">
+                    <span>Criado em:</span>
+                    <span>${new Date(deletion.submittedAt).toLocaleString('pt-BR')}</span>
+                </div>
+                ` : ''}
+            </div>
+        </div>
+    `;
+
+    contentDiv.innerHTML = html;
 }
 
 function closeTrashModal() {
@@ -2848,6 +3026,10 @@ if (!orderSubmissionManager.registerBilling) {
         }
 
         this.save();
+        
+        // Atualizar também na lixeira se o pedido foi deletado
+        deletedSubmissionsManager.updateBilledQuantities(submissionId, billedItemsMap);
+        
         return true;
     };
 }
