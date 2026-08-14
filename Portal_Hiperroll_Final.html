@@ -12,36 +12,48 @@
     <div class="container">
         <header>
             <div class="header-inner">
-                <div class="logo-container">
-                    <svg width="70" height="70" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));">
-                        <!-- Círculo de fundo -->
-                        <circle cx="50" cy="50" r="48" fill="white" opacity="0.95"/>
-                        <!-- "HR" estilizado -->
-                        <text x="50" y="62" font-size="48" font-weight="800" text-anchor="middle" fill="#E31E24" font-family="Arial, sans-serif" letter-spacing="-2">HR</text>
-                        <!-- Linha de destaque -->
-                        <line x1="20" y1="80" x2="80" y2="80" stroke="#E31E24" stroke-width="3" stroke-linecap="round"/>
-                    </svg>
-                </div>
-                <div class="brand">
-                    <h1>Portal de Preços</h1>
-                    <p>Hiperroll • Calculadora CIF & FOB</p>
-                </div>
-                <div class="header-meta-wrapper">
-                    <div class="header-meta">
-                        <div><strong>Nº do Pedido:</strong> <span id="headerOrderNumber">---</span></div>
-                        <div><strong>Data:</strong> <span id="headerOrderDate">--</span></div>
-                        <div style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px; font-size: 0.85rem;">Hiperroll 2026</div>
+                <div class="header-brand-section">
+                    <div class="logo-container">
+                        <svg width="70" height="70" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0 2px 8px rgba(0,0,0,0.15));">
+                            <circle cx="50" cy="50" r="48" fill="white" opacity="0.96"/>
+                            <text x="50" y="62" font-size="48" font-weight="800" text-anchor="middle" fill="#E31E24" font-family="Arial, sans-serif" letter-spacing="-2">HR</text>
+                            <line x1="20" y1="80" x2="80" y2="80" stroke="#E31E24" stroke-width="3" stroke-linecap="round"/>
+                        </svg>
+                    </div>
+                    <div class="brand">
+                        <h1>Portal de Preços</h1>
+                        <p>Hiperroll • Calculadora CIF & FOB</p>
                     </div>
                 </div>
-                <div class="header-actions">
-                    <div class="threshold">Margem: <strong id="marginThreshold">15</strong>%</div>
-                    <div id="userControls" style="display:flex; align-items:center; gap:10px; margin-left: 16px;">
-                        <button id="loginBtn" onclick="showLoginModal()" style="padding:6px 10px; background:#0054A6; color:white; border:none; border-radius:6px; cursor:pointer;">Entrar</button>
-                        <div id="currentUser" style="display:none; align-items:center; gap:8px;">
-                            <span style="font-size:0.95rem; color:#fff">👤 <strong id="currentUserName">--</strong></span>
-                            <button onclick="logoutUser()" style="padding:6px 8px; background:#e11d48; color:white; border:none; border-radius:6px; cursor:pointer;">Sair</button>
+                
+                <div class="header-info-section">
+                    <div class="info-box">
+                        <div class="info-label">Nº do Pedido</div>
+                        <div class="info-value" id="headerOrderNumber">---</div>
+                    </div>
+                    <div class="info-box">
+                        <div class="info-label">Data</div>
+                        <div class="info-value" id="headerOrderDate">--</div>
+                    </div>
+                    <div class="info-box info-box--margin">
+                        <div class="info-label">Margem</div>
+                        <div class="margin-value-line">
+                            <div class="info-value" id="marginThreshold">15</div>
+                            <div class="margin-percent">%</div>
                         </div>
-                        <button id="supervisorBtn" onclick="showSupervisorPanel()" style="display:none; padding:6px 10px; background:#15803d; color:white; border:none; border-radius:6px; cursor:pointer;">Painel Supervisor</button>
+                    </div>
+                </div>
+                
+                <div class="header-user-section">
+                    <div id="currentUser" style="display:none;">
+                        <div class="user-info">
+                            <span style="font-size:0.85rem; color: rgba(255,255,255,0.8);">Usuário</span>
+                            <div style="font-weight: 700; color:#fff;" id="currentUserName">--</div>
+                        </div>
+                        <button id="supervisorBtn" onclick="showSupervisorPanel()" class="header-btn header-btn-success" style="display:none;">🧑‍💼 Supervisor</button>
+                        <button onclick="logoutUser()" class="header-btn header-btn-danger">Sair</button>
+                    </div>
+                    <button id="loginBtn" onclick="showLoginModal()" class="header-btn header-btn-primary">Entrar</button>
                 </div>
             </div>
         </header>
@@ -125,16 +137,16 @@
                         <label for="orderNumberClient">Nº do Pedido (cliente)</label>
                         <input type="text" id="orderNumberClient" placeholder="Ex: 2026-001" oninput="updateHeaderInfo()">
                     </div>
-                    <div style="flex: 1; min-width: 220px;">
+                    <div style="flex: 1; min-width: 300px;">
                         <label for="orderStatus">Status do Pedido</label>
                         <div style="display: flex; gap: 8px; align-items: center;">
-                            <select id="orderStatus" onchange="changeOrderStatus(this.value)" style="flex: 1;">
+                            <select id="orderStatus" onchange="changeOrderStatus(this.value)" class="status-select" style="flex: 1; min-width: 200px;">
                                 <option value="rascunho">📝 Rascunho</option>
                                 <option value="analise">🔍 Em Análise</option>
                                 <option value="aprovado">✅ Aprovado</option>
                                 <option value="rejeitado">❌ Rejeitado</option>
                             </select>
-                            <button onclick="showStatusHistory()" style="padding: 8px 12px; background: #0054A6; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem;">📋 Histórico</button>
+                            <button onclick="showStatusHistory()" style="padding: 10px 14px; background: #0054A6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: all 0.3s; white-space: nowrap;">📋 Histórico</button>
                         </div>
                     </div>
                     <div style="flex: 1; min-width: 220px;">
@@ -206,9 +218,9 @@
                 <button style="background:#0f172a; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="showSubmitOrderModal()">📤 Enviar Pedido ao Sistema</button>
                 <button style="background:#111827; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="saveDraftCurrentOrder()">💾 Salvar Rascunho</button>
                 <button style="background:#666666; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="switchTab('tab-history')">📋 Ver Meus Pedidos</button>
-                <button style="background:#2563eb; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="exportPortalBackup()">💾 Backup do Sistema</button>
-                <button style="background:#7c3aed; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="restorePortalBackupPrompt()">↩️ Restaurar Backup</button>
-                <button class="btn-export" onclick="exportPdfControlled()">🖨️ Exportar Pedido (PDF)</button>
+                <button style="background:#2563eb; color:white; border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="exportPortalBackup()">💾 Backup</button>
+                <button style="background:#7c3aed; color:white; border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="restorePortalBackupPrompt()">↩️ Restaurar</button>
+                <button class="btn-export" onclick="exportPdfControlled()">🖨️ PDF</button>
             </div>
         </section>
         </div> <!-- End of tab-order -->
@@ -218,11 +230,11 @@
             <section class="card" style="margin-top: 20px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom: 20px;">
                     <h2>📋 Meus Pedidos</h2>
-                    <div style="display:flex; gap:10px; align-items:center;">
+                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                         <input type="text" id="historySearchInput" placeholder="Buscar por Nº do Pedido, Cliente ou Comprador..." style="padding: 10px; border: 1px solid #ccc; border-radius: 6px; width: 280px;" oninput="renderHistoryTab()">
                         <button onclick="renderHistoryTab()" style="padding:10px 15px; background:#0054A6; color:white; border:none; border-radius:6px; cursor:pointer;">Atualizar</button>
-                        <button onclick="exportPortalBackup()" style="padding:10px 15px; background:#2563eb; color:white; border:none; border-radius:6px; cursor:pointer;">💾 Backup</button>
-                        <button onclick="restorePortalBackupPrompt()" style="padding:10px 15px; background:#7c3aed; color:white; border:none; border-radius:6px; cursor:pointer;">↩️ Restaurar</button>
+                        <button onclick="exportPortalBackup()" style="padding:10px 12px; background:#2563eb; color:white; border:none; border-radius:6px; cursor:pointer;">💾 Backup</button>
+                        <button onclick="restorePortalBackupPrompt()" style="padding:10px 12px; background:#7c3aed; color:white; border:none; border-radius:6px; cursor:pointer;">↩️ Restaurar</button>
                         <button onclick="showTrashModal()" style="padding:10px 15px; background:#dc2626; color:white; border:none; border-radius:6px; cursor:pointer;">🗑️ Lixeira</button>
                     </div>
                 </div>
