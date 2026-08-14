@@ -41,6 +41,10 @@ const statusManager = {
     init() {
         const saved = localStorage.getItem('orderStatus');
         const savedHistory = localStorage.getItem('orderStatusHistory');
+
+        if (!saved && typeof restorePortalSnapshotIfAvailable === 'function') {
+            restorePortalSnapshotIfAvailable();
+        }
         
         if (saved) {
             this.currentStatus = saved;
@@ -162,6 +166,21 @@ const statusManager = {
     save() {
         localStorage.setItem('orderStatus', this.currentStatus);
         localStorage.setItem('orderStatusHistory', JSON.stringify(this.history));
+        const snapshot = {
+            exportedAt: new Date().toISOString(),
+            version: 1,
+            data: {
+                orderSubmissions: orderSubmissionManager && orderSubmissionManager.submissions ? orderSubmissionManager.submissions : {},
+                deletedSubmissions: deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : {},
+                hr_users: authManager && authManager.users ? authManager.users : {},
+                hr_currentUser: authManager && authManager.currentUser ? authManager.currentUser : '',
+                hr_currentRole: authManager && authManager.currentRole ? authManager.currentRole : '',
+                orderMeta: orderManager && orderManager.meta ? orderManager.meta : {},
+                orderStatus: this.currentStatus,
+                orderStatusHistory: this.history || []
+            }
+        };
+        localStorage.setItem('portal_backup_snapshot', JSON.stringify(snapshot));
     },
     
     // Retorna o histórico formatado para exibição
@@ -323,6 +342,9 @@ const authManager = {
         localStorage.setItem('hr_users', JSON.stringify(this.users));
         localStorage.setItem('hr_currentUser', this.currentUser || '');
         localStorage.setItem('hr_currentRole', this.currentRole || '');
+        if (typeof savePortalSnapshot === 'function') {
+            savePortalSnapshot();
+        }
     },
 
     getCurrentUser() {
@@ -388,6 +410,9 @@ const orderManager = {
 
     save() {
         localStorage.setItem('orderMeta', JSON.stringify(this.meta));
+        if (typeof savePortalSnapshot === 'function') {
+            savePortalSnapshot();
+        }
     },
 
     ensureCreator(username) {
@@ -408,20 +433,128 @@ const orderManager = {
 };
 
 // ========== GERENCIADOR DE SUBMISSÃO DE PEDIDOS ==========
+function createPortalSnapshot() {
+    return {
+        exportedAt: new Date().toISOString(),
+        version: 1,
+        data: {
+            orderSubmissions: orderSubmissionManager && orderSubmissionManager.submissions ? orderSubmissionManager.submissions : {},
+            deletedSubmissions: deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : {},
+            hr_users: authManager && authManager.users ? authManager.users : {},
+            hr_currentUser: authManager && authManager.currentUser ? authManager.currentUser : '',
+            hr_currentRole: authManager && authManager.currentRole ? authManager.currentRole : '',
+            orderMeta: orderManager && orderManager.meta ? orderManager.meta : {},
+            orderStatus: statusManager && statusManager.currentStatus ? statusManager.currentStatus : 'rascunho',
+            orderStatusHistory: statusManager && statusManager.history ? statusManager.history : []
+        }
+    };
+}
+
+function savePortalSnapshot() {
+    try {
+        const snapshot = createPortalSnapshot();
+        localStorage.setItem('portal_backup_snapshot', JSON.stringify(snapshot));
+        localStorage.setItem('portal_backup_snapshot_latest', JSON.stringify(snapshot));
+    } catch (error) {
+        console.warn('Não foi possível salvar snapshot automático:', error);
+    }
+}
+
+function restorePortalSnapshotIfAvailable() {
+    try {
+        const raw = localStorage.getItem('portal_backup_snapshot') || localStorage.getItem('portal_backup_snapshot_latest');
+        if (!raw) return false;
+        const snapshot = JSON.parse(raw);
+        const data = snapshot && snapshot.data ? snapshot.data : snapshot;
+        if (!data) return false;
+
+        const hasOrderData = !!(data.orderSubmissions && Object.keys(data.orderSubmissions).length > 0);
+        const hasUserData = !!(data.hr_users && Object.keys(data.hr_users).length > 0);
+        if (!hasOrderData && !hasUserData) return false;
+
+        if (data.orderSubmissions) {
+            localStorage.setItem('orderSubmissions', JSON.stringify(data.orderSubmissions));
+            if (orderSubmissionManager) orderSubmissionManager.submissions = data.orderSubmissions;
+        }
+        if (data.deletedSubmissions) {
+            localStorage.setItem('orderDeletions', JSON.stringify(data.deletedSubmissions));
+            if (deletedSubmissionsManager) deletedSubmissionsManager.deleted = data.deletedSubmissions;
+        }
+        if (data.hr_users) {
+            localStorage.setItem('hr_users', JSON.stringify(data.hr_users));
+            if (authManager) authManager.users = data.hr_users;
+        }
+        if (data.hr_currentUser !== undefined) {
+            localStorage.setItem('hr_currentUser', String(data.hr_currentUser || ''));
+            if (authManager) authManager.currentUser = data.hr_currentUser || null;
+        }
+        if (data.hr_currentRole !== undefined) {
+            localStorage.setItem('hr_currentRole', String(data.hr_currentRole || ''));
+            if (authManager) authManager.currentRole = data.hr_currentRole || null;
+        }
+        if (data.orderMeta) {
+            localStorage.setItem('orderMeta', JSON.stringify(data.orderMeta));
+            if (orderManager) orderManager.meta = data.orderMeta;
+        }
+        if (data.orderStatus !== undefined) {
+            localStorage.setItem('orderStatus', String(data.orderStatus));
+            if (statusManager) statusManager.currentStatus = data.orderStatus || 'rascunho';
+        }
+        if (data.orderStatusHistory) {
+            localStorage.setItem('orderStatusHistory', JSON.stringify(data.orderStatusHistory));
+            if (statusManager) statusManager.history = Array.isArray(data.orderStatusHistory) ? data.orderStatusHistory : [];
+        }
+
+        return true;
+    } catch (error) {
+        console.warn('Backup automático indisponível:', error);
+        return false;
+    }
+}
+
+window.createPortalSnapshot = createPortalSnapshot;
+window.savePortalSnapshot = savePortalSnapshot;
+window.restorePortalSnapshotIfAvailable = restorePortalSnapshotIfAvailable;
+
 const orderSubmissionManager = {
     submissions: {}, // id -> { id, orderNumber, clientName, representativeName, cart, status, submittedAt, submittedBy, rejectionReason, rejectionBy, rejectionAt, approvalAt, supervisorNote }
 
     init() {
         const saved = localStorage.getItem('orderSubmissions');
+        const backup = localStorage.getItem('orderSubmissionsBackup') || localStorage.getItem('orderSubmissions_backup');
+
         try {
-            this.submissions = saved ? JSON.parse(saved) : {};
+            const parsedSaved = saved ? JSON.parse(saved) : null;
+            const parsedBackup = backup ? JSON.parse(backup) : null;
+            const candidate = parsedSaved && Object.keys(parsedSaved).length > 0 ? parsedSaved : (parsedBackup || {});
+            this.submissions = candidate || {};
+
+            if (Object.keys(this.submissions).length > 0 && (!saved || Object.keys(parsedSaved || {}).length === 0)) {
+                localStorage.setItem('orderSubmissions', JSON.stringify(this.submissions));
+            }
         } catch (e) {
             this.submissions = {};
+            if (backup) {
+                try {
+                    const parsedBackup = JSON.parse(backup);
+                    this.submissions = parsedBackup || {};
+                    localStorage.setItem('orderSubmissions', JSON.stringify(this.submissions));
+                } catch (_) {}
+            }
+        }
+
+        if (!Object.keys(this.submissions || {}).length && typeof restorePortalSnapshotIfAvailable === 'function') {
+            restorePortalSnapshotIfAvailable();
         }
     },
 
     save() {
-        localStorage.setItem('orderSubmissions', JSON.stringify(this.submissions));
+        const serialized = JSON.stringify(this.submissions);
+        localStorage.setItem('orderSubmissions', serialized);
+        localStorage.setItem('orderSubmissionsBackup', serialized);
+        if (typeof savePortalSnapshot === 'function') {
+            savePortalSnapshot();
+        }
     },
 
     generateId() {
@@ -531,6 +664,24 @@ const orderSubmissionManager = {
             totalQty += qty;
         });
         return totalQty > 0 ? totalWeightedMargin / totalQty : 0;
+    },
+
+    refreshMissedForecastDates() {
+        const all = Object.values(this.submissions || {});
+        all.forEach(submission => {
+            if (!submission || submission.status !== 'aprovado' || submission.billingStatus === 'completo' || !submission.predictedBillingDate) return;
+            const predictedDate = new Date(submission.predictedBillingDate);
+            if (Number.isNaN(predictedDate.getTime())) return;
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const predictedDay = new Date(predictedDate);
+            predictedDay.setHours(0, 0, 0, 0);
+            if (today > predictedDay) {
+                const nextDate = new Date(predictedDate.getTime() + (5 * 24 * 60 * 60 * 1000));
+                submission.predictedBillingDate = nextDate.toISOString();
+            }
+        });
+        this.save();
     },
 
     approve(submissionIds, approvedBy, supervisorNote = '') {
@@ -654,6 +805,9 @@ const deletedSubmissionsManager = {
 
     save() {
         localStorage.setItem(this.deletedKey, JSON.stringify(this.deleted));
+        if (typeof savePortalSnapshot === 'function') {
+            savePortalSnapshot();
+        }
     },
 
     archiveSubmission(submissionId, submission, deletedBy = 'Sistema', reason = '') {
@@ -765,6 +919,12 @@ async function init() {
     orderSubmissionManager.init();
     hiperrollOrderNumberManager.init();
     deletedSubmissionsManager.init();
+
+    const totalSavedOrders = Object.keys(orderSubmissionManager.submissions || {}).length;
+    const storageEmpty = totalSavedOrders === 0 && (!localStorage.getItem('hr_currentUser') || !localStorage.getItem('orderSubmissions'));
+    if (storageEmpty) {
+        console.warn('[Portal Hiperroll] Storage local vazio ou sem pedidos. Backup automático será restaurado se existir.');
+    }
     
     // Gerar número Hiper Roll se não existir
     const orderNumberField = document.getElementById('orderNumberHiperroll');
@@ -1626,6 +1786,96 @@ function closeStatusHistory() {
     const modal = document.getElementById('statusHistoryModal');
     modal.style.display = 'none';
 }
+
+function exportPortalBackup() {
+    const snapshot = {
+        exportedAt: new Date().toISOString(),
+        version: 1,
+        data: {
+            orderSubmissions: orderSubmissionManager && orderSubmissionManager.submissions ? orderSubmissionManager.submissions : {},
+            deletedSubmissions: deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : {},
+            hr_users: authManager && authManager.users ? authManager.users : {},
+            hr_currentUser: authManager && authManager.currentUser ? authManager.currentUser : '',
+            hr_currentRole: authManager && authManager.currentRole ? authManager.currentRole : '',
+            orderMeta: orderManager && orderManager.meta ? orderManager.meta : {},
+            orderStatus: statusManager && statusManager.currentStatus ? statusManager.currentStatus : 'rascunho',
+            orderStatusHistory: statusManager && statusManager.history ? statusManager.history : []
+        }
+    };
+
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `portal_hiperroll_backup_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')} .json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    alert('Backup exportado com sucesso. Guarde este arquivo em local seguro.');
+}
+
+function restorePortalBackupPrompt() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = function (event) {
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function () {
+            try {
+                const snapshot = JSON.parse(String(reader.result || '{}'));
+                const data = snapshot && snapshot.data ? snapshot.data : snapshot;
+                if (data && data.orderSubmissions) {
+                    localStorage.setItem('orderSubmissions', JSON.stringify(data.orderSubmissions));
+                    orderSubmissionManager.submissions = data.orderSubmissions || {};
+                }
+                if (data && data.deletedSubmissions) {
+                    localStorage.setItem('orderDeletions', JSON.stringify(data.deletedSubmissions));
+                    if (deletedSubmissionsManager) deletedSubmissionsManager.deleted = data.deletedSubmissions || {};
+                }
+                if (data && data.hr_users) {
+                    localStorage.setItem('hr_users', JSON.stringify(data.hr_users));
+                    if (authManager) authManager.users = data.hr_users || {};
+                }
+                if (data && data.hr_currentUser !== undefined) {
+                    localStorage.setItem('hr_currentUser', String(data.hr_currentUser || ''));
+                    if (authManager) authManager.currentUser = data.hr_currentUser || null;
+                }
+                if (data && data.hr_currentRole !== undefined) {
+                    localStorage.setItem('hr_currentRole', String(data.hr_currentRole || ''));
+                    if (authManager) authManager.currentRole = data.hr_currentRole || null;
+                }
+                if (data && data.orderMeta) {
+                    localStorage.setItem('orderMeta', JSON.stringify(data.orderMeta));
+                    if (orderManager) orderManager.meta = data.orderMeta || { createdBy: null, createdAt: null };
+                }
+                if (data && data.orderStatus !== undefined) {
+                    localStorage.setItem('orderStatus', String(data.orderStatus));
+                    if (statusManager) statusManager.currentStatus = data.orderStatus || 'rascunho';
+                }
+                if (data && data.orderStatusHistory) {
+                    localStorage.setItem('orderStatusHistory', JSON.stringify(data.orderStatusHistory));
+                    if (statusManager) statusManager.history = Array.isArray(data.orderStatusHistory) ? data.orderStatusHistory : [];
+                }
+                localStorage.setItem('portal_backup_snapshot', JSON.stringify(snapshot));
+                if (typeof renderHistoryTab === 'function') renderHistoryTab();
+                if (typeof updateSupervisorPanel === 'function') updateSupervisorPanel();
+                if (typeof renderDraftsPanel === 'function') renderDraftsPanel();
+                alert('Backup restaurado com sucesso!');
+            } catch (error) {
+                console.error('Erro ao restaurar backup:', error);
+                alert('Arquivo de backup inválido ou corrompido.');
+            }
+        };
+        reader.readAsText(file);
+    };
+    input.click();
+}
+
+window.exportPortalBackup = exportPortalBackup;
+window.restorePortalBackupPrompt = restorePortalBackupPrompt;
 
 // Fechar modal ao clicar fora
 window.addEventListener('load', function() {
@@ -2741,7 +2991,36 @@ function getMarginRiskLevel(margin) {
     return { label: 'Vermelho', color: '#b91c1c' };
 }
 
+function refreshMissedForecastDates() {
+    const syncForecast = (collection) => {
+        if (!Array.isArray(collection)) return;
+        collection.forEach(submission => {
+            if (!submission || submission.status !== 'aprovado' || submission.billingStatus === 'completo' || !submission.predictedBillingDate) return;
+            const predictedDate = new Date(submission.predictedBillingDate);
+            if (Number.isNaN(predictedDate.getTime())) return;
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const predictedDay = new Date(predictedDate);
+            predictedDay.setHours(0, 0, 0, 0);
+            if (today > predictedDay) {
+                const nextDate = new Date(predictedDate.getTime() + (5 * 24 * 60 * 60 * 1000));
+                submission.predictedBillingDate = nextDate.toISOString();
+            }
+        });
+    };
+
+    if (orderSubmissionManager && typeof orderSubmissionManager.getAll === 'function') {
+        syncForecast(orderSubmissionManager.getAll());
+        orderSubmissionManager.save();
+    }
+    if (deletedSubmissionsManager && typeof deletedSubmissionsManager.getAll === 'function') {
+        syncForecast(deletedSubmissionsManager.getAll());
+        deletedSubmissionsManager.save();
+    }
+}
+
 function updateSupervisorPanel() {
+    refreshMissedForecastDates();
     const modal = document.getElementById('supervisorModal');
     const currentUserRole = authManager.getCurrentUserRole();
     const btn = document.getElementById('supervisorBtn');
@@ -2769,7 +3048,14 @@ function updateSupervisorPanel() {
         pending = uniquePending.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
         
         if (pending.length === 0) {
-            pendingList.innerHTML = '<div style="padding:15px; text-align:center; color:#999;">Nenhum pedido pendente.</div>';
+            const currentUser = authManager.getCurrentUser();
+            const currentRole = authManager.getCurrentUserRole();
+            const emptyMessage = ['supervisor', 'desenvolvedor'].includes(currentRole)
+                ? 'Nenhum pedido pendente no momento. Verifique o histórico ou o armazenamento local do portal.'
+                : currentUser
+                    ? 'Nenhum pedido pendente para revisão.'
+                    : 'Nenhum pedido pendente. Faça login para visualizar a fila do supervisor.';
+            pendingList.innerHTML = `<div style="padding:15px; text-align:center; color:#64748b;">${emptyMessage}</div>`;
         } else {
             let html = '<div style="display:flex; flex-direction:column; gap:12px;">';
             
@@ -3079,6 +3365,7 @@ if (!orderSubmissionManager.registerBilling) {
 
 function renderHistoryTab() {
   try {
+    refreshMissedForecastDates();
     const historyContainer = document.getElementById('historyTabContent');
     if (!historyContainer) { console.error('historyTabContent não encontrado'); return; }
     const searchTerm = (document.getElementById('historySearchInput')?.value || '').toLowerCase();
@@ -3130,7 +3417,11 @@ function renderHistoryTab() {
         : 'Supervisor/desenvolvedor vê todos os pedidos, inclusive os seus.';
 
     if (submissions.length === 0) {
-        historyContainer.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">Nenhum pedido encontrado.</div>';
+        const currentUser = authManager.getCurrentUser();
+        const emptyMessage = currentUser
+            ? 'Nenhum pedido encontrado para o usuário atual.'
+            : 'Nenhum pedido encontrado. Faça login para carregar o histórico e o painel do supervisor.';
+        historyContainer.innerHTML = `<div style="padding: 20px; text-align: center; color: #64748b;">${emptyMessage}</div>`;
         return;
     }
 
@@ -3156,10 +3447,24 @@ function renderHistoryTab() {
             else if (billingStatus === 'pendente') billingBadge = `<span class="billing-progress pending">⏳ Aguardando faturamento</span>`;
         }
 
-        const predictedBillingDate = submission.predictedBillingDate ? new Date(submission.predictedBillingDate).toLocaleDateString('pt-BR') : null;
+        const predictedBillingDateValue = submission.predictedBillingDate ? new Date(submission.predictedBillingDate) : null;
+        const predictedBillingDate = predictedBillingDateValue && !Number.isNaN(predictedBillingDateValue.getTime())
+            ? predictedBillingDateValue.toLocaleDateString('pt-BR')
+            : null;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const isForecastOverdue = Boolean(
+            predictedBillingDateValue &&
+            submission.status === 'aprovado' &&
+            billingStatus !== 'completo' &&
+            !Number.isNaN(predictedBillingDateValue.getTime()) &&
+            today > new Date(predictedBillingDateValue.getFullYear(), predictedBillingDateValue.getMonth(), predictedBillingDateValue.getDate())
+        );
         let predictedBillingBadge = '';
         if (predictedBillingDate && submission.status === 'aprovado' && billingStatus !== 'completo') {
-            predictedBillingBadge = `<span style="background:#e0f2fe; color:#0369a1; padding:4px 8px; border-radius:4px; font-weight:600; display:inline-block;">📅 Previsão faturamento: ${predictedBillingDate}</span>`;
+            predictedBillingBadge = isForecastOverdue
+                ? `<span style="background:#fee2e2; color:#991b1b; padding:4px 8px; border-radius:4px; font-weight:700; display:inline-block; border:1px solid #fecaca;">⚠️ Faturamento em atraso: ${predictedBillingDate}</span>`
+                : `<span style="background:#e0f2fe; color:#0369a1; padding:4px 8px; border-radius:4px; font-weight:600; display:inline-block;">📅 Previsão faturamento: ${predictedBillingDate}</span>`;
         }
 
         const averageMargin = orderSubmissionManager.calculateMargin(submission);
@@ -3184,7 +3489,9 @@ function renderHistoryTab() {
 
         let predictedBillingHtml = '';
         if (submission.status === 'aprovado' && billingStatus !== 'completo' && predictedBillingDate) {
-            predictedBillingHtml = `<div style="margin-top:8px; font-size:0.95rem; color:#334155;"><strong>Previsão de faturamento:</strong> ${predictedBillingDate}</div>`;
+            predictedBillingHtml = isForecastOverdue
+                ? `<div style="margin-top:8px; font-size:0.95rem; color:#7f1d1d; background:#fee2e2; border:1px solid #fecaca; padding:8px 10px; border-radius:6px; font-weight:700;"><strong>Faturamento em atraso:</strong> ${predictedBillingDate}</div>`
+                : `<div style="margin-top:8px; font-size:0.95rem; color:#334155;"><strong>Previsão de faturamento:</strong> ${predictedBillingDate}</div>`;
         }
 
         let itemsHtml = `
