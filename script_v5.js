@@ -166,20 +166,7 @@ const statusManager = {
     save() {
         localStorage.setItem('orderStatus', this.currentStatus);
         localStorage.setItem('orderStatusHistory', JSON.stringify(this.history));
-        const snapshot = {
-            exportedAt: new Date().toISOString(),
-            version: 1,
-            data: {
-                orderSubmissions: orderSubmissionManager && orderSubmissionManager.submissions ? orderSubmissionManager.submissions : {},
-                deletedSubmissions: deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : {},
-                hr_users: authManager && authManager.users ? authManager.users : {},
-                hr_currentUser: authManager && authManager.currentUser ? authManager.currentUser : '',
-                hr_currentRole: authManager && authManager.currentRole ? authManager.currentRole : '',
-                orderMeta: orderManager && orderManager.meta ? orderManager.meta : {},
-                orderStatus: this.currentStatus,
-                orderStatusHistory: this.history || []
-            }
-        };
+        const snapshot = createPortalSnapshot();
         localStorage.setItem('portal_backup_snapshot', JSON.stringify(snapshot));
     },
     
@@ -433,25 +420,51 @@ const orderManager = {
 };
 
 // ========== GERENCIADOR DE SUBMISSÃO DE PEDIDOS ==========
+function readJsonStorage(key, fallback = {}) {
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return fallback;
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : fallback;
+    } catch (error) {
+        return fallback;
+    }
+}
+
 function createPortalSnapshot() {
+    const orderSubmissions = orderSubmissionManager && orderSubmissionManager.submissions && Object.keys(orderSubmissionManager.submissions).length
+        ? orderSubmissionManager.submissions
+        : readJsonStorage('orderSubmissions', {});
+    const deletedSubmissions = deletedSubmissionsManager && deletedSubmissionsManager.deleted && Object.keys(deletedSubmissionsManager.deleted).length
+        ? deletedSubmissionsManager.deleted
+        : readJsonStorage('orderDeletions', {});
+
     return {
         exportedAt: new Date().toISOString(),
         version: 1,
         data: {
-            orderSubmissions: orderSubmissionManager && orderSubmissionManager.submissions ? orderSubmissionManager.submissions : {},
-            deletedSubmissions: deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : {},
-            hr_users: authManager && authManager.users ? authManager.users : {},
-            hr_currentUser: authManager && authManager.currentUser ? authManager.currentUser : '',
-            hr_currentRole: authManager && authManager.currentRole ? authManager.currentRole : '',
-            orderMeta: orderManager && orderManager.meta ? orderManager.meta : {},
-            orderStatus: statusManager && statusManager.currentStatus ? statusManager.currentStatus : 'rascunho',
-            orderStatusHistory: statusManager && statusManager.history ? statusManager.history : []
+            orderSubmissions,
+            deletedSubmissions,
+            hr_users: authManager && authManager.users ? authManager.users : readJsonStorage('hr_users', {}),
+            hr_currentUser: authManager && authManager.currentUser ? authManager.currentUser : (localStorage.getItem('hr_currentUser') || ''),
+            hr_currentRole: authManager && authManager.currentRole ? authManager.currentRole : (localStorage.getItem('hr_currentRole') || ''),
+            orderMeta: orderManager && orderManager.meta ? orderManager.meta : readJsonStorage('orderMeta', { createdBy: null, createdAt: null }),
+            orderStatus: statusManager && statusManager.currentStatus ? statusManager.currentStatus : (localStorage.getItem('orderStatus') || 'rascunho'),
+            orderStatusHistory: statusManager && statusManager.history ? statusManager.history : readJsonStorage('orderStatusHistory', [])
         }
     };
 }
 
 function savePortalSnapshot() {
     try {
+        const currentOrderSubmissions = orderSubmissionManager && orderSubmissionManager.submissions ? orderSubmissionManager.submissions : readJsonStorage('orderSubmissions', {});
+        const currentDeletedSubmissions = deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : readJsonStorage('orderDeletions', {});
+        const backupOrderSubmissions = readJsonStorage('orderSubmissionsBackup', {});
+        const hasStoredData = Object.keys(currentOrderSubmissions || {}).length > 0 || Object.keys(currentDeletedSubmissions || {}).length > 0 || Object.keys(backupOrderSubmissions || {}).length > 0;
+        if (!hasStoredData) {
+            return;
+        }
+
         const snapshot = createPortalSnapshot();
         localStorage.setItem('portal_backup_snapshot', JSON.stringify(snapshot));
         localStorage.setItem('portal_backup_snapshot_latest', JSON.stringify(snapshot));
@@ -462,6 +475,32 @@ function savePortalSnapshot() {
 
 function restorePortalSnapshotIfAvailable() {
     try {
+        const currentSaved = localStorage.getItem('orderSubmissions');
+        let currentOrderMap = {};
+        try {
+            currentOrderMap = currentSaved ? JSON.parse(currentSaved) : {};
+        } catch (_) {
+            currentOrderMap = {};
+        }
+
+        if (currentSaved && currentSaved !== 'null' && Object.keys(currentOrderMap || {}).length > 0) {
+            return true;
+        }
+
+        const backupSaved = localStorage.getItem('orderSubmissionsBackup');
+        let backupOrderMap = {};
+        try {
+            backupOrderMap = backupSaved ? JSON.parse(backupSaved) : {};
+        } catch (_) {
+            backupOrderMap = {};
+        }
+
+        if (backupSaved && backupSaved !== 'null' && Object.keys(backupOrderMap || {}).length > 0) {
+            localStorage.setItem('orderSubmissions', JSON.stringify(backupOrderMap));
+            if (orderSubmissionManager) orderSubmissionManager.submissions = backupOrderMap;
+            return true;
+        }
+
         const raw = localStorage.getItem('portal_backup_snapshot') || localStorage.getItem('portal_backup_snapshot_latest');
         if (!raw) return false;
         const snapshot = JSON.parse(raw);
@@ -472,9 +511,13 @@ function restorePortalSnapshotIfAvailable() {
         const hasUserData = !!(data.hr_users && Object.keys(data.hr_users).length > 0);
         if (!hasOrderData && !hasUserData) return false;
 
+        const restoredOrderMap = data.orderSubmissions && Object.keys(data.orderSubmissions).length > 0
+            ? Object.assign({}, currentOrderMap || {}, data.orderSubmissions || {})
+            : (currentOrderMap || {});
+
         if (data.orderSubmissions) {
-            localStorage.setItem('orderSubmissions', JSON.stringify(data.orderSubmissions));
-            if (orderSubmissionManager) orderSubmissionManager.submissions = data.orderSubmissions;
+            localStorage.setItem('orderSubmissions', JSON.stringify(restoredOrderMap));
+            if (orderSubmissionManager) orderSubmissionManager.submissions = restoredOrderMap;
         }
         if (data.deletedSubmissions) {
             localStorage.setItem('orderDeletions', JSON.stringify(data.deletedSubmissions));
@@ -522,24 +565,35 @@ const orderSubmissionManager = {
     init() {
         const saved = localStorage.getItem('orderSubmissions');
         const backup = localStorage.getItem('orderSubmissionsBackup') || localStorage.getItem('orderSubmissions_backup');
+        const snapshotRaw = localStorage.getItem('portal_backup_snapshot') || localStorage.getItem('portal_backup_snapshot_latest');
 
         try {
-            const parsedSaved = saved ? JSON.parse(saved) : null;
-            const parsedBackup = backup ? JSON.parse(backup) : null;
-            const candidate = parsedSaved && Object.keys(parsedSaved).length > 0 ? parsedSaved : (parsedBackup || {});
-            this.submissions = candidate || {};
+            const parsedSaved = saved && saved !== 'null' ? JSON.parse(saved) : null;
+            const parsedBackup = backup && backup !== 'null' ? JSON.parse(backup) : null;
+            const parsedSnapshot = snapshotRaw && snapshotRaw !== 'null' ? JSON.parse(snapshotRaw) : null;
+            const snapshotData = parsedSnapshot && parsedSnapshot.data ? parsedSnapshot.data : parsedSnapshot;
+            const parsedSnapshotOrders = snapshotData && snapshotData.orderSubmissions ? snapshotData.orderSubmissions : null;
 
-            if (Object.keys(this.submissions).length > 0 && (!saved || Object.keys(parsedSaved || {}).length === 0)) {
+            const merged = Object.assign(
+                {},
+                parsedBackup && typeof parsedBackup === 'object' ? parsedBackup : {},
+                parsedSaved && typeof parsedSaved === 'object' ? parsedSaved : {},
+                parsedSnapshotOrders && typeof parsedSnapshotOrders === 'object' ? parsedSnapshotOrders : {}
+            );
+
+            this.submissions = merged && Object.keys(merged).length > 0 ? merged : {};
+
+            if (Object.keys(this.submissions).length > 0) {
                 localStorage.setItem('orderSubmissions', JSON.stringify(this.submissions));
+                localStorage.setItem('orderSubmissionsBackup', JSON.stringify(this.submissions));
             }
         } catch (e) {
             this.submissions = {};
-            if (backup) {
-                try {
-                    const parsedBackup = JSON.parse(backup);
-                    this.submissions = parsedBackup || {};
-                    localStorage.setItem('orderSubmissions', JSON.stringify(this.submissions));
-                } catch (_) {}
+            const fallback = (backup && backup !== 'null') ? (() => { try { return JSON.parse(backup); } catch (_) { return {}; } })() : {};
+            this.submissions = fallback && Object.keys(fallback).length > 0 ? fallback : {};
+            if (Object.keys(this.submissions).length > 0) {
+                localStorage.setItem('orderSubmissions', JSON.stringify(this.submissions));
+                localStorage.setItem('orderSubmissionsBackup', JSON.stringify(this.submissions));
             }
         }
 
@@ -549,6 +603,21 @@ const orderSubmissionManager = {
     },
 
     save() {
+        if (!this.submissions || Object.keys(this.submissions).length === 0) {
+            const backup = localStorage.getItem('orderSubmissionsBackup');
+            if (backup && backup !== 'null') {
+                try {
+                    const parsed = JSON.parse(backup);
+                    if (parsed && Object.keys(parsed).length > 0) {
+                        this.submissions = parsed;
+                        localStorage.setItem('orderSubmissions', JSON.stringify(parsed));
+                        return;
+                    }
+                } catch (_) {}
+            }
+            return;
+        }
+
         const serialized = JSON.stringify(this.submissions);
         localStorage.setItem('orderSubmissions', serialized);
         localStorage.setItem('orderSubmissionsBackup', serialized);
@@ -561,7 +630,7 @@ const orderSubmissionManager = {
         return 'order_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     },
 
-    saveDraft(orderNumber, clientName, representativeName, cart, savedBy, draftId = null) {
+    saveDraft(orderNumber, clientName, representativeName, cart, savedBy, draftId = null, proposalValidity = '') {
         if (cart.length === 0) {
             throw new Error('Adicione itens antes de salvar o rascunho.');
         }
@@ -576,6 +645,7 @@ const orderSubmissionManager = {
             orderNumber: orderNumber?.trim() || '',
             clientName: clientName?.trim() || '',
             representativeName: representativeName?.trim() || '',
+            proposalValidity: proposalValidity?.trim() || this.submissions[id]?.proposalValidity || '',
             cart: JSON.parse(JSON.stringify(cart)),
             status: 'rascunho',
             submittedAt: this.submissions[id]?.submittedAt || '',
@@ -598,7 +668,7 @@ const orderSubmissionManager = {
         return this.getDrafts();
     },
 
-    submitOrder(orderNumber, clientName, representativeName, cart, submittedBy, draftId = null) {
+    submitOrder(orderNumber, clientName, representativeName, cart, submittedBy, draftId = null, proposalValidity = '') {
         if (!orderNumber?.trim() || cart.length === 0) {
             throw new Error('Pedido deve ter número e itens');
         }
@@ -611,6 +681,7 @@ const orderSubmissionManager = {
             orderNumber: orderNumber.trim(),
             clientName: clientName.trim(),
             representativeName: representativeName.trim(),
+            proposalValidity: proposalValidity?.trim() || this.submissions[id]?.proposalValidity || '',
             cart: JSON.parse(JSON.stringify(cart)), // Deep copy
             status: 'analise', // analise, aprovado, rejeitado, rascunho
             submittedAt: now,
@@ -1409,6 +1480,25 @@ function removeFromCart(idx) {
     updateOrderTable();
 }
 
+function normalizeProposalValidity(value) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return '';
+
+    const digitsOnly = raw.replace(/\D+/g, '');
+    if (!digitsOnly) return raw;
+
+    const parsed = Number.parseInt(digitsOnly, 10);
+    if (!Number.isFinite(parsed)) return raw;
+
+    return `dias ${parsed}`;
+}
+
+function formatProposalValidityInput(input) {
+    if (!input) return;
+    const formatted = normalizeProposalValidity(input.value);
+    input.value = formatted;
+}
+
 function updateHeaderInfo() {
     const orderNumberHiperroll = document.getElementById('orderNumberHiperroll')?.value.trim() || '---';
     const dateStr = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
@@ -1441,7 +1531,7 @@ function createPdfExportNode() {
     const orderNumber = loadedDraftNumber || orderNumberClient || orderNumberHiperroll;
     const clientName = document.getElementById('clientName')?.value.trim() || '---';
     const representativeName = document.getElementById('representativeName')?.value.trim() || '---';
-    const proposalValidity = document.getElementById('proposalValidity')?.value.trim() || '---';
+    const proposalValidity = normalizeProposalValidity(document.getElementById('proposalValidity')?.value || '');
     const dateStr = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 
     let totalWeight = 0;
@@ -2253,13 +2343,15 @@ function submitOrder() {
         const orderNumberToUse = orderNumberClient || orderNumberHiperroll;
         
         const draftIdToUse = selectedDraftValue && selectedDraftValue !== '__new__' ? selectedDraftValue : null;
+        const proposalValidity = normalizeProposalValidity(document.getElementById('proposalValidity')?.value || '');
         const submissionId = orderSubmissionManager.submitOrder(
             orderNumberToUse,
             clientName,
             representativeName,
             cart,
             currentUser,
-            draftIdToUse
+            draftIdToUse,
+            proposalValidity
         );
         console.log('[Portal Hiperroll] submitOrder() saved submission', {
             submissionId,
@@ -2306,6 +2398,7 @@ function submitOrder() {
             document.getElementById('orderNumberClient').value = '';
             document.getElementById('clientName').value = '';
             document.getElementById('representativeName').value = '';
+            document.getElementById('proposalValidity').value = '';
             alert('Pedido enviado com sucesso! Aguardando aprovação do supervisor.');
             switchTab('tab-history');
             renderHistoryTab();
@@ -2335,13 +2428,15 @@ function saveDraftCurrentOrder() {
         // Usar número do cliente se preenchido, senão usar Hiper Roll
         const orderNumberToUse = orderNumberClient || orderNumberHiperroll;
         
+        const proposalValidity = normalizeProposalValidity(document.getElementById('proposalValidity')?.value || '');
         const draftId = orderSubmissionManager.saveDraft(
             orderNumberToUse,
             clientName,
             representativeName,
             cart,
             currentUser,
-            activeDraftId
+            activeDraftId,
+            proposalValidity
         );
         activeDraftId = draftId;
         renderDraftsPanel();
@@ -2371,6 +2466,7 @@ function loadDraftToCurrentOrder(submissionId, silent = false) {
     setLoadedOrderReference(submission.orderNumber || '');
     document.getElementById('clientName').value = submission.clientName || '';
     document.getElementById('representativeName').value = submission.representativeName || '';
+    document.getElementById('proposalValidity').value = submission.proposalValidity || '';
     cart.length = 0;
     (Array.isArray(submission.cart) ? submission.cart : []).forEach(item => cart.push(JSON.parse(JSON.stringify(item))));
     updateOrderTable();
@@ -2395,6 +2491,7 @@ function repeatOrder(submissionId) {
     document.getElementById('orderNumberClient').value = submission.orderNumber || '';
     document.getElementById('clientName').value = submission.clientName || '';
     document.getElementById('representativeName').value = submission.representativeName || '';
+    document.getElementById('proposalValidity').value = normalizeProposalValidity(submission.proposalValidity || '');
     cart.length = 0;
     (Array.isArray(submission.cart) ? submission.cart : []).forEach(item => cart.push(JSON.parse(JSON.stringify(item))));
     updateOrderTable();
@@ -3255,7 +3352,8 @@ function showPendingOrderDetails(submissionId) {
         <button onclick="document.getElementById('detailsModalBackdrop').remove()" style="position:absolute; top:20px; right:20px; background:none; border:none; font-size:1.5rem; cursor:pointer; color:#64748b;">&times;</button>
         <h2 style="margin:0 0 5px 0; color:#0f172a; font-size:1.3rem;">Detalhes do Pedido: ${submission.orderNumber}</h2>
         <div style="color:#64748b; font-size:0.95rem; margin-bottom:20px;">
-            Enviado por <strong>${submission.submittedBy}</strong> em <strong>${submittedDate}</strong> para o cliente <strong>${submission.clientName}</strong>
+            Enviado por <strong>${submission.submittedBy}</strong> em <strong>${submittedDate}</strong> para o cliente <strong>${submission.clientName}</strong><br>
+            Validade da proposta: <strong>${submission.proposalValidity || 'Não informada'}</strong>
         </div>
         ${itemsHtml}
         <div style="text-align:right; margin-top:20px;">
@@ -3600,7 +3698,8 @@ function renderHistoryTab() {
                             Comprador / Usuário: <strong>${submission.submittedBy || submission.savedBy || '(Sem usuário)'}</strong><br>
                             Margem média: <strong style="color:${marginStatus.color};">${averageMargin.toFixed(2)}%</strong> <span style="color:${marginStatus.color}; font-weight:700;">${marginStatus.label}</span><br>
                             Total do Pedido: <strong>R$ ${totalCif.toFixed(2)}</strong><br>
-                            Data: ${dateStr}
+                            Data: ${dateStr}<br>
+                            Validade da proposta: <strong>${normalizeProposalValidity(submission.proposalValidity || '') || 'Não informada'}</strong>
                         </div>
                     </div>
                     <div style="text-align:right; display:flex; flex-direction:column; gap:5px; align-items:flex-end;">

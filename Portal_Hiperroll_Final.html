@@ -159,7 +159,7 @@
                     </div>
                     <div style="flex: 1; min-width: 220px;">
                         <label for="proposalValidity">Validade da Proposta</label>
-                        <input type="text" id="proposalValidity" placeholder="Ex: 30 dias" oninput="updateHeaderInfo()">
+                        <input type="text" id="proposalValidity" placeholder="Ex: 30 dias" oninput="formatProposalValidityInput(this); updateHeaderInfo()" inputmode="numeric">
                     </div>
                 </div>
                 <!-- Status History Modal -->
