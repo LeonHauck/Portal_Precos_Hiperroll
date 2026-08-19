@@ -458,7 +458,9 @@ function createPortalSnapshot() {
 function savePortalSnapshot() {
     try {
         const currentOrderSubmissions = orderSubmissionManager && orderSubmissionManager.submissions ? orderSubmissionManager.submissions : readJsonStorage('orderSubmissions', {});
-        const currentDeletedSubmissions = deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : readJsonStorage('orderDeletions', {});
+        const managerDeletedSubmissions = deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : {};
+        const storedDeletedSubmissions = readJsonStorage('orderDeletions', {});
+        const currentDeletedSubmissions = Object.keys(managerDeletedSubmissions).length > 0 ? managerDeletedSubmissions : storedDeletedSubmissions;
         const backupOrderSubmissions = readJsonStorage('orderSubmissionsBackup', {});
         const hasStoredData = Object.keys(currentOrderSubmissions || {}).length > 0 || Object.keys(currentDeletedSubmissions || {}).length > 0 || Object.keys(backupOrderSubmissions || {}).length > 0;
         if (!hasStoredData) {
@@ -519,9 +521,13 @@ function restorePortalSnapshotIfAvailable() {
             localStorage.setItem('orderSubmissions', JSON.stringify(restoredOrderMap));
             if (orderSubmissionManager) orderSubmissionManager.submissions = restoredOrderMap;
         }
-        if (data.deletedSubmissions) {
-            localStorage.setItem('orderDeletions', JSON.stringify(data.deletedSubmissions));
-            if (deletedSubmissionsManager) deletedSubmissionsManager.deleted = data.deletedSubmissions;
+        const currentDeletedSubmissions = readJsonStorage('orderDeletions', {});
+        const restoredDeletedSubmissions = Object.keys(currentDeletedSubmissions).length > 0
+            ? currentDeletedSubmissions
+            : (data.deletedSubmissions && Object.keys(data.deletedSubmissions).length > 0 ? data.deletedSubmissions : {});
+        if (Object.keys(restoredDeletedSubmissions).length > 0 || data.deletedSubmissions) {
+            localStorage.setItem('orderDeletions', JSON.stringify(restoredDeletedSubmissions));
+            if (deletedSubmissionsManager) deletedSubmissionsManager.deleted = restoredDeletedSubmissions;
         }
         if (data.hr_users) {
             localStorage.setItem('hr_users', JSON.stringify(data.hr_users));
@@ -3296,6 +3302,7 @@ function showPendingOrderDetails(submissionId) {
                         <th style="padding:10px; text-align:left; border-bottom:1px solid #e2e8f0;">Cód</th>
                         <th style="padding:10px; text-align:left; border-bottom:1px solid #e2e8f0;">Descrição</th>
                         <th style="padding:10px; text-align:center; border-bottom:1px solid #e2e8f0;">Qtd</th>
+                        <th style="padding:10px; text-align:center; border-bottom:1px solid #e2e8f0;">Qtd Faturada</th>
                         <th style="padding:10px; text-align:right; border-bottom:1px solid #e2e8f0;">Preço (CIF)</th>
                         <th style="padding:10px; text-align:right; border-bottom:1px solid #e2e8f0;">Margem</th>
                         <th style="padding:10px; text-align:right; border-bottom:1px solid #e2e8f0;">Subtotal</th>
@@ -3313,12 +3320,15 @@ function showPendingOrderDetails(submissionId) {
         totalCif += subtotal;
         const marginPercent = negotiatedPrice > 0 ? ((negotiatedPrice - item.fob) / negotiatedPrice) * 100 : 0;
         const itemMarginColor = marginPercent > 15 ? '#15803d' : marginPercent >= 11 ? '#b45309' : '#c53030';
+        const billedQty = Math.min(submission.billedQuantities?.[item.codigo] || 0, qty);
+        const billingColor = billedQty >= qty ? '#15803d' : billedQty > 0 ? '#b45309' : '#64748b';
         
         itemsHtml += `
             <tr style="border-bottom:1px solid #e2e8f0;">
                 <td style="padding:10px;">${item.codigo}</td>
                 <td style="padding:10px;">${(item.descricao||'').replace(/"/g,'')}</td>
                 <td style="padding:10px; text-align:center; font-weight:600;">${qty}</td>
+                <td style="padding:10px; text-align:center; color:${billingColor}; font-weight:600;">${billedQty}/${qty}</td>
                 <td style="padding:10px; text-align:right;">R$ ${negotiatedPrice.toFixed(2)}</td>
                 <td style="padding:10px; text-align:right; color:${itemMarginColor}; font-weight:600;">${marginPercent.toFixed(2)}%</td>
                 <td style="padding:10px; text-align:right; font-weight:600;">R$ ${subtotal.toFixed(2)}</td>
