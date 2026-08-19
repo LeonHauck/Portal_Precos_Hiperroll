@@ -432,12 +432,15 @@ function readJsonStorage(key, fallback = {}) {
 }
 
 function createPortalSnapshot() {
-    const orderSubmissions = orderSubmissionManager && orderSubmissionManager.submissions && Object.keys(orderSubmissionManager.submissions).length
-        ? orderSubmissionManager.submissions
-        : readJsonStorage('orderSubmissions', {});
     const deletedSubmissions = deletedSubmissionsManager && deletedSubmissionsManager.deleted && Object.keys(deletedSubmissionsManager.deleted).length
         ? deletedSubmissionsManager.deleted
         : readJsonStorage('orderDeletions', {});
+    const activeSubmissions = orderSubmissionManager && orderSubmissionManager.submissions && Object.keys(orderSubmissionManager.submissions).length
+        ? orderSubmissionManager.submissions
+        : readJsonStorage('orderSubmissions', {});
+    const orderSubmissions = Object.fromEntries(
+        Object.entries(activeSubmissions || {}).filter(([id]) => !deletedSubmissions || !deletedSubmissions[id])
+    );
 
     return {
         exportedAt: new Date().toISOString(),
@@ -459,7 +462,11 @@ function savePortalSnapshot() {
     try {
         const currentOrderSubmissions = orderSubmissionManager && orderSubmissionManager.submissions ? orderSubmissionManager.submissions : readJsonStorage('orderSubmissions', {});
         const managerDeletedSubmissions = deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : {};
-        const storedDeletedSubmissions = readJsonStorage('orderDeletions', {});
+        const storedDeletedSubmissions = Object.assign(
+            {},
+            readJsonStorage('orderDeletionsBackup', {}),
+            readJsonStorage('orderDeletions', {})
+        );
         const currentDeletedSubmissions = Object.keys(managerDeletedSubmissions).length > 0 ? managerDeletedSubmissions : storedDeletedSubmissions;
         const backupOrderSubmissions = readJsonStorage('orderSubmissionsBackup', {});
         const hasStoredData = Object.keys(currentOrderSubmissions || {}).length > 0 || Object.keys(currentDeletedSubmissions || {}).length > 0 || Object.keys(backupOrderSubmissions || {}).length > 0;
@@ -517,11 +524,21 @@ function restorePortalSnapshotIfAvailable() {
             ? Object.assign({}, currentOrderMap || {}, data.orderSubmissions || {})
             : (currentOrderMap || {});
 
+        const storedDeletedSubmissions = readJsonStorage('orderDeletions', {});
+        const deletedIds = Object.keys(storedDeletedSubmissions).length > 0
+            ? storedDeletedSubmissions
+            : (data.deletedSubmissions || {});
+        Object.keys(deletedIds).forEach(id => delete restoredOrderMap[id]);
+
         if (data.orderSubmissions) {
             localStorage.setItem('orderSubmissions', JSON.stringify(restoredOrderMap));
             if (orderSubmissionManager) orderSubmissionManager.submissions = restoredOrderMap;
         }
-        const currentDeletedSubmissions = readJsonStorage('orderDeletions', {});
+        const currentDeletedSubmissions = Object.assign(
+            {},
+            readJsonStorage('orderDeletionsBackup', {}),
+            readJsonStorage('orderDeletions', {})
+        );
         const restoredDeletedSubmissions = Object.keys(currentDeletedSubmissions).length > 0
             ? currentDeletedSubmissions
             : (data.deletedSubmissions && Object.keys(data.deletedSubmissions).length > 0 ? data.deletedSubmissions : {});
@@ -579,6 +596,11 @@ const orderSubmissionManager = {
             const parsedSnapshot = snapshotRaw && snapshotRaw !== 'null' ? JSON.parse(snapshotRaw) : null;
             const snapshotData = parsedSnapshot && parsedSnapshot.data ? parsedSnapshot.data : parsedSnapshot;
             const parsedSnapshotOrders = snapshotData && snapshotData.orderSubmissions ? snapshotData.orderSubmissions : null;
+            const deletedOrders = Object.assign(
+                {},
+                readJsonStorage('orderDeletionsBackup', {}),
+                readJsonStorage('orderDeletions', {})
+            );
 
             const merged = Object.assign(
                 {},
@@ -586,6 +608,8 @@ const orderSubmissionManager = {
                 parsedSaved && typeof parsedSaved === 'object' ? parsedSaved : {},
                 parsedSnapshotOrders && typeof parsedSnapshotOrders === 'object' ? parsedSnapshotOrders : {}
             );
+
+            Object.keys(deletedOrders).forEach(id => delete merged[id]);
 
             this.submissions = merged && Object.keys(merged).length > 0 ? merged : {};
 
@@ -873,15 +897,50 @@ const deletedSubmissionsManager = {
 
     init() {
         const saved = localStorage.getItem(this.deletedKey);
+        const backup = localStorage.getItem('orderDeletionsBackup');
         try {
-            this.deleted = saved ? JSON.parse(saved) : {};
+            const parsedSaved = saved ? JSON.parse(saved) : {};
+            const parsedBackup = backup ? JSON.parse(backup) : {};
+            this.deleted = Object.assign({}, parsedBackup || {}, parsedSaved || {});
         } catch (e) {
             this.deleted = {};
+        }
+
+        if (!this.deleted || Object.keys(this.deleted).length === 0) {
+            const snapshotRaw = localStorage.getItem('portal_backup_snapshot') || localStorage.getItem('portal_backup_snapshot_latest');
+            try {
+                const snapshot = snapshotRaw ? JSON.parse(snapshotRaw) : null;
+                const snapshotData = snapshot && snapshot.data ? snapshot.data : snapshot;
+                const snapshotDeleted = snapshotData && snapshotData.deletedSubmissions;
+                if (snapshotDeleted && Object.keys(snapshotDeleted).length > 0) {
+                    this.deleted = Object.assign({}, snapshotDeleted, this.deleted || {});
+                    localStorage.setItem(this.deletedKey, JSON.stringify(this.deleted));
+                    localStorage.setItem('orderDeletionsBackup', JSON.stringify(this.deleted));
+                }
+            } catch (e) {
+                this.deleted = this.deleted || {};
+            }
+        }
+
+        if (Object.keys(this.deleted).length > 0 && orderSubmissionManager && orderSubmissionManager.submissions) {
+            let removedActiveOrder = false;
+            Object.keys(this.deleted).forEach(id => {
+                if (orderSubmissionManager.submissions[id]) {
+                    delete orderSubmissionManager.submissions[id];
+                    removedActiveOrder = true;
+                }
+            });
+            if (removedActiveOrder) {
+                localStorage.setItem('orderSubmissions', JSON.stringify(orderSubmissionManager.submissions));
+                localStorage.setItem('orderSubmissionsBackup', JSON.stringify(orderSubmissionManager.submissions));
+            }
         }
     },
 
     save() {
-        localStorage.setItem(this.deletedKey, JSON.stringify(this.deleted));
+        const serialized = JSON.stringify(this.deleted || {});
+        localStorage.setItem(this.deletedKey, serialized);
+        localStorage.setItem('orderDeletionsBackup', serialized);
         if (typeof savePortalSnapshot === 'function') {
             savePortalSnapshot();
         }
@@ -2544,6 +2603,7 @@ function deleteSubmission(submissionId) {
     const deletedBy = authManager.getCurrentUser() || 'Sistema';
     if (deletedSubmissionsManager.archiveSubmission(submissionId, submission, deletedBy, '')) {
         orderSubmissionManager.deleteSubmission(submissionId);
+        deletedSubmissionsManager.save();
         
         if (activeDraftId === submissionId) {
             activeDraftId = null;
@@ -2582,6 +2642,7 @@ function deleteSelectedSubmissions() {
         if (submission) {
             if (deletedSubmissionsManager.archiveSubmission(id, submission, deletedBy, '')) {
                 orderSubmissionManager.deleteSubmission(id);
+                deletedSubmissionsManager.save();
                 deletedCount += 1;
             }
         }
