@@ -3,15 +3,18 @@
     --primary: #E31E24;
     --primary-hover: #c91820;
     --primary-light: #fce4e6;
-    
+
     --secondary: #0054A6;
     --secondary-hover: #003d7a;
     --secondary-light: #e3f2fd;
-    
+
+    --navy-deep: #071A3D;
+    --navy-deep-hover: #0c2652;
+
     --success: #16a34a;
     --warning: #ea580c;
     --error: #dc2626;
-    
+
     --bg: #f9fafb;
     --bg-secondary: #f3f4f6;
     --card-bg: #ffffff;
@@ -47,8 +50,12 @@ html {
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Outfit', 'Inter', sans-serif;
+    font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
     background-color: var(--bg);
+    background-image:
+        radial-gradient(900px 480px at 8% -8%, rgba(227, 30, 36, 0.06), transparent 60%),
+        radial-gradient(900px 480px at 95% 0%, rgba(5, 84, 166, 0.06), transparent 60%);
+    background-attachment: fixed;
     color: var(--text);
     line-height: 1.6;
     padding: 24px;
@@ -67,10 +74,10 @@ body {
 header {
     margin-bottom: 32px;
     padding: 0;
-    background: linear-gradient(135deg, var(--primary) 0%, #c91820 40%, var(--secondary) 100%);
+    background: linear-gradient(115deg, var(--primary) 0%, #b91620 38%, var(--navy-deep) 100%);
     border-radius: var(--radius-lg);
     color: white;
-    box-shadow: 0 12px 48px 0 rgba(227, 30, 36, 0.25);
+    box-shadow: 0 16px 40px 0 rgba(7, 26, 61, 0.28);
     position: relative;
     overflow: hidden;
 }
@@ -103,10 +110,10 @@ header::after {
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    gap: 24px;
+    gap: 0;
     max-width: 100%;
     margin: 0 auto;
-    padding: 40px 32px;
+    padding: 26px 32px;
     position: relative;
     z-index: 2;
     flex-wrap: wrap;
@@ -115,9 +122,10 @@ header::after {
 .header-brand-section {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 18px;
     flex-shrink: 1;
-    min-width: 300px;
+    min-width: 320px;
+    padding-right: 28px;
 }
 
 .logo-container {
@@ -125,28 +133,21 @@ header::after {
     justify-content: center;
     align-items: center;
     flex-shrink: 0;
-    width: 110px;
-    height: 110px;
-    background: rgba(255,255,255,0.15);
-    border-radius: var(--radius-lg);
-    backdrop-filter: blur(12px);
-    border: 2px solid rgba(255,255,255,0.25);
+    width: 118px;
+    height: 118px;
     transition: var(--transition);
-    box-shadow: inset 0 1px 2px rgba(255,255,255,0.3);
 }
 
 .logo-container:hover {
-    background: rgba(255,255,255,0.2);
-    border-color: rgba(255,255,255,0.4);
-    transform: scale(1.05) translateY(-2px);
-    box-shadow: inset 0 1px 3px rgba(255,255,255,0.4), 0 8px 20px rgba(0,0,0,0.15);
+    transform: scale(1.04) translateY(-2px);
 }
 
 .site-logo {
-    max-height: 90px;
-    width: auto;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
     display: block;
-    filter: brightness(1.15) drop-shadow(0 2px 6px rgba(0,0,0,0.15));
+    filter: drop-shadow(0 4px 10px rgba(0,0,0,0.3));
 }
 
 .brand {
@@ -156,49 +157,57 @@ header::after {
 
 .brand h1 {
     margin: 0;
-    font-size: 3rem;
-    line-height: 1;
+    font-size: 1.9rem;
+    line-height: 1.15;
     font-weight: 800;
-    letter-spacing: -1px;
+    letter-spacing: -0.4px;
     color: #ffffff;
-    text-shadow: 0 3px 12px rgba(0,0,0,0.25);
 }
 
 .brand p {
-    margin: 10px 0 0 0;
-    font-size: 1.1rem;
+    margin: 4px 0 0 0;
+    font-size: 0.9rem;
     font-weight: 500;
-    letter-spacing: 0.3px;
-    color: rgba(255,255,255,0.95);
+    letter-spacing: 0.2px;
+    color: rgba(255,255,255,0.75);
 }
 
 /* ========== HEADER INFO SECTION ========== */
 .header-info-section {
     display: flex;
-    gap: 20px;
-    align-items: center;
+    gap: 0;
+    align-items: stretch;
     flex-shrink: 1;
     min-width: 320px;
+    padding: 0 28px;
+    border-left: 1px solid rgba(255,255,255,0.18);
+    border-right: 1px solid rgba(255,255,255,0.18);
 }
 
 .info-box {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    background: rgba(255,255,255,0.12);
-    border: 1.5px solid rgba(255,255,255,0.25);
-    padding: 14px 20px;
-    border-radius: var(--radius-lg);
-    backdrop-filter: blur(12px);
+    justify-content: center;
+    gap: 5px;
+    background: transparent;
+    padding: 4px 22px;
+    border-radius: 0;
+    border-right: 1px solid rgba(255,255,255,0.14);
     transition: var(--transition);
-    min-width: 120px;
+    min-width: 110px;
     text-align: center;
 }
 
+.info-box:last-child {
+    border-right: none;
+}
+
+.info-box:first-child {
+    padding-left: 0;
+}
+
 .info-box:hover {
-    background: rgba(255,255,255,0.18);
-    border-color: rgba(255,255,255,0.35);
-    transform: translateY(-2px);
+    background: rgba(255,255,255,0.06);
 }
 
 .info-box--margin .margin-value-line {
@@ -245,6 +254,7 @@ header::after {
     flex-wrap: wrap;
     min-width: 250px;
     flex-grow: 1;
+    padding-left: 28px;
 }
 
 #currentUser {
@@ -263,54 +273,58 @@ header::after {
 }
 
 .header-btn {
-    padding: 10px 16px;
+    padding: 11px 22px;
     border: none;
-    border-radius: var(--radius);
-    font-size: 0.85rem;
+    border-radius: 10px;
+    font-size: 0.88rem;
     font-weight: 700;
+    letter-spacing: 0.02em;
     cursor: pointer;
     transition: var(--transition);
-    white-space: normal;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    white-space: nowrap;
     flex-shrink: 0;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     text-align: center;
 }
 
 .header-btn-primary {
-    background: rgba(255,255,255,0.95);
-    color: var(--secondary);
+    background: #ffffff;
+    color: var(--navy-deep);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.18);
 }
 
 .header-btn-primary:hover {
     background: #ffffff;
+    color: var(--secondary);
     transform: translateY(-2px);
-    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    box-shadow: 0 10px 20px rgba(0,0,0,0.22);
 }
 
 .header-btn-success {
-    background: rgba(22, 163, 74, 0.85);
+    background: linear-gradient(135deg, #22c55e 0%, #15803d 100%);
     color: white;
-    border: 1px solid rgba(255,255,255,0.3);
+    box-shadow: 0 6px 16px rgba(21, 128, 61, 0.35);
 }
 
 .header-btn-success:hover {
-    background: rgba(22, 163, 74, 1);
+    background: linear-gradient(135deg, #34d365 0%, #16913f 100%);
     transform: translateY(-2px);
-    box-shadow: 0 8px 16px rgba(22, 163, 74, 0.3);
+    box-shadow: 0 10px 22px rgba(21, 128, 61, 0.4);
 }
 
 .header-btn-danger {
-    background: rgba(220, 38, 38, 0.85);
-    color: white;
-    border: 1px solid rgba(255,255,255,0.3);
+    background: rgba(255,255,255,0.08);
+    color: #ffffff;
+    border: 1.5px solid rgba(255,255,255,0.45);
 }
 
 .header-btn-danger:hover {
-    background: rgba(220, 38, 38, 1);
+    background: var(--primary);
+    border-color: var(--primary);
     transform: translateY(-2px);
-    box-shadow: 0 8px 16px rgba(220, 38, 38, 0.3);
+    box-shadow: 0 8px 18px rgba(227, 30, 36, 0.4);
 }
 
 #userControls button:hover {
@@ -321,44 +335,53 @@ header::after {
 /* ========== NAVIGATION ========== */
 .app-tabs {
     display: flex;
-    gap: 8px;
-    margin-bottom: 32px;
-    border-bottom: 2px solid var(--border);
-    padding: 0 24px;
+    gap: 6px;
+    width: fit-content;
+    max-width: 100%;
+    margin: -24px auto 32px;
+    padding: 8px;
     background: var(--card-bg);
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    position: relative;
+    z-index: 5;
     flex-wrap: wrap;
 }
 
 .tab-btn {
-    padding: 14px 20px;
+    padding: 12px 22px;
     background: transparent;
     border: none;
     cursor: pointer;
-    font-weight: 600;
-    font-size: 0.95rem;
+    font-weight: 700;
+    font-size: 0.92rem;
     color: var(--text-secondary);
     transition: var(--transition);
-    border-bottom: 3px solid transparent;
+    border-radius: var(--radius-lg);
     position: relative;
-    margin-bottom: -2px;
     white-space: nowrap;
 }
 
 .tab-btn:hover {
-    color: var(--text);
-    background: rgba(0, 0, 0, 0.02);
+    color: var(--secondary);
+    background: rgba(5, 84, 166, 0.06);
 }
 
 .tab-btn.active {
-    color: var(--secondary);
-    border-bottom-color: var(--secondary);
-    background: linear-gradient(180deg, rgba(5, 84, 166, 0.04) 0%, transparent 100%);
+    color: #ffffff;
+    background: linear-gradient(120deg, var(--primary) 0%, var(--secondary) 100%);
+    box-shadow: 0 6px 16px rgba(7, 26, 61, 0.25);
+}
+
+.tab-btn.active:hover {
+    color: #ffffff;
+    background: linear-gradient(120deg, var(--primary) 0%, var(--secondary) 100%);
 }
 
 .tab-content {
     display: none;
-    animation: fadeIn 0.3s ease-in;
+    animation: fadeIn 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .tab-content.active {
@@ -368,7 +391,7 @@ header::after {
 @keyframes fadeIn {
     from {
         opacity: 0;
-        transform: translateY(4px);
+        transform: translateY(10px);
     }
     to {
         opacity: 1;
@@ -398,12 +421,16 @@ header::after {
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow);
     border: 1px solid var(--border);
+    border-top: 3px solid transparent;
+    background-image: linear-gradient(var(--card-bg), var(--card-bg)), linear-gradient(90deg, var(--primary), var(--secondary));
+    background-origin: border-box;
+    background-clip: padding-box, border-box;
     transition: var(--transition);
 }
 
 .card:hover {
     box-shadow: var(--shadow-lg);
-    border-color: var(--border-light);
+    transform: translateY(-1px);
 }
 
 .card h2 {
@@ -563,7 +590,7 @@ button[style*="background:#dc2626"]:hover,
 
 button[style*="background:#0f172a"],
 button[style*="background:#111827"] {
-    background: #4b5563;
+    background: linear-gradient(135deg, var(--navy-deep) 0%, #123163 100%);
     color: white;
     padding: 12px 24px;
     font-size: 0.95rem;
@@ -571,9 +598,9 @@ button[style*="background:#111827"] {
 
 button[style*="background:#0f172a"]:hover,
 button[style*="background:#111827"]:hover {
-    background: #3a4452;
+    background: linear-gradient(135deg, var(--navy-deep-hover) 0%, #17408a 100%);
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 4px 14px rgba(7, 26, 61, 0.35);
 }
 
 button[style*="background:#666666"] {
@@ -956,7 +983,7 @@ td {
     position: fixed;
     inset: 0;
     z-index: 10000;
-    background: linear-gradient(135deg, rgba(227, 30, 36, 0.95), rgba(15, 23, 42, 0.95));
+    background: linear-gradient(135deg, rgba(227, 30, 36, 0.92), rgba(7, 26, 61, 0.96));
     align-items: center;
     justify-content: center;
     padding: 24px;
@@ -990,14 +1017,29 @@ td {
 }
 
 .login-header {
-    padding: 32px 28px 20px;
-    background: linear-gradient(135deg, var(--secondary) 0%, #003d7a 100%);
+    padding: 28px 28px 20px;
+    background: linear-gradient(120deg, var(--primary) 0%, #b91620 40%, var(--navy-deep) 100%);
     color: white;
+    text-align: center;
+}
+
+.login-logo {
+    width: 120px;
+    height: auto;
+    margin: 0 auto 14px;
+}
+
+.login-logo img {
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+    display: block;
+    filter: drop-shadow(0 6px 14px rgba(0,0,0,0.3));
 }
 
 .login-header h2 {
     margin: 0;
-    font-size: 1.8rem;
+    font-size: 1.6rem;
     font-weight: 700;
     letter-spacing: -0.3px;
 }
@@ -1146,46 +1188,58 @@ body.login-locked .container {
         margin-bottom: 24px;
     }
 
+    .app-tabs {
+        margin: -14px auto 24px;
+        width: 100%;
+        justify-content: center;
+    }
+
     .header-inner {
         flex-direction: column;
         gap: 20px;
         padding: 24px 16px;
     }
-    
+
     .header-brand-section {
         width: 100%;
         justify-content: center;
         gap: 16px;
-    }
-    
-    .logo-container {
-        width: 90px;
-        height: 90px;
+        padding-right: 0;
     }
 
-    .site-logo {
-        max-height: 70px;
+    .logo-container {
+        width: 84px;
+        height: 84px;
     }
 
     .brand h1 {
-        font-size: 2rem;
+        font-size: 1.5rem;
     }
 
     .brand p {
-        font-size: 0.95rem;
+        font-size: 0.85rem;
     }
 
     .header-info-section {
         width: 100%;
         justify-content: center;
         gap: 12px;
+        padding: 16px 0 0;
+        border-left: none;
+        border-right: none;
+        border-top: 1px solid rgba(255,255,255,0.18);
     }
-    
+
     .info-box {
         min-width: 100px;
-        padding: 12px 16px;
+        padding: 4px 16px;
+        border-right: 1px solid rgba(255,255,255,0.14);
     }
-    
+
+    .info-box:first-child {
+        padding-left: 16px;
+    }
+
     .info-label {
         font-size: 0.7rem;
     }
@@ -1199,6 +1253,7 @@ body.login-locked .container {
         justify-content: center;
         flex-wrap: wrap;
         gap: 10px;
+        padding-left: 0;
     }
 
     #currentUser {
@@ -1279,30 +1334,26 @@ body.login-locked .container {
     }
 
     .logo-container {
-        width: 80px;
-        height: 80px;
-    }
-
-    .site-logo {
-        max-height: 60px;
+        width: 72px;
+        height: 72px;
     }
 
     .brand h1 {
-        font-size: 1.5rem;
+        font-size: 1.25rem;
     }
 
     .brand p {
-        font-size: 0.85rem;
+        font-size: 0.8rem;
     }
 
     .header-info-section {
-        gap: 10px;
+        gap: 8px;
         width: 100%;
     }
 
     .info-box {
         min-width: 80px;
-        padding: 10px 12px;
+        padding: 4px 10px;
     }
 
     .info-label {
