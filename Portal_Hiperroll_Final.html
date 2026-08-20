@@ -244,54 +244,61 @@
     </div>
 
     <!-- Modal: Enviar Pedido ao Sistema -->
-    <div id="submitOrderModal" style="display:none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.5); z-index:1003; align-items:center; justify-content:center;">
-        <div style="background:white; border-radius:12px; padding:24px; max-width:500px; width:90%; max-height:80vh; overflow-y:auto; box-shadow:0 14px 38px rgba(0,0,0,0.25);">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-                <h3 style="margin:0;">📤 Enviar Pedido ao Sistema</h3>
-                <button onclick="closeSubmitOrderModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer;">✕</button>
+    <div id="submitOrderModal" class="modal-backdrop" style="display:none; position: fixed; z-index:1003;">
+        <div class="modal-panel modal-panel--sm">
+            <div class="modal-header">
+                <div class="modal-header-title">
+                    <div class="modal-icon-badge">📤</div>
+                    <div>
+                        <h3 class="modal-title">Enviar Pedido ao Sistema</h3>
+                        <p class="modal-subtitle">Envie para aprovação do supervisor.</p>
+                    </div>
+                </div>
+                <button onclick="closeSubmitOrderModal()" class="modal-close-btn" aria-label="Fechar">✕</button>
             </div>
-            <div style="margin-bottom:20px;">
-                <p style="color:#475569; margin-bottom:15px;">Seu pedido será enviado para aprovação do supervisor. Após essa ação, não será possível modificar os itens. Se quiser, você também pode salvar um rascunho antes de enviar.</p>
-                <div style="margin-bottom:14px;">
-                    <label for="submitDraftSelect" style="display:block; font-weight:600; margin-bottom:8px;">Selecione o pedido a enviar</label>
-                    <select id="submitDraftSelect" style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px; background:white;">
+            <div class="modal-body">
+                <p style="color:var(--text-secondary); margin-bottom:18px; font-size:0.92rem; line-height:1.5;">Seu pedido será enviado para aprovação do supervisor. Após essa ação, não será possível modificar os itens. Se quiser, você também pode salvar um rascunho antes de enviar.</p>
+                <div style="margin-bottom:16px;">
+                    <label for="submitDraftSelect">Selecione o pedido a enviar</label>
+                    <select id="submitDraftSelect">
                         <option value="__new__">Enviar como novo pedido</option>
                     </select>
-                    <div id="submitDraftHint" style="margin-top:8px; font-size:0.9rem; color:#475569;">Escolha um rascunho salvo para enviar diretamente ou deixe como novo pedido.</div>
+                    <div id="submitDraftHint" style="margin-top:8px; font-size:0.87rem; color:var(--text-secondary);">Escolha um rascunho salvo para enviar diretamente ou deixe como novo pedido.</div>
                 </div>
-                <div style="background:#f0fdf4; border:1px solid #86efac; border-radius:8px; padding:15px; margin-bottom:15px;">
-                    <strong style="color:#15803d;">✓ Pedido está pronto para envio</strong>
-                    <div style="margin-top:8px; font-size:0.9rem; color:#000;">
+                <div class="modal-success-box">
+                    <strong>✓ Pedido está pronto para envio</strong>
+                    <div class="modal-success-details">
                         <div>Número: <strong id="submitOrderNumber">---</strong></div>
                         <div>Cliente: <strong id="submitClientName">---</strong></div>
                         <div>Itens: <strong id="submitItemCount">0</strong></div>
                         <div>Total CIF: <strong id="submitTotalCif">R$ 0.00</strong></div>
                     </div>
                 </div>
+                <div id="submitOrderMessage" class="modal-msg"></div>
             </div>
-            <div style="display:flex; gap:12px; justify-content:flex-end;">
-                <button onclick="closeSubmitOrderModal()" style="padding:12px 20px; background:#ccc; color:#000; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Cancelar</button>
-                <button onclick="submitOrder()" style="padding:12px 20px; background:#dc2626; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Enviar Pedido</button>
+            <div class="modal-footer">
+                <button onclick="closeSubmitOrderModal()" class="btn-modal btn-modal-ghost">Cancelar</button>
+                <button onclick="submitOrder()" class="btn-modal btn-modal-danger">Enviar Pedido</button>
             </div>
-            <div id="submitOrderMessage" style="margin-top:15px; color:#b91c1c; font-size:0.95rem;"></div>
         </div>
     </div>
 
     <!-- Supervisor Modal (fora das abas para funcionar independentemente) -->
-    <div id="supervisorModal" style="display:none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.6); z-index:1002; align-items:center; justify-content:center;">
-        <div style="background:white; border-radius:10px; padding:22px; max-width:640px; width:95%; max-height:85vh; overflow-y:auto; box-shadow:0 14px 38px rgba(0,0,0,0.25);">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
-                <div>
-                    <h3 style="margin:0;">🧑‍💼 Painel Supervisor</h3>
-                    <p style="margin:4px 0 0; color:#475569; font-size:0.95rem;">Gerencie os pedidos enviados para aprovação.</p>
+    <div id="supervisorModal" class="modal-backdrop" style="display:none; position: fixed; z-index:1002;">
+        <div class="modal-panel modal-panel--md">
+            <div class="modal-header">
+                <div class="modal-header-title">
+                    <div class="modal-icon-badge">🧑‍💼</div>
+                    <div>
+                        <h3 class="modal-title">Painel Supervisor</h3>
+                        <p class="modal-subtitle">Gerencie os pedidos enviados para aprovação.</p>
+                    </div>
                 </div>
-                <button onclick="closeSupervisorPanel()" style="background:none; border:none; font-size:1.4rem; cursor:pointer;">✕</button>
+                <button onclick="closeSupervisorPanel()" class="modal-close-btn" aria-label="Fechar">✕</button>
             </div>
-            
-            <!-- Seção: Gerenciar Pedidos Enviados -->
-            <div style="margin-top:24px; padding-top:18px; border-top:2px solid #e5e7eb;">
-                <h4 style="margin:0 0 15px; font-size:1.05rem;">📤 Pedidos Enviados para Aprovação</h4>
-                <div id="supervisorPendingOrdersList" style="max-height:400px; overflow-y:auto;">
+            <div class="modal-body">
+                <h4 class="modal-section-title">📤 Pedidos Enviados para Aprovação</h4>
+                <div id="supervisorPendingOrdersList" style="max-height:420px; overflow-y:auto;">
                     <!-- Preenchido por JavaScript -->
                 </div>
             </div>
@@ -301,18 +308,24 @@
     <div id="orderHistoryModal" style="display:none;"></div>
 
     <!-- Trash Modal -->
-    <div id="trashModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1001; align-items:center; justify-content:center;">
-        <div style="background:white; border-radius:8px; width:90%; max-width:900px; max-height:80vh; overflow:auto; padding:20px; box-shadow:0 10px 40px rgba(0,0,0,0.2);">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; border-bottom:2px solid #e5e7eb; padding-bottom:15px;">
-                <h3 style="margin:0; font-size:1.25rem; color:#1f2937;">🗑️ Lixeira</h3>
-                <button onclick="closeTrashModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:#6b7280;">✕</button>
+    <div id="trashModal" class="modal-backdrop" style="display:none; position:fixed; z-index:1001;">
+        <div class="modal-panel modal-panel--lg">
+            <div class="modal-header">
+                <div class="modal-header-title">
+                    <div class="modal-icon-badge">🗑️</div>
+                    <div>
+                        <h3 class="modal-title">Lixeira</h3>
+                        <p class="modal-subtitle">Pedidos excluídos, com opção de restaurar.</p>
+                    </div>
+                </div>
+                <button onclick="closeTrashModal()" class="modal-close-btn" aria-label="Fechar">✕</button>
             </div>
-            <div id="trashContent" style="margin-bottom:20px; max-height: 500px; overflow-y: auto;">
+            <div id="trashContent" class="modal-body" style="max-height: 520px; overflow-y: auto;">
                 <!-- Preenchido por JavaScript -->
             </div>
-            <div style="display:flex; gap:10px; justify-content:flex-end; border-top:2px solid #e5e7eb; padding-top:15px;">
-                <button onclick="closeTrashModal()" style="background:#e5e7eb; color:#1f2937; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:500;">Fechar</button>
-                <button onclick="emptyTrash()" style="background:#fca5a5; color:#991b1b; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:500;">Esvaziar Lixeira</button>
+            <div class="modal-footer">
+                <button onclick="closeTrashModal()" class="btn-modal btn-modal-ghost">Fechar</button>
+                <button onclick="emptyTrash()" class="btn-modal btn-modal-danger">Esvaziar Lixeira</button>
             </div>
         </div>
     </div>
