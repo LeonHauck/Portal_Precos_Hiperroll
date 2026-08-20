@@ -2850,13 +2850,13 @@ function renderTrashDetails(deletionId, deletion) {
         const billingColor = billedQty === qty ? '#15803d' : billedQty > 0 ? '#f59e0b' : '#9ca3af';
         
         html += `
-            <tr style="border-bottom: 1px solid #e5e7eb;">
+            <tr style="border-bottom: 1px solid var(--border);">
                 <td style="padding: 10px;">
                     <strong>${item.codigo}</strong> - ${item.descricao || ''}
                 </td>
                 <td style="padding: 10px; text-align: center;">${qty}</td>
                 <td style="padding: 10px; text-align: center; color: ${billingColor}; font-weight: 600;">
-                    ${billedQty} ${pendingQty > 0 ? `<span style="font-size: 0.85rem; color: #6b7280;">/ ${qty}</span>` : ''}
+                    ${billedQty} ${pendingQty > 0 ? `<span style="font-size: 0.85rem; color: var(--text-secondary);">/ ${qty}</span>` : ''}
                 </td>
                 <td style="padding: 10px; text-align: right;">R$ ${negotiatedPrice.toFixed(2).replace('.', ',')}</td>
                 <td style="padding: 10px; text-align: right; font-weight: 600;">R$ ${itemTotal.toFixed(2).replace('.', ',')}</td>
@@ -2872,27 +2872,27 @@ function renderTrashDetails(deletionId, deletion) {
                 </table>
             </div>
             
-            <div style="margin-top: 15px; padding: 12px; background: white; border-radius: 6px; border-left: 4px solid #3b82f6;">
+            <div style="margin-top: 15px; padding: 12px; background: var(--card-bg); border-radius: 6px; border-left: 4px solid var(--secondary); color: var(--text);">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
                     <span style="font-weight: 600;">Total do Pedido:</span>
-                    <span style="font-weight: 600; color: #1f2937;">R$ ${totalValue.toFixed(2).replace('.', ',')}</span>
+                    <span style="font-weight: 600; color: var(--text);">R$ ${totalValue.toFixed(2).replace('.', ',')}</span>
                 </div>
-                
+
                 ${deletion.billedQuantities && Object.keys(deletion.billedQuantities).length > 0 ? `
                 <div style="display: flex; justify-content: space-between; margin-bottom: 8px; padding: 8px; background: #f0fdf4; border-radius: 4px; border-left: 3px solid #15803d;">
                     <span style="font-weight: 600; color: #15803d;">Status de Faturamento:</span>
                     <span style="font-weight: 600; color: #15803d;">✅ Faturado (parcial/completo)</span>
                 </div>
                 ` : ''}
-                
+
                 ${deletion.representativeName ? `
-                <div style="display: flex; justify-content: space-between; font-size: 0.9rem; color: #6b7280;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.9rem; color: var(--text-secondary);">
                     <span>Representante:</span>
                     <span>${deletion.representativeName}</span>
                 </div>
                 ` : ''}
                 ${deletion.submittedAt ? `
-                <div style="display: flex; justify-content: space-between; font-size: 0.9rem; color: #6b7280;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.9rem; color: var(--text-secondary);">
                     <span>Criado em:</span>
                     <span>${new Date(deletion.submittedAt).toLocaleString('pt-BR')}</span>
                 </div>
