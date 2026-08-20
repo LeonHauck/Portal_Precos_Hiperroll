@@ -13,6 +13,7 @@
                     ? saved
                     : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
                 document.documentElement.setAttribute('data-theme', theme);
+                document.documentElement.style.colorScheme = theme;
             } catch (e) { /* localStorage indisponível: mantém tema claro padrão */ }
         }());
     </script>
@@ -133,15 +134,15 @@
                 <div class="empty-state">Nenhum item no pedido.</div>
             </div>
 
-            <div id="orderSummary" class="order-summary-print" style="display: none; margin-top: 20px; padding: 15px; background: #f8fafc; border: 2px solid var(--border); border-radius: 8px;">
+            <div id="orderSummary" class="order-summary-print" style="display: none; margin-top: 20px; padding: 15px; background: var(--surface-1); border: 2px solid var(--border); border-radius: 8px;">
                 <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 18px;">
                     <div style="flex: 1; min-width: 220px;">
                         <label for="orderNumberHiperroll">Nº do Pedido Hiper Roll</label>
-                        <input type="text" id="orderNumberHiperroll" placeholder="Auto-gerado: 00001" readonly style="background: #e5e7eb; cursor: not-allowed;">
+                        <input type="text" id="orderNumberHiperroll" placeholder="Auto-gerado: 00001" readonly style="background: var(--bg-secondary); color: var(--text-tertiary); cursor: not-allowed;">
                     </div>
                     <div style="flex: 1; min-width: 220px;">
                         <label for="loadedDraftNumber">Nº do pedido carregado</label>
-                        <input type="text" id="loadedDraftNumber" placeholder="—" readonly style="background:#f8fafc; cursor:default; border:1px solid #e2e8f0;">
+                        <input type="text" id="loadedDraftNumber" placeholder="—" readonly style="background: var(--surface-1); color: var(--text-tertiary); cursor:default; border:1px solid var(--border);">
                     </div>
                     <div style="flex: 1; min-width: 220px;">
                         <label for="orderNumberClient">Nº do Pedido (cliente)</label>
@@ -156,7 +157,7 @@
                                 <option value="aprovado">✅ Aprovado</option>
                                 <option value="rejeitado">❌ Rejeitado</option>
                             </select>
-                            <button onclick="showStatusHistory()" style="padding: 10px 14px; background: #0054A6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: all 0.3s; white-space: nowrap;">📋 Histórico</button>
+                            <button onclick="showStatusHistory()" style="padding: 10px 14px; background: var(--secondary); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: all 0.3s; white-space: nowrap;">📋 Histórico</button>
                         </div>
                     </div>
                     <div style="flex: 1; min-width: 220px;">
@@ -214,14 +215,14 @@
                 </div>
             </div>
 
-            <div class="drafts-management-panel" style="margin-top: 20px; padding: 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);">
+            <div class="drafts-management-panel" style="margin-top: 20px; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: linear-gradient(180deg, var(--surface-1) 0%, var(--card-bg) 100%);">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
                     <div>
                         <h3 style="margin:0; font-size:1.05rem;">🗂️ Rascunhos e Pedidos</h3>
-                        <p style="margin:4px 0 0; color:#64748b; font-size:0.95rem;">Salve, carregue e envie seus pedidos de forma organizada.</p>
-                        <p style="margin:6px 0 0; color:#475569; font-size:0.85rem; max-width:480px; line-height:1.35;">Rascunhos são rascunhos internos. O supervisor só analisa o pedido após o envio ao sistema.</p>
+                        <p style="margin:4px 0 0; color:var(--text-secondary); font-size:0.95rem;">Salve, carregue e envie seus pedidos de forma organizada.</p>
+                        <p style="margin:6px 0 0; color:var(--text-secondary); font-size:0.85rem; max-width:480px; line-height:1.35;">Rascunhos são rascunhos internos. O supervisor só analisa o pedido após o envio ao sistema.</p>
                     </div>
-                    <div id="draftsPanelBadge" style="background:#e2e8f0; color:#0f172a; padding:6px 10px; border-radius:999px; font-weight:700; font-size:0.9rem;">0 rascunho(s)</div>
+                    <div id="draftsPanelBadge" style="background:var(--bg-hover); color:var(--text); padding:6px 10px; border-radius:999px; font-weight:700; font-size:0.9rem;">0 rascunho(s)</div>
                 </div>
                 <div id="draftsPanelContent" style="display:grid; gap:10px;"></div>
             </div>

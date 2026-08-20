@@ -629,6 +629,20 @@ select {
     background-position: right 12px center;
     background-size: 20px;
     padding-right: 36px;
+    color-scheme: light;
+}
+
+/* The dropdown popup list is a native OS/browser surface, not styled like the
+   rest of the page — it only follows `color-scheme` plus explicit colors set
+   directly on <select>/<option>, so it needs its own theme-aware declaration
+   instead of inheriting from the generic input/select rule above. */
+select option {
+    background: var(--card-bg);
+    color: var(--text);
+}
+
+[data-theme="dark"] select {
+    color-scheme: dark;
 }
 
 .status-select {
