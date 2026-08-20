@@ -1,5 +1,11 @@
 ﻿/* ========== CSS VARIABLES & BASE STYLES ========== */
 :root {
+    /* fixed brand identity colors — never swapped by the dark theme, used only for
+       the header and login banner so the brand mark stays pixel-consistent */
+    --brand-red: #E31E24;
+    --brand-red-deep: #b91620;
+    --brand-navy: #071A3D;
+
     --primary: #E31E24;
     --primary-hover: #c91820;
     --primary-light: #fce4e6;
@@ -17,26 +23,82 @@
 
     --bg: #f9fafb;
     --bg-secondary: #f3f4f6;
+    --bg-hover: #e2e8f0;
     --card-bg: #ffffff;
-    
+
     --text: #1f2937;
     --text-secondary: #6b7280;
     --text-tertiary: #9ca3af;
-    
+
     --border: #e5e7eb;
     --border-light: #f3f4f6;
-    
+
+    --surface-1: #f9fafb;
+    --surface-2: #f3f4f6;
+
+    --margin-alert-bg: linear-gradient(135deg, #fef2f2 0%, #fff5f5 100%);
+    --margin-alert-border: #fca5a5;
+    --margin-warning-bg: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    --margin-warning-border: #fcd34d;
+    --margin-good-bg: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    --margin-good-border: #86efac;
+
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
     --shadow: 0 4px 12px 0 rgba(0, 0, 0, 0.08);
     --shadow-lg: 0 8px 24px 0 rgba(0, 0, 0, 0.12);
     --shadow-xl: 0 12px 32px 0 rgba(0, 0, 0, 0.15);
-    
+
     --radius-sm: 6px;
     --radius: 8px;
     --radius-lg: 12px;
     --radius-xl: 16px;
-    
+
     --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --theme-transition: background-color 0.35s ease, border-color 0.35s ease, color 0.35s ease, box-shadow 0.35s ease;
+}
+
+[data-theme="dark"] {
+    --primary: #ff4d4f;
+    --primary-hover: #ff6b6d;
+    --primary-light: rgba(227, 30, 36, 0.18);
+
+    --secondary: #4d9bf0;
+    --secondary-hover: #7db6f5;
+    --secondary-light: rgba(77, 155, 240, 0.16);
+
+    --navy-deep: #0a1f4a;
+    --navy-deep-hover: #123163;
+
+    --bg: #0b1220;
+    --bg-secondary: #131b2c;
+    --bg-hover: #1c2740;
+    --card-bg: #131b2c;
+
+    --text: #e7ebf3;
+    --text-secondary: #9aa4b8;
+    --text-tertiary: #6b7385;
+
+    --border: #253047;
+    --border-light: #1c2740;
+
+    --surface-1: #182140;
+    --surface-2: #131b2c;
+
+    --margin-alert-bg: linear-gradient(135deg, #2a1418 0%, #351317 100%);
+    --margin-alert-border: #6b2530;
+    --margin-warning-bg: linear-gradient(135deg, #2a2110 0%, #362a10 100%);
+    --margin-warning-border: #6b5220;
+    --margin-good-bg: linear-gradient(135deg, #0f2a1c 0%, #123322 100%);
+    --margin-good-border: #1f6b42;
+
+    --margin-alert-text: #fca5a5;
+    --margin-warning-text: #fcd34d;
+    --margin-good-text: #86efac;
+
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.35);
+    --shadow: 0 4px 14px 0 rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 10px 28px 0 rgba(0, 0, 0, 0.5);
+    --shadow-xl: 0 16px 40px 0 rgba(0, 0, 0, 0.6);
 }
 
 * {
@@ -63,6 +125,17 @@ body {
     font-weight: 400;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    transition: var(--theme-transition);
+}
+
+[data-theme="dark"] body {
+    background-image:
+        radial-gradient(900px 480px at 8% -8%, rgba(255, 77, 79, 0.09), transparent 60%),
+        radial-gradient(900px 480px at 95% 0%, rgba(77, 155, 240, 0.09), transparent 60%);
+}
+
+body, .card, .modal-panel, input, select, textarea, .info-box, .header-btn, .tab-btn {
+    transition: var(--theme-transition), var(--transition);
 }
 
 ::selection {
@@ -86,13 +159,19 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #c7cdd6;
+    background: var(--scrollbar-thumb, #c7cdd6);
     border-radius: 999px;
     border: 2px solid var(--bg-secondary);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #a8b0bc;
+    background: var(--scrollbar-thumb-hover, #a8b0bc);
+}
+
+[data-theme="dark"] {
+    --scrollbar-thumb: #354158;
+    --scrollbar-thumb-hover: #46557a;
+    color-scheme: dark;
 }
 
 .container {
@@ -104,7 +183,7 @@ body {
 header {
     margin-bottom: 32px;
     padding: 0;
-    background: linear-gradient(115deg, var(--primary) 0%, #b91620 38%, var(--navy-deep) 100%);
+    background: linear-gradient(115deg, var(--brand-red) 0%, var(--brand-red-deep) 38%, var(--brand-navy) 100%);
     border-radius: var(--radius-lg);
     color: white;
     box-shadow: 0 16px 40px 0 rgba(7, 26, 61, 0.28);
@@ -553,7 +632,7 @@ select {
 }
 
 .status-select {
-    background-color: #ffffff !important;
+    background-color: var(--card-bg) !important;
     color: var(--text) !important;
     font-weight: 600 !important;
     padding: 12px 36px 12px 14px !important;
@@ -748,7 +827,7 @@ table {
 
 thead th {
     text-align: left;
-    background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
+    background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-2) 100%);
     padding: 16px 14px;
     font-weight: 700;
     color: var(--text-secondary);
@@ -824,7 +903,7 @@ td {
 .totals-price-container {
     padding: 20px;
     border-radius: var(--radius-lg);
-    background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+    background: linear-gradient(135deg, var(--surface-1) 0%, var(--surface-2) 100%);
     border: 1.5px solid var(--border);
     transition: var(--transition);
 }
@@ -846,49 +925,49 @@ td {
 }
 
 .totals-price-container.margin-alert {
-    background: linear-gradient(135deg, #fef2f2 0%, #fff5f5 100%);
-    border-color: #fca5a5;
+    background: var(--margin-alert-bg);
+    border-color: var(--margin-alert-border);
 }
 
 .totals-price-container.margin-alert p:last-child strong {
-    color: #991b1b;
+    color: var(--margin-alert-text, #991b1b);
 }
 
 .totals-price-container.margin-alert #totalCif {
-    color: #991b1b !important;
+    color: var(--margin-alert-text, #991b1b) !important;
 }
 
 .totals-price-container.margin-warning {
-    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
-    border-color: #fcd34d;
+    background: var(--margin-warning-bg);
+    border-color: var(--margin-warning-border);
 }
 
 .totals-price-container.margin-warning p:last-child strong {
-    color: #b45309;
+    color: var(--margin-warning-text, #b45309);
 }
 
 .totals-price-container.margin-warning #totalCif {
-    color: #b45309 !important;
+    color: var(--margin-warning-text, #b45309) !important;
 }
 
 .totals-price-container.margin-good {
-    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-    border-color: #86efac;
+    background: var(--margin-good-bg);
+    border-color: var(--margin-good-border);
 }
 
 .totals-price-container.margin-good p:last-child strong {
-    color: #15803d;
+    color: var(--margin-good-text, #15803d);
 }
 
 .totals-price-container.margin-good #totalCif {
-    color: #15803d !important;
+    color: var(--margin-good-text, #15803d) !important;
 }
 
 /* ========== DRAFT CARDS ========== */
 .drafts-management-panel {
     border: 1.5px solid var(--border);
     border-radius: var(--radius-lg);
-    background: linear-gradient(135deg, #f9fafb 0%, #ffffff 100%);
+    background: linear-gradient(135deg, var(--surface-1) 0%, var(--card-bg) 100%);
     box-shadow: var(--shadow-sm);
     padding: 24px;
     margin-top: 24px;
@@ -984,13 +1063,13 @@ td {
 
 .draft-items-table th, .draft-items-table td {
     padding: 6px 8px;
-    border-bottom: 1px solid #eef2f7;
+    border-bottom: 1px solid var(--border-light);
     text-align: left;
 }
 
 .draft-items-table th {
     font-weight: 700;
-    color: #0f172a;
+    color: var(--text);
     font-size: 0.88rem;
 }
 
@@ -998,13 +1077,13 @@ td {
     margin-top: 8px;
     text-align: right;
     font-weight: 700;
-    color: #0f172a;
+    color: var(--text);
 }
 
 .draft-toggle-btn {
     background: transparent;
-    border: 1px solid #cbd5e1;
-    color: #0f172a;
+    border: 1px solid var(--border);
+    color: var(--text);
     padding: 6px 8px;
     border-radius: 6px;
     cursor: pointer;
@@ -1019,7 +1098,7 @@ td {
 }
 
 .draft-modal {
-    background: white; border-radius: var(--radius-lg); padding: 24px; width: 90%; max-width: 760px; max-height: 85vh; overflow: auto; box-shadow: var(--shadow-xl);
+    background: var(--card-bg); color: var(--text); border-radius: var(--radius-lg); padding: 24px; width: 90%; max-width: 760px; max-height: 85vh; overflow: auto; box-shadow: var(--shadow-xl);
 }
 
 .draft-modal h3 { margin-top: 0; }
@@ -1197,7 +1276,7 @@ td {
 }
 
 .btn-modal-ghost:hover {
-    background: #e2e8f0;
+    background: var(--bg-hover);
     transform: translateY(-1px);
 }
 
@@ -1246,7 +1325,9 @@ td {
 
 /* ---- Dynamically-rendered content inside the modals (script_v5.js) ---- */
 #trashContent table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-#trashContent thead tr { background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%) !important; }
+#trashContent thead tr { background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-2) 100%) !important; }
+#trashContent th, #trashContent td { color: var(--text) !important; border-color: var(--border) !important; }
+#trashContent table { color: var(--text); }
 #trashContent th {
     text-transform: uppercase;
     font-size: 0.72rem;
@@ -1471,7 +1552,7 @@ td {
 
 .login-header {
     padding: 28px 28px 20px;
-    background: linear-gradient(120deg, var(--primary) 0%, #b91620 40%, var(--navy-deep) 100%);
+    background: linear-gradient(120deg, var(--brand-red) 0%, var(--brand-red-deep) 40%, var(--brand-navy) 100%);
     color: white;
     text-align: center;
 }
@@ -1860,6 +1941,99 @@ body.login-locked .container {
     .login-actions button {
         min-height: 44px;
     }
+}
+
+/* ========== THEME TOGGLE ========== */
+.header-btn-theme {
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    border: 1.5px solid rgba(255, 255, 255, 0.3);
+    font-size: 1.1rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.header-btn-theme:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.45);
+    transform: translateY(-2px) rotate(15deg);
+}
+
+/* ========== DARK MODE: adapt inline-styled content rendered by script_v5.js ==========
+   Large sections of dynamic content (history cards, supervisor lists, trash table,
+   billing modal, draft cards) are built as HTML strings with hardcoded light-mode
+   hex colors. Rather than rewriting every template, the common "ink on light
+   surface" pairs are remapped here to the dark palette via attribute substring
+   matches on the literal inline style text. Vivid button/badge colors (brand red,
+   status greens/ambers) and paired pastel chip backgrounds are intentionally left
+   untouched — they read fine as self-contained accents on a dark page too. */
+[data-theme="dark"] [style*="background:#f8fafc"],
+[data-theme="dark"] [style*="background: #f8fafc"],
+[data-theme="dark"] [style*="background:#f9fafb"],
+[data-theme="dark"] [style*="background: #f9fafb"],
+[data-theme="dark"] [style*="background:#f3f4f6"],
+[data-theme="dark"] [style*="background: #f3f4f6"],
+[data-theme="dark"] [style*="background:#f1f5f9"],
+[data-theme="dark"] [style*="background:#fbfdff"],
+[data-theme="dark"] [style*="background:#fff;"],
+[data-theme="dark"] [style*="background: white"],
+[data-theme="dark"] [style*="background:white"] {
+    background: var(--surface-1) !important;
+}
+
+[data-theme="dark"] [style*="color:#0f172a"],
+[data-theme="dark"] [style*="color: #0f172a"],
+[data-theme="dark"] [style*="color:#1e293b"],
+[data-theme="dark"] [style*="color:#334155"],
+[data-theme="dark"] [style*="color:#1f2937"],
+[data-theme="dark"] [style*="color: #1f2937"] {
+    color: var(--text) !important;
+}
+
+[data-theme="dark"] [style*="color:#475569"],
+[data-theme="dark"] [style*="color:#64748b"],
+[data-theme="dark"] [style*="color: #64748b"],
+[data-theme="dark"] [style*="color:#6b7280"],
+[data-theme="dark"] [style*="color: #6b7280"],
+[data-theme="dark"] [style*="color: #666"],
+[data-theme="dark"] [style*="color: #999"] {
+    color: var(--text-secondary) !important;
+}
+
+[data-theme="dark"] [style*="border:1px solid #e2e8f0"],
+[data-theme="dark"] [style*="border: 1px solid #e2e8f0"],
+[data-theme="dark"] [style*="border-bottom:1px solid #e2e8f0"],
+[data-theme="dark"] [style*="border-top:1px solid #e2e8f0"],
+[data-theme="dark"] [style*="border:1px solid #e5e7eb"],
+[data-theme="dark"] [style*="border-bottom: 1px solid #e5e7eb"],
+[data-theme="dark"] [style*="border-top:2px solid #e5e7eb"],
+[data-theme="dark"] [style*="border-bottom:1px solid #eee"],
+[data-theme="dark"] [style*="border-bottom: 1px solid #eee"],
+[data-theme="dark"] [style*="border:1px solid #ddd"],
+[data-theme="dark"] [style*="border-top:1px solid #ddd"] {
+    border-color: var(--border) !important;
+}
+
+/* Supervisor pending-orders cards: background/border are computed per-row in JS
+   ('#fef2f2' + '#fecaca' for deleted, '#fafafa' + '#ddd' otherwise) */
+[data-theme="dark"] #supervisorPendingOrdersList > div > div {
+    background: var(--surface-1) !important;
+    border-color: var(--border) !important;
+}
+
+[data-theme="dark"] #draftsPanelBadge {
+    background: var(--bg-hover) !important;
+    color: var(--text) !important;
+}
+
+[data-theme="dark"] input[type="file"] {
+    color: var(--text-secondary);
 }
 
 /* ========== PRINT STYLES ========== */
