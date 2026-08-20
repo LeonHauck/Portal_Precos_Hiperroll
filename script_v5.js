@@ -2808,14 +2808,14 @@ function renderTrashDetails(deletionId, deletion) {
 
     let html = `
         <div>
-            <h4 style="margin: 0 0 15px; color: #1f2937; font-size: 1rem;">
+            <h4 style="margin: 0 0 15px; color: var(--text); font-size: 1rem;">
                 📦 Produtos do Pedido ${deletion.orderNumber}
             </h4>
-            
-            <div style="background: white; border-radius: 6px; border: 1px solid #e5e7eb; overflow: hidden;">
-                <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+
+            <div style="background: var(--card-bg); border-radius: 6px; border: 1px solid var(--border); overflow: hidden;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem; color: var(--text);">
                     <thead>
-                        <tr style="background: #f3f4f6; border-bottom: 1px solid #e5e7eb;">
+                        <tr style="background: var(--surface-2); border-bottom: 1px solid var(--border);">
                             <th style="padding: 10px; text-align: left;">Produto</th>
                             <th style="padding: 10px; text-align: center;">Qtd</th>
                             <th style="padding: 10px; text-align: center;">Qtd Faturada</th>
