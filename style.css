@@ -977,6 +977,252 @@ td {
 
 .draft-modal .invoice-link { display: inline-block; background: var(--text); color: white; padding: 8px 12px; border-radius: var(--radius-sm); margin-right: 8px; text-decoration: none; }
 
+/* ========== MODAL SYSTEM (Supervisor / Lixeira / Envio de Pedido) ========== */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(7, 26, 61, 0.6);
+    backdrop-filter: blur(3px);
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.modal-panel {
+    background: var(--card-bg);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-xl);
+    width: 100%;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: modalIn 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.modal-panel--sm { max-width: 480px; }
+.modal-panel--md { max-width: 620px; }
+.modal-panel--lg { max-width: 920px; }
+
+@keyframes modalIn {
+    from { opacity: 0; transform: translateY(12px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 22px 26px;
+    background: linear-gradient(135deg, rgba(227, 30, 36, 0.05) 0%, rgba(5, 84, 166, 0.05) 100%);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.modal-header-title {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+}
+
+.modal-icon-badge {
+    width: 42px;
+    height: 42px;
+    border-radius: 11px;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    flex-shrink: 0;
+    box-shadow: 0 6px 14px rgba(7, 26, 61, 0.25);
+}
+
+.modal-title {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 800;
+    color: var(--text);
+    letter-spacing: -0.2px;
+}
+
+.modal-subtitle {
+    margin: 3px 0 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.modal-close-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    border: none;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+    flex-shrink: 0;
+}
+
+.modal-close-btn:hover {
+    background: var(--primary);
+    color: white;
+    transform: rotate(90deg);
+}
+
+.modal-body {
+    padding: 24px 26px;
+    overflow-y: auto;
+}
+
+.modal-section-title {
+    margin: 0 0 14px;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.modal-footer {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    padding: 18px 26px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+.modal-msg {
+    margin-top: 14px;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.modal-msg:not(:empty) {
+    color: #b91c1c;
+}
+
+.modal-success-box {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border: 1.5px solid #86efac;
+    border-radius: var(--radius-lg);
+    padding: 16px 18px;
+}
+
+.modal-success-box strong:first-child {
+    color: #15803d;
+    font-size: 0.98rem;
+}
+
+.modal-success-box .modal-success-details {
+    margin-top: 10px;
+    font-size: 0.9rem;
+    color: var(--text);
+    display: grid;
+    gap: 4px;
+}
+
+.btn-modal {
+    padding: 12px 22px;
+    border: none;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 0.92rem;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.btn-modal-ghost {
+    background: var(--bg-secondary);
+    color: var(--text);
+}
+
+.btn-modal-ghost:hover {
+    background: #e2e8f0;
+    transform: translateY(-1px);
+}
+
+.btn-modal-primary {
+    background: linear-gradient(135deg, var(--navy-deep) 0%, #123163 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(7, 26, 61, 0.25);
+}
+
+.btn-modal-primary:hover {
+    background: linear-gradient(135deg, var(--navy-deep-hover) 0%, #17408a 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(7, 26, 61, 0.3);
+}
+
+.btn-modal-danger {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(227, 30, 36, 0.25);
+}
+
+.btn-modal-danger:hover {
+    background: linear-gradient(135deg, #ee3a3f 0%, var(--primary) 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(227, 30, 36, 0.3);
+}
+
+/* ---- Dynamically-rendered content inside the modals (script_v5.js) ---- */
+#trashContent table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+#trashContent thead tr { background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%) !important; }
+#trashContent th {
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary) !important;
+}
+#trashContent tbody tr:hover { background: rgba(5, 84, 166, 0.04); }
+#trashContent button[onclick^="restoreSubmission"] {
+    background: linear-gradient(135deg, #22c55e 0%, #15803d 100%) !important;
+    border-radius: 7px !important;
+    font-weight: 600 !important;
+}
+#trashContent button[onclick^="permanentlyDeleteSubmission"] {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%) !important;
+    border-radius: 7px !important;
+    font-weight: 600 !important;
+}
+#trashContent .trash-expand-btn {
+    color: var(--secondary) !important;
+    border-radius: 6px;
+}
+#trashContent .trash-expand-btn:hover { background: rgba(5, 84, 166, 0.1) !important; }
+
+#supervisorPendingOrdersList > div > div {
+    border-radius: var(--radius-lg) !important;
+    transition: var(--transition);
+}
+#supervisorPendingOrdersList > div > div:hover {
+    box-shadow: var(--shadow) !important;
+    transform: translateY(-1px);
+}
+#supervisorPendingOrdersList button[onclick^="showPendingOrderDetails"] {
+    background: linear-gradient(135deg, var(--navy-deep) 0%, #123163 100%) !important;
+    border-radius: 8px !important;
+}
+#supervisorPendingOrdersList button[onclick^="showPendingOrderDetails"]:hover {
+    background: linear-gradient(135deg, var(--navy-deep-hover) 0%, #17408a 100%) !important;
+}
+#supervisorPendingOrdersList textarea:focus {
+    border-color: var(--secondary) !important;
+    box-shadow: 0 0 0 4px rgba(5, 84, 166, 0.1);
+    outline: none;
+}
+
 /* ========== LOGIN SCREEN ========== */
 .login-screen {
     display: none;
