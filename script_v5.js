@@ -2053,6 +2053,7 @@ function applyThemeIcon(theme) {
 
 function initTheme() {
     const current = document.documentElement.getAttribute('data-theme') || 'light';
+    document.documentElement.style.colorScheme = current;
     applyThemeIcon(current);
 }
 
@@ -2060,6 +2061,7 @@ function toggleTheme() {
     const current = document.documentElement.getAttribute('data-theme') || 'light';
     const next = current === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
+    document.documentElement.style.colorScheme = next;
     try { localStorage.setItem('hr_theme', next); } catch (e) { /* localStorage indisponível */ }
     applyThemeIcon(next);
 }
