@@ -1335,14 +1335,13 @@ function updateResults() {
             <tr>
                 <td>
                     <div style="font-weight:600">${p.codigo}</div>
-                    <div style="font-size:0.85rem; color:#666">${p.descricao}</div>
+                    <div style="font-size:0.85rem; color:#6b7280">${p.descricao}</div>
                 </td>
                 <td>${p.peso.toFixed(3)}</td>
                 <td class="price-tag price-fob">R$&nbsp;${fobPrice.toFixed(2)}</td>
                 <td class="price-tag price-cif">R$&nbsp;${cifDisplay}</td>
                 <td class="col-action">
-                    <button onclick="addToCart('${p.codigo}', ${fobPrice}, ${cifPrice}, ${p.weightRaw})" 
-                            style="padding: 5px 10px; cursor: pointer; background: var(--secondary); color:white; border:none; border-radius:4px;">
+                    <button onclick="addToCart('${p.codigo}', ${fobPrice}, ${cifPrice}, ${p.weightRaw})">
                         ➕ Adicionar
                     </button>
                 </td>
@@ -1436,7 +1435,7 @@ function updateOrderTable() {
             <tr>
                 <td>
                     <div style="font-weight:600">${item.codigo}</div>
-                    <div style="font-size:0.85rem; color:#666">${item.descricao}</div>
+                    <div style="font-size:0.85rem; color:#6b7280">${item.descricao}</div>
                 </td>
                 <td style="text-align: center;">
                     <input type="number" value="${item.qty}" min="1" style="width: 60px; padding: 5px;" onchange="updateCartQty(${idx}, this.value)">
@@ -1468,7 +1467,7 @@ function updateOrderTable() {
                 </td>
                 <td class="price-tag">R$&nbsp;${subCifWithDiscountContract.toFixed(2)}</td>
                 <td class="col-action">
-                    <button onclick="removeFromCart(${idx})" style="background:none; border:none; color:red; cursor:pointer;">🗑️</button>
+                    <button onclick="removeFromCart(${idx})" class="btn-icon-remove" title="Remover item">🗑️</button>
                 </td>
             </tr>
         `;
@@ -3037,47 +3036,53 @@ function openSupervisorOrderActions(submissionId) {
 
     const backdrop = document.createElement('div');
     backdrop.id = 'supervisorActionModalBackdrop';
-    backdrop.style = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:2001; display:flex; align-items:center; justify-content:center; padding:16px;';
+    backdrop.className = 'modal-backdrop';
+    backdrop.style.cssText = 'display:flex; z-index:2001;';
     const normalizeBtn = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
     const allowedApproversBtns = [normalizeBtn('Leon'), normalizeBtn('Gabriel.Ferreira')];
     const currentNormalizedBtn = normalizeBtn(currentUser);
 
     const approveBtnHtml = allowedApproversBtns.includes(currentNormalizedBtn)
-        ? `<button onclick="handleSupervisorAction('${submission.id}', 'approve')" style="padding:11px 18px; background:#10b981; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600;">✅ Aprovar</button>`
-        : `<button disabled title="Apenas Gabriel ou Leon podem aprovar" style="padding:11px 18px; background:#94d3b6; color:#093f2a; border:none; border-radius:8px;">✅ Aprovar</button>`;
+        ? `<button onclick="handleSupervisorAction('${submission.id}', 'approve')" class="btn-modal btn-modal-success">✅ Aprovar</button>`
+        : `<button disabled title="Apenas Gabriel ou Leon podem aprovar" class="btn-modal btn-modal-success">✅ Aprovar</button>`;
 
     const rejectBtnHtml = allowedApproversBtns.includes(currentNormalizedBtn)
-        ? `<button onclick="handleSupervisorAction('${submission.id}', 'reject')" style="padding:11px 18px; background:#ef4444; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600;">❌ Rejeitar</button>`
-        : `<button disabled title="Apenas Gabriel ou Leon podem rejeitar" style="padding:11px 18px; background:#f7a8a8; color:#5a1a1a; border:none; border-radius:8px;">❌ Rejeitar</button>`;
+        ? `<button onclick="handleSupervisorAction('${submission.id}', 'reject')" class="btn-modal btn-modal-danger">❌ Rejeitar</button>`
+        : `<button disabled title="Apenas Gabriel ou Leon podem rejeitar" class="btn-modal btn-modal-danger">❌ Rejeitar</button>`;
 
     backdrop.innerHTML = `
-        <div style="background:white; border-radius:12px; padding:22px; max-width:680px; width:100%; max-height:calc(100vh - 40px); overflow-y:auto; box-shadow:0 14px 38px rgba(0,0,0,0.2);">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:18px;">
-                <div>
-                    <h3 style="margin:0 0 6px 0;">🧑‍💼 Ações do Supervisor</h3>
-                    <div style="font-size:0.95rem; color:#475569; line-height:1.5;">
-                        Pedido: <strong>${submission.orderNumber || '(Sem número)'}</strong><br>
-                        Cliente: <strong>${submission.clientName || '(Não informado)'}</strong><br>
-                        Enviado por: <strong>${submission.submittedBy || submission.savedBy || '(Sem usuário)'}</strong><br>
-                        Status atual: <strong>${statusLabel}</strong><br>
-                        ${submission.status === 'rascunho' ? 'Salvo em' : 'Enviado em'}: <strong>${dateLabel}</strong>
+        <div class="modal-panel modal-panel--md">
+            <div class="modal-header">
+                <div class="modal-header-title">
+                    <div class="modal-icon-badge">🧑‍💼</div>
+                    <div>
+                        <h3 class="modal-title">Ações do Supervisor</h3>
+                        <p class="modal-subtitle">
+                            Pedido: <strong>${submission.orderNumber || '(Sem número)'}</strong> &bull;
+                            Cliente: <strong>${submission.clientName || '(Não informado)'}</strong><br>
+                            Enviado por: <strong>${submission.submittedBy || submission.savedBy || '(Sem usuário)'}</strong> &bull;
+                            Status: <strong>${statusLabel}</strong> &bull;
+                            ${submission.status === 'rascunho' ? 'Salvo em' : 'Enviado em'}: <strong>${dateLabel}</strong>
+                        </p>
                     </div>
                 </div>
-                <button onclick="closeSupervisorActionModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer;">✕</button>
+                <button onclick="closeSupervisorActionModal()" class="modal-close-btn" aria-label="Fechar">✕</button>
             </div>
-            ${itemsHtml}
-            <div style="margin-top:20px; display:grid; gap:14px;">
-                <div>
-                    <label style="display:block; font-weight:600; margin-bottom:6px;">Observação do Supervisor</label>
-                    <textarea id="supervisorActionNote" style="width:100%; min-height:110px; padding:12px; border:1px solid #d1d5db; border-radius:10px; font-family:inherit;">${submission.supervisorNote || ''}</textarea>
-                </div>
-                <div>
-                    <label style="display:block; font-weight:600; margin-bottom:6px;">Motivo da Rejeição</label>
-                    <textarea id="supervisorActionRejectionReason" placeholder="Preencha apenas se for rejeitar." style="width:100%; min-height:110px; padding:12px; border:1px solid #d1d5db; border-radius:10px; font-family:inherit;">${submission.rejectionReason || ''}</textarea>
+            <div class="modal-body">
+                ${itemsHtml}
+                <div style="margin-top:20px; display:grid; gap:14px;">
+                    <div>
+                        <label>Observação do Supervisor</label>
+                        <textarea id="supervisorActionNote" style="min-height:100px; resize:vertical;">${submission.supervisorNote || ''}</textarea>
+                    </div>
+                    <div>
+                        <label>Motivo da Rejeição</label>
+                        <textarea id="supervisorActionRejectionReason" placeholder="Preencha apenas se for rejeitar." style="min-height:100px; resize:vertical;">${submission.rejectionReason || ''}</textarea>
+                    </div>
                 </div>
             </div>
-            <div style="margin-top:18px; display:flex; flex-wrap:wrap; gap:12px; justify-content:flex-end;">
-                <button onclick="handleSupervisorAction('${submission.id}', 'saveNote')" style="padding:11px 18px; background:#0f172a; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600;">💬 Salvar Observação</button>
+            <div class="modal-footer">
+                <button onclick="handleSupervisorAction('${submission.id}', 'saveNote')" class="btn-modal btn-modal-primary">💬 Salvar Observação</button>
                 ${approveBtnHtml}
                 ${rejectBtnHtml}
             </div>
@@ -3353,8 +3358,9 @@ function showPendingOrderDetails(submissionId) {
 
     const backdrop = document.createElement('div');
     backdrop.id = 'detailsModalBackdrop';
-    backdrop.style = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:2005; display:flex; align-items:center; justify-content:center; padding:16px; font-family:"Outfit", sans-serif;';
-    
+    backdrop.className = 'modal-backdrop';
+    backdrop.style.cssText = 'display:flex; z-index:2005;';
+
     let itemsHtml = `
         <div style="max-height: 400px; overflow-y: auto; margin-top: 15px; border: 1px solid #e2e8f0; border-radius: 6px;">
             <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
@@ -3415,20 +3421,29 @@ function showPendingOrderDetails(submissionId) {
     `;
 
     const modal = document.createElement('div');
-    modal.style = 'background:white; padding:25px; border-radius:12px; width:90%; max-width:800px; box-shadow:0 10px 25px rgba(0,0,0,0.2); position:relative;';
-    
+    modal.className = 'modal-panel modal-panel--lg';
+
     const submittedDate = new Date(submission.submittedAt).toLocaleString('pt-BR');
-    
+
     modal.innerHTML = `
-        <button onclick="document.getElementById('detailsModalBackdrop').remove()" style="position:absolute; top:20px; right:20px; background:none; border:none; font-size:1.5rem; cursor:pointer; color:#64748b;">&times;</button>
-        <h2 style="margin:0 0 5px 0; color:#0f172a; font-size:1.3rem;">Detalhes do Pedido: ${submission.orderNumber}</h2>
-        <div style="color:#64748b; font-size:0.95rem; margin-bottom:20px;">
-            Enviado por <strong>${submission.submittedBy}</strong> em <strong>${submittedDate}</strong> para o cliente <strong>${submission.clientName}</strong><br>
-            Validade da proposta: <strong>${submission.proposalValidity || 'Não informada'}</strong>
+        <div class="modal-header">
+            <div class="modal-header-title">
+                <div class="modal-icon-badge">📋</div>
+                <div>
+                    <h3 class="modal-title">Detalhes do Pedido: ${submission.orderNumber}</h3>
+                    <p class="modal-subtitle">
+                        Enviado por <strong>${submission.submittedBy}</strong> em <strong>${submittedDate}</strong> para o cliente <strong>${submission.clientName}</strong><br>
+                        Validade da proposta: <strong>${submission.proposalValidity || 'Não informada'}</strong>
+                    </p>
+                </div>
+            </div>
+            <button onclick="document.getElementById('detailsModalBackdrop').remove()" class="modal-close-btn" aria-label="Fechar">✕</button>
         </div>
-        ${itemsHtml}
-        <div style="text-align:right; margin-top:20px;">
-            <button onclick="document.getElementById('detailsModalBackdrop').remove()" style="background:#0f172a; color:white; padding:10px 20px; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Fechar</button>
+        <div class="modal-body">
+            ${itemsHtml}
+        </div>
+        <div class="modal-footer">
+            <button onclick="document.getElementById('detailsModalBackdrop').remove()" class="btn-modal btn-modal-primary">Fechar</button>
         </div>
     `;
 
@@ -3830,27 +3845,38 @@ function openBillingModal(submissionId) {
 
     modal = document.createElement('div');
     modal.id = modalId;
-    modal.style = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:2000; display:flex; align-items:center; justify-content:center;";
-    
+    modal.className = 'modal-backdrop';
+    modal.style.cssText = 'display:flex; z-index:2000;';
+
     modal.innerHTML = `
-        <div style="background:white; border-radius:8px; padding:20px; width:90%; max-width:500px; max-height:90vh; overflow-y:auto;">
-            <h3 style="margin-top:0;">📦 Registrar Faturamento</h3>
-            <p>Pedido: <strong>${submission.orderNumber}</strong></p>
-            <div style="margin:20px 0;">
-                ${itemsHtml}
+        <div class="modal-panel modal-panel--sm">
+            <div class="modal-header">
+                <div class="modal-header-title">
+                    <div class="modal-icon-badge">📦</div>
+                    <div>
+                        <h3 class="modal-title">Registrar Faturamento</h3>
+                        <p class="modal-subtitle">Pedido: <strong>${submission.orderNumber}</strong></p>
+                    </div>
+                </div>
+                <button onclick="document.getElementById('${modalId}').remove()" class="modal-close-btn" aria-label="Fechar">✕</button>
             </div>
-            <div style="margin:20px 0;">
-                <label style="font-weight:600; display:block; margin-bottom:8px;">Anexar Nota Fiscal (PDF ou Imagem)</label>
-                <input type="file" id="billingInvoiceFile" accept="application/pdf,image/*" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px;">
-                <small style="color:#666; display:block; margin-top:4px;">*O arquivo será convertido para base64 e salvo (limite recomendado: 2MB).</small>
+            <div class="modal-body">
+                <div>
+                    ${itemsHtml}
+                </div>
+                <div style="margin-top:18px;">
+                    <label>Anexar Nota Fiscal (PDF ou Imagem)</label>
+                    <input type="file" id="billingInvoiceFile" accept="application/pdf,image/*">
+                    <small style="color:var(--text-secondary); display:block; margin-top:6px;">*O arquivo será convertido para base64 e salvo (limite recomendado: 2MB).</small>
+                </div>
             </div>
-            <div style="display:flex; justify-content:flex-end; gap:10px;">
-                <button onclick="document.getElementById('${modalId}').remove()" style="padding:10px 15px; background:#ccc; border:none; border-radius:6px; cursor:pointer;">Cancelar</button>
-                <button onclick="submitBilling('${submissionId}')" style="padding:10px 15px; background:#0054A6; color:white; border:none; border-radius:6px; cursor:pointer;">Confirmar Faturamento</button>
+            <div class="modal-footer">
+                <button onclick="document.getElementById('${modalId}').remove()" class="btn-modal btn-modal-ghost">Cancelar</button>
+                <button onclick="submitBilling('${submissionId}')" class="btn-modal btn-modal-primary">Confirmar Faturamento</button>
             </div>
         </div>
     `;
-    
+
     document.body.appendChild(modal);
 }
 

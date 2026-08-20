@@ -65,6 +65,36 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
+::selection {
+    background: rgba(227, 30, 36, 0.18);
+    color: var(--text);
+}
+
+:focus-visible {
+    outline: 2.5px solid var(--secondary);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: #c7cdd6;
+    border-radius: 999px;
+    border: 2px solid var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #a8b0bc;
+}
+
 .container {
     max-width: 1280px;
     margin: 0 auto;
@@ -762,6 +792,25 @@ td {
     font-weight: 700;
 }
 
+.btn-icon-remove {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 1rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+}
+
+.btn-icon-remove:hover {
+    background: var(--primary-light);
+    color: var(--primary);
+    transform: scale(1.08);
+}
+
 /* ========== ORDER SUMMARY ========== */
 #orderSummary {
     display: none;
@@ -1176,6 +1225,25 @@ td {
     box-shadow: 0 6px 16px rgba(227, 30, 36, 0.3);
 }
 
+.btn-modal-success {
+    background: linear-gradient(135deg, #22c55e 0%, #15803d 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(21, 128, 61, 0.25);
+}
+
+.btn-modal-success:hover {
+    background: linear-gradient(135deg, #34d365 0%, #16913f 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(21, 128, 61, 0.3);
+}
+
+.btn-modal:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
 /* ---- Dynamically-rendered content inside the modals (script_v5.js) ---- */
 #trashContent table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 #trashContent thead tr { background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%) !important; }
@@ -1221,6 +1289,145 @@ td {
     border-color: var(--secondary) !important;
     box-shadow: 0 0 0 4px rgba(5, 84, 166, 0.1);
     outline: none;
+}
+
+/* ---- Histórico e Entregas (renderHistoryTab) ---- */
+#historyTabContent {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+#historyTabContent [id^="historyCard_"] {
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-lg) !important;
+    box-shadow: var(--shadow-sm) !important;
+    transition: var(--transition);
+}
+
+#historyTabContent [id^="historyCard_"]:hover {
+    box-shadow: var(--shadow) !important;
+}
+
+#historyTabContent h3 {
+    color: var(--text);
+    font-size: 1.1rem;
+}
+
+/* status / faturamento pill badges rendered inline by JS */
+#historyTabContent span[style*="border-radius:4px"] {
+    border-radius: 999px !important;
+    padding: 5px 12px !important;
+    font-size: 0.78rem !important;
+    letter-spacing: 0.02em;
+}
+
+.billing-progress {
+    display: inline-block;
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.billing-progress.complete {
+    background: rgba(22, 163, 74, 0.12);
+    color: #15803d;
+}
+
+.billing-progress.partial {
+    background: rgba(234, 88, 12, 0.12);
+    color: #c2410c;
+}
+
+.billing-progress.pending {
+    background: rgba(100, 116, 139, 0.12);
+    color: #475569;
+}
+
+.history-item-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    font-size: 0.88rem;
+}
+
+.history-item-table th {
+    text-align: left;
+    padding: 9px 10px;
+    background: var(--bg-secondary);
+    font-weight: 700;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 2px solid var(--border);
+}
+
+.history-item-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.history-item-table tr:hover td {
+    background: rgba(5, 84, 166, 0.03);
+}
+
+#historyTabContent button[onclick^="loadDraftToCurrentOrder"],
+#historyTabContent button[onclick^="repeatOrder"] {
+    background: linear-gradient(135deg, var(--navy-deep) 0%, #123163 100%) !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    transition: var(--transition);
+}
+
+#historyTabContent button[onclick^="openBillingModal"] {
+    background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-hover) 100%) !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    transition: var(--transition);
+}
+
+#historyTabContent button[onclick^="deleteSubmission"] {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%) !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    transition: var(--transition);
+}
+
+#historyTabContent button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+}
+
+@keyframes historyHighlightPulse {
+    0%, 100% { box-shadow: var(--shadow-sm); }
+    50% { box-shadow: 0 0 0 6px rgba(5, 84, 166, 0.16); }
+}
+
+.history-card-highlight {
+    border-color: var(--secondary) !important;
+    animation: historyHighlightPulse 1.4s ease-in-out 2;
+}
+
+/* ---- Ficha de rascunho (showDraftModal) ---- */
+.draft-modal-backdrop {
+    backdrop-filter: blur(3px);
+}
+
+.draft-modal button[style*="font-size:20px"] {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px !important;
+    background: var(--bg-secondary) !important;
+    color: var(--text-secondary);
+    transition: var(--transition);
+}
+
+.draft-modal button[style*="font-size:20px"]:hover {
+    background: var(--primary) !important;
+    color: white !important;
 }
 
 /* ========== LOGIN SCREEN ========== */
