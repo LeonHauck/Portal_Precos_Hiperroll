@@ -2043,6 +2043,29 @@ window.addEventListener('load', function() {
     }
 });
 
+// ===== Tema Claro / Escuro =====
+function applyThemeIcon(theme) {
+    const btn = document.getElementById('themeToggleBtn');
+    if (!btn) return;
+    btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+    btn.title = theme === 'dark' ? 'Alternar para tema claro' : 'Alternar para tema escuro';
+}
+
+function initTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    applyThemeIcon(current);
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('hr_theme', next); } catch (e) { /* localStorage indisponível */ }
+    applyThemeIcon(next);
+}
+
+window.addEventListener('DOMContentLoaded', initTheme);
+
 // ===== Funções de UI / Autenticação =====
 function lockApp() {
     document.body.classList.add('login-locked');

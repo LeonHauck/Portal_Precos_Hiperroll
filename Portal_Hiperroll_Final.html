@@ -5,6 +5,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Portal de Preços - Hiperroll</title>
+    <script>
+        (function () {
+            try {
+                var saved = localStorage.getItem('hr_theme');
+                var theme = saved === 'dark' || saved === 'light'
+                    ? saved
+                    : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                document.documentElement.setAttribute('data-theme', theme);
+            } catch (e) { /* localStorage indisponível: mantém tema claro padrão */ }
+        }());
+    </script>
     <link rel="stylesheet" href="style.css?v=2">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -43,6 +54,7 @@
                 </div>
                 
                 <div class="header-user-section">
+                    <button id="themeToggleBtn" onclick="toggleTheme()" class="header-btn header-btn-theme" title="Alternar tema claro/escuro" aria-label="Alternar tema claro/escuro">🌙</button>
                     <div id="currentUser" style="display:none;">
                         <div class="user-info">
                             <span style="font-size:0.85rem; color: rgba(255,255,255,0.8);">Usuário</span>
