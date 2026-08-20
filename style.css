@@ -1255,23 +1255,27 @@ td {
 }
 
 .modal-success-box {
-    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-    border: 1.5px solid #86efac;
+    background: var(--margin-good-bg);
+    border: 1.5px solid var(--margin-good-border);
     border-radius: var(--radius-lg);
     padding: 16px 18px;
 }
 
 .modal-success-box strong:first-child {
-    color: #15803d;
+    color: var(--margin-good-text, #15803d);
     font-size: 0.98rem;
 }
 
 .modal-success-box .modal-success-details {
     margin-top: 10px;
     font-size: 0.9rem;
-    color: var(--text);
+    color: var(--margin-good-text, #15803d);
     display: grid;
     gap: 4px;
+}
+
+.modal-success-box .modal-success-details strong {
+    color: inherit;
 }
 
 .btn-modal {
@@ -2025,11 +2029,13 @@ body.login-locked .container {
 [data-theme="dark"] [style*="border-bottom:1px solid #e2e8f0"],
 [data-theme="dark"] [style*="border-top:1px solid #e2e8f0"],
 [data-theme="dark"] [style*="border:1px solid #e5e7eb"],
+[data-theme="dark"] [style*="border: 1px solid #e5e7eb"],
 [data-theme="dark"] [style*="border-bottom: 1px solid #e5e7eb"],
 [data-theme="dark"] [style*="border-top:2px solid #e5e7eb"],
 [data-theme="dark"] [style*="border-bottom:1px solid #eee"],
 [data-theme="dark"] [style*="border-bottom: 1px solid #eee"],
 [data-theme="dark"] [style*="border:1px solid #ddd"],
+[data-theme="dark"] [style*="border: 1px solid #ddd"],
 [data-theme="dark"] [style*="border-top:1px solid #ddd"] {
     border-color: var(--border) !important;
 }
