@@ -948,6 +948,12 @@ td {
     transform: translateY(-2px);
 }
 
+.order-actions-row .btn-action.btn-export {
+    margin-top: 0;
+    padding: 12px 20px;
+    border-radius: 10px;
+}
+
 .btn-action-primary {
     background: linear-gradient(135deg, var(--primary) 0%, var(--brand-navy) 100%);
     color: white;

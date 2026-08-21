@@ -228,13 +228,14 @@
             </div>
 
             <!-- Action buttons at bottom -->
-            <div style="margin-top: 20px; text-align: right; display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
-                <button style="background:#0f172a; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="showSubmitOrderModal()">📤 Enviar Pedido ao Sistema</button>
-                <button style="background:#111827; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="saveDraftCurrentOrder()">💾 Salvar Rascunho</button>
-                <button style="background:#666666; color:white; border:none; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="switchTab('tab-history')">📋 Ver Meus Pedidos</button>
-                <button style="background:#2563eb; color:white; border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="exportPortalBackup()">💾 Backup</button>
-                <button style="background:#7c3aed; color:white; border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:600;" onclick="restorePortalBackupPrompt()">↩️ Restaurar</button>
-                <button class="btn-export" onclick="exportPdfControlled()">🖨️ PDF</button>
+            <div class="order-actions-row">
+                <button class="btn-action btn-action-ghost" onclick="switchTab('tab-history')">📋 Ver Meus Pedidos</button>
+                <button class="btn-action btn-action-utility" onclick="exportPortalBackup()">💾 Backup</button>
+                <button class="btn-action btn-action-utility" onclick="restorePortalBackupPrompt()">↩️ Restaurar</button>
+                <div class="action-divider"></div>
+                <button class="btn-action btn-action-accent btn-export" onclick="exportPdfControlled()">🖨️ PDF</button>
+                <button class="btn-action btn-action-secondary" onclick="saveDraftCurrentOrder()">💾 Salvar Rascunho</button>
+                <button class="btn-action btn-action-primary" onclick="showSubmitOrderModal()">📤 Enviar Pedido ao Sistema</button>
             </div>
         </section>
         </div> <!-- End of tab-order -->
