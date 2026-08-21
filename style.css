@@ -544,12 +544,26 @@ header::after {
 
 .card h2 {
     margin: 0 0 24px 0;
-    font-size: 1.5rem;
-    font-weight: 700;
+    font-size: 1.35rem;
+    font-weight: 800;
+    letter-spacing: -0.2px;
     color: var(--secondary);
     display: flex;
     align-items: center;
     gap: 12px;
+}
+
+.card-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+    font-size: 1.05rem;
+    box-shadow: 0 4px 10px rgba(7, 26, 61, 0.18);
 }
 
 .card h3 {
@@ -902,6 +916,117 @@ td {
     background: var(--primary-light);
     color: var(--primary);
     transform: scale(1.08);
+}
+
+/* ========== ORDER ACTIONS ROW ========== */
+.order-actions-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+}
+
+.btn-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 0.92rem;
+    border: none;
+    cursor: pointer;
+    transition: var(--transition);
+    white-space: nowrap;
+}
+
+.btn-action:hover {
+    transform: translateY(-2px);
+}
+
+.btn-action-primary {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--brand-navy) 100%);
+    color: white;
+    box-shadow: 0 6px 16px rgba(227, 30, 36, 0.28);
+}
+
+.btn-action-primary:hover {
+    background: linear-gradient(135deg, #ee3a3f 0%, var(--brand-navy) 100%);
+    box-shadow: 0 10px 22px rgba(227, 30, 36, 0.35);
+}
+
+.btn-action-secondary {
+    background: linear-gradient(135deg, var(--navy-deep) 0%, #123163 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(7, 26, 61, 0.22);
+}
+
+.btn-action-secondary:hover {
+    background: linear-gradient(135deg, var(--navy-deep-hover) 0%, #17408a 100%);
+    box-shadow: 0 8px 18px rgba(7, 26, 61, 0.3);
+}
+
+.btn-action-accent {
+    background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-hover) 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(5, 84, 166, 0.25);
+}
+
+.btn-action-accent:hover {
+    background: linear-gradient(135deg, #1c67b8 0%, var(--secondary-hover) 100%);
+    box-shadow: 0 8px 18px rgba(5, 84, 166, 0.32);
+}
+
+.btn-action-ghost {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1.5px solid var(--border);
+}
+
+.btn-action-ghost:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--text-secondary);
+}
+
+.action-divider {
+    width: 1px;
+    align-self: stretch;
+    background: var(--border);
+    margin: 0 2px;
+}
+
+.btn-action-utility {
+    padding: 9px 14px;
+    font-size: 0.82rem;
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1.5px solid var(--border);
+}
+
+.btn-action-utility:hover {
+    background: var(--bg-hover);
+    border-color: var(--secondary);
+    color: var(--secondary);
+}
+
+@media (max-width: 640px) {
+    .order-actions-row {
+        justify-content: stretch;
+    }
+
+    .order-actions-row .btn-action {
+        flex: 1 1 auto;
+        justify-content: center;
+    }
+
+    .action-divider {
+        display: none;
+    }
 }
 
 /* ========== ORDER SUMMARY ========== */
