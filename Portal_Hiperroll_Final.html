@@ -80,7 +80,7 @@
 
             <!-- Sidebar: Filters -->
             <section class="card">
-                <h2>🔍 Filtros</h2>
+                <h2><span class="card-icon">🔍</span> Filtros</h2>
 
                 <div class="form-group">
                     <label for="productSearch">Pesquisar Produto (Nome ou Código)</label>
@@ -114,7 +114,7 @@
 
             <!-- Main: Results -->
             <section class="card">
-                <h2>📊 Resultados</h2>
+                <h2><span class="card-icon">📊</span> Resultados</h2>
                 <div id="resultsContainer" class="results-table-container">
                     <div class="empty-state">
                         Selecione um produto e um estado para ver os cálculos.
@@ -127,7 +127,7 @@
 
         <!-- Order Summary Section: Full Width -->
         <section class="card" style="margin-top: 30px;" id="orderSection">
-            <h2>🛒 Resumo do Pedido</h2>
+            <h2><span class="card-icon">🛒</span> Resumo do Pedido</h2>
             
             <!-- Summary totals at top (visible always, emphasized in print) -->
             <div id="orderTableContainer" class="results-table-container">
@@ -243,7 +243,7 @@
         <div id="tab-history" class="tab-content" style="display: none;">
             <section class="card" style="margin-top: 20px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom: 20px;">
-                    <h2>📋 Meus Pedidos</h2>
+                    <h2><span class="card-icon">📋</span> Meus Pedidos</h2>
                     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                         <input type="text" id="historySearchInput" placeholder="Buscar por Nº do Pedido, Cliente ou Comprador..." style="padding: 10px; border: 1px solid #ccc; border-radius: 6px; width: 280px;" oninput="renderHistoryTab()">
                         <button onclick="renderHistoryTab()" style="padding:10px 15px; background:#0054A6; color:white; border:none; border-radius:6px; cursor:pointer;">Atualizar</button>
