@@ -2695,8 +2695,8 @@ function showTrashModal() {
     let html = `
     <div style="max-height: 600px; overflow-y: auto;">
     <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
-        <thead style="position: sticky; top: 0; background: white;">
-            <tr style="background: #f3f4f6; border-bottom: 2px solid #e5e7eb;">
+        <thead style="position: sticky; top: 0; background: var(--card-bg);">
+            <tr style="background: var(--surface-2); border-bottom: 2px solid var(--border); color: var(--text);">
                 <th style="padding: 10px; text-align: center; width: 30px;"></th>
                 <th style="padding: 10px; text-align: left;">Nº Pedido</th>
                 <th style="padding: 10px; text-align: left;">Cliente</th>
@@ -3798,7 +3798,7 @@ function renderHistoryTab() {
         actionsHtml += `</div>`;
 
         html += `
-            <div id="historyCard_${submission.id}" style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <div id="historyCard_${submission.id}" style="border: 1px solid var(--border); border-radius: 8px; padding: 15px; background: var(--card-bg); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                 <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:10px;">
                     <div>
                         <h3 style="margin:0 0 5px 0;">Pedido: ${submission.orderNumber || 'Sem número'}</h3>
