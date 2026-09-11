@@ -130,22 +130,10 @@ Portal_Precos_Hiperroll/
 ├── .env.example                 # Modelo de configuração local
 ├── .gitignore                   # Arquivos que não devem ser versionados
 ├── scratch/                     # Scripts auxiliares de atualização de dados
-├── logo.png                     # Identidade visual do portal
-└── *.md                         # Guias, referências e documentação complementar
+└── logo.png                     # Identidade visual do portal
 ```
 
-Arquivos como `index_backup.html`, `data_backup.js` e os documentos de validação são mantidos como histórico, apoio técnico ou referência e não são o ponto de entrada principal da aplicação.
-
-## Documentação complementar
-
-- `INICIO_RAPIDO_5MIN.md`: entrada rápida para conhecer o fluxo de negociação.
-- `GUIA_PRATICO.md`: exemplos operacionais de negociação.
-- `README_NEGOCIACAO.md`: visão geral das funcionalidades de negociação.
-- `FUNCIONALIDADES_NEGOCIACAO.md`: descrição detalhada dos recursos de negociação.
-- `DOCUMENTACAO_TECNICA.md`: fórmulas e detalhes da implementação.
-- `CHECKLIST_VALIDACAO.md`: roteiro de validação manual.
-- `QUICK_REFERENCE.md`: referência rápida para manutenção da interface.
-- `INDICE_COMPLETO.md`: índice da documentação disponível.
+Arquivos como `index_backup.html`, `data_backup.js` e `style_backup.css` são mantidos como histórico, apoio técnico ou referência e não são o ponto de entrada principal da aplicação.
 
 ## Limitações atuais
 
