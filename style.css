@@ -2187,6 +2187,33 @@ body.login-locked .container {
     color: var(--text-secondary);
 }
 
+/* ========== FOOTER ========== */
+.site-footer {
+    margin-top: 32px;
+    padding: 20px 0 8px;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-tertiary);
+}
+
+.site-footer a {
+    color: var(--secondary);
+    font-weight: 700;
+    text-decoration: none;
+    transition: var(--transition);
+}
+
+.site-footer a:hover {
+    color: var(--primary);
+    text-decoration: underline;
+}
+
+@media print {
+    .site-footer {
+        display: none;
+    }
+}
+
 /* ========== PRINT STYLES ========== */
 @media print {
     @page {
