@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="logo.png" alt="Logo Hiperroll" width="120" />
+  <img src="logo-hiperroll.png" alt="Logo Hiperroll" width="140" />
   <h1>Portal de Preços Hiperroll</h1>
   <p><strong>Precificação CIF/FOB, negociação comercial e aprovação de pedidos</strong></p>
   <p>
@@ -7,18 +7,19 @@
     <img src="https://img.shields.io/badge/CSS3-1572B6?style=for-the-badge&logo=css3&logoColor=white" alt="CSS3" />
     <img src="https://img.shields.io/badge/JavaScript-Vanilla-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black" alt="JavaScript Vanilla" />
     <img src="https://img.shields.io/badge/PHP-8+-777BB4?style=for-the-badge&logo=php&logoColor=white" alt="PHP" />
+    <img src="https://img.shields.io/badge/Tema-Claro%20%2F%20Escuro-0b1220?style=for-the-badge&logo=darkreader&logoColor=white" alt="Tema claro e escuro" />
   </p>
 </div>
 
-## Visão Geral
+## 📋 Visão Geral
 
 O Portal de Preços Hiperroll é uma aplicação web para apoiar a equipe comercial na formação de preços, montagem de pedidos e negociação com clientes. A aplicação cruza produtos, custos, pesos e regras de frete para calcular valores **FOB** e **CIF** conforme o estado, o tipo de praça e a faixa de peso selecionados.
 
 Além da calculadora, o portal oferece um fluxo de negociação com preço unitário editável, descontos, contratos, acompanhamento de margem, rascunhos, envio para análise, aprovação ou rejeição por usuários autorizados e exportação de pedidos em PDF.
 
-## Funcionalidades
+## ⚙️ Funcionalidades
 
-### Precificação
+### 💰 Precificação
 
 - Pesquisa de produtos por descrição, código e categoria.
 - Seleção de UF, tipo de praça e faixa de peso.
@@ -27,7 +28,7 @@ Além da calculadora, o portal oferece um fluxo de negociação com preço unit�
 - Cálculo do preço CIF usando custos, despesas e divisor da categoria.
 - Exibição de peso, frete, preço FOB e preço CIF por item.
 
-### Negociação e margem
+### 🤝 Negociação e margem
 
 - Inclusão de produtos em um pedido com quantidade ajustável.
 - Alteração do preço negociado por item.
@@ -39,7 +40,7 @@ Além da calculadora, o portal oferece um fluxo de negociação com preço unit�
   - de 11% a 15%: margem de atenção;
   - abaixo de 11%: margem crítica.
 
-### Pedidos e workflow comercial
+### 🧾 Pedidos e workflow comercial
 
 - Geração automática do número interno Hiperroll com cinco dígitos.
 - Registro de cliente, representante, validade da proposta e número do pedido do cliente.
@@ -51,19 +52,27 @@ Além da calculadora, o portal oferece um fluxo de negociação com preço unit�
 - Previsão de faturamento calculada após a aprovação.
 - Exclusão de registros armazenados localmente quando necessário.
 
-### Exportação
+### 🖨️ Exportação
 
 - Geração de proposta comercial em PDF com os dados do pedido, itens, valores, descontos, contrato e margem.
 - Exportação controlada pelo `html2pdf.js`, carregado via CDN no HTML principal.
 
-## Perfis e permissões
+## 🎨 Interface e experiência
+
+- **🌓 Tema claro e escuro:** botão dedicado no cabeçalho para alternar o tema; a escolha é salva no navegador e, no primeiro acesso, o portal detecta automaticamente a preferência do sistema operacional.
+- **🏷️ Identidade visual da Hiperroll:** cabeçalho com o logo oficial em destaque sobre um degradê nas cores da marca (vermelho → azul-marinho), reaproveitado também na tela de login.
+- **🧩 Painéis padronizados:** os modais de Supervisor, Lixeira, Faturamento, Detalhes do Pedido, Histórico de Status e Envio de Pedido seguem o mesmo padrão visual (cabeçalho com ícone, corpo rolável e rodapé de ações).
+- **🔘 Botões com hierarquia clara:** a ação principal de cada tela (como "Enviar Pedido ao Sistema") se destaca visualmente das ações secundárias e utilitárias (Backup, Restaurar, Ver Meus Pedidos).
+- **🖼️ Ícone da aba (favicon)** com o logo da Hiperroll e rodapé com crédito de desenvolvimento.
+
+## 👥 Perfis e permissões
 
 - **Vendedor:** cria pedidos, salva rascunhos, negocia itens e envia pedidos para análise.
 - **Supervisor:** acessa o painel de pedidos pendentes e pode aprovar ou rejeitar pedidos.
 - **Desenvolvedor:** possui acesso administrativo previsto pelo perfil atual do sistema.
 - A aprovação e a rejeição estão restritas atualmente aos usuários `Leon` e `Gabriel.Ferreira`.
 
-## Como executar
+## 🚀 Como executar
 
 ### Execução recomendada com PHP
 
@@ -83,7 +92,7 @@ http://localhost:8000/Portal_Hiperroll_Final.html
 
 Também é possível abrir `Portal_Hiperroll_Final.html` diretamente no navegador quando o backend PHP não for necessário. Nesse modo, os dados do frontend continuam dependendo do armazenamento local do navegador.
 
-## Dados e persistência
+## 💾 Dados e persistência
 
 O frontend atual armazena usuários, sessão, rascunhos, pedidos enviados, status, histórico e contador de pedidos no `localStorage` do navegador. Esses dados são locais ao navegador e ao perfil de usuário do Windows; limpar os dados do site ou trocar de navegador pode removê-los.
 
@@ -91,7 +100,7 @@ Os dados de produtos, custos e fretes são incorporados ao arquivo `data.js` a p
 
 O arquivo `auth.php` fornece uma API PHP independente para login e cadastro usando `users.json`, com hashes de senha compatíveis com `password_hash()`/`password_verify()`. A implementação frontend atualmente mantém seu próprio fluxo local em `script_v5.js`; portanto, a API PHP não deve ser considerada uma sincronização automática com o `localStorage` sem uma integração adicional.
 
-## Segurança de credenciais
+## 🔒 Segurança de credenciais
 
 - Nunca publique senhas reais, hashes ou dados pessoais no repositório.
 - `.env` e `users.json` já estão listados no `.gitignore`.
@@ -100,7 +109,7 @@ O arquivo `auth.php` fornece uma API PHP independente para login e cadastro usan
 - As credenciais de exemplo presentes em `.env.example` são destinadas ao desenvolvimento e devem ser alteradas antes de qualquer uso real.
 - Se `users.json` já tiver sido rastreado pelo Git, o `.gitignore` não basta: remova-o do índice com `git rm --cached users.json` e faça um commit.
 
-## Atualização das bases
+## 🔄 Atualização das bases
 
 ### Atualização de produtos e fretes
 
@@ -116,13 +125,13 @@ Há scripts de apoio para diferentes rotinas:
 
 Os caminhos de entrada de alguns scripts apontam para pastas locais específicas. Revise e ajuste esses caminhos antes de executar em outra máquina.
 
-## Estrutura principal
+## 🗂️ Estrutura principal
 
 ```text
 Portal_Precos_Hiperroll/
 ├── Portal_Hiperroll_Final.html  # Página principal da aplicação
 ├── script_v5.js                 # Regras de negócio, autenticação local e interface
-├── style.css                    # Estilos e layout responsivo
+├── style.css                    # Estilos, temas claro/escuro e layout responsivo
 ├── data.js                      # Produtos, custos e fretes usados pelo frontend
 ├── data.json                    # Representação JSON dos dados
 ├── auth.php                     # API PHP independente de autenticação/cadastro
@@ -130,23 +139,24 @@ Portal_Precos_Hiperroll/
 ├── .env.example                 # Modelo de configuração local
 ├── .gitignore                   # Arquivos que não devem ser versionados
 ├── scratch/                     # Scripts auxiliares de atualização de dados
-└── logo.png                     # Identidade visual do portal
+├── logo-hiperroll.png           # Logo oficial (fundo transparente) — cabeçalho, login e favicon
+└── logo.png                     # Logo com fundo sólido — usado na exportação em PDF
 ```
 
 Arquivos como `index_backup.html`, `data_backup.js` e `style_backup.css` são mantidos como histórico, apoio técnico ou referência e não são o ponto de entrada principal da aplicação.
 
-## Limitações atuais
+## ⚠️ Limitações atuais
 
 - A persistência principal de pedidos e usuários no frontend é local ao navegador.
 - Não existe, no fluxo atual do frontend, um banco de dados compartilhado entre vendedores e supervisores.
 - A API PHP e o fluxo de autenticação local são caminhos separados e precisam ser integrados antes de um uso multiusuário centralizado.
 - Os scripts de atualização dependem de planilhas e caminhos locais que podem variar por máquina.
 
-## Licença e uso
+## 📄 Licença e uso
 
 Este projeto é destinado ao uso interno da operação comercial da Hiperroll, caso ocorra a intenção de utilizar a mesma ferramenta altere a parte que consta nomes e documentação da empresa Hiperroll.
-##
 
 <div align="center">
   <p>Desenvolvido para apoiar a operação comercial da <strong>Hiperroll Embalagens</strong>.</p>
+  <p>👤 Desenvolvido por <a href="https://www.linkedin.com/in/leon-hauck/">Leon Hauck</a></p>
 </div>
