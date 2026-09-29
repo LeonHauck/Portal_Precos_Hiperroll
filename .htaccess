@@ -1,0 +1,30 @@
+# Portal de Preços Hiperroll — regras do Apache (HostGator)
+
+Options -Indexes
+
+# Arquivos que nunca devem ser baixados pelo navegador: ocultos (.env, .git...),
+# banco, planilhas, scripts de manutenção, backups e os dados de preço/custo
+# (servidos só para usuários logados via api/data.php).
+<FilesMatch "(^\.|\.(sqlite3?|db|md|py|ps1|sh|xlsx|json|log|bak)$|^(data|data_backup)\.js$|_backup\.(html|css|js)$|^auth\.php$)">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+RedirectMatch 404 /\.git
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# Depois de ativar o SSL gratuito (AutoSSL) no cPanel, descomente para forçar HTTPS:
+# RewriteEngine On
+# RewriteCond %{HTTPS} off
+# RewriteCond %{HTTP:X-Forwarded-Proto} !https
+# RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]

@@ -436,6 +436,18 @@ header::after {
     box-shadow: 0 8px 18px rgba(227, 30, 36, 0.4);
 }
 
+.header-btn-ghost {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    border: 1.5px solid rgba(255, 255, 255, 0.3);
+}
+
+.header-btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.45);
+    transform: translateY(-2px);
+}
+
 #userControls button:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0,0,0,0.2);
@@ -2330,6 +2342,100 @@ body.login-locked .container {
     color: #991b1b;
     font-size: 0.75rem;
     font-weight: 800;
+}
+
+/* ========== USUÁRIOS ========== */
+.new-user-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px;
+    align-items: end;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-1);
+}
+
+.new-user-form label {
+    margin-bottom: 4px;
+    font-size: 0.82rem;
+}
+
+.new-user-form input,
+.new-user-form select {
+    padding: 9px 12px;
+}
+
+.users-table-container {
+    margin-top: 16px;
+    overflow-x: auto;
+}
+
+.users-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+
+.users-table th {
+    position: static;
+    padding: 10px;
+    font-size: 0.72rem;
+}
+
+.users-table td {
+    padding: 10px;
+    vertical-align: middle;
+}
+
+.users-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.btn-sm {
+    padding: 6px 10px;
+    font-size: 0.78rem;
+}
+
+.user-status {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.user-status--active {
+    background: rgba(22, 163, 74, 0.12);
+    color: #15803d;
+}
+
+.user-status--pending {
+    background: rgba(234, 88, 12, 0.12);
+    color: #c2410c;
+}
+
+.user-status--inactive {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+}
+
+.user-row--inactive td {
+    opacity: 0.6;
+}
+
+.user-self-note {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+}
+
+.user-role-select {
+    width: auto;
+    padding: 6px 30px 6px 10px;
+    font-size: 0.82rem;
 }
 
 /* ========== FOOTER ========== */

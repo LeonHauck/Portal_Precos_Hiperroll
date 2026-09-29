@@ -174,10 +174,6 @@ const statusManager = {
         const saved = localStorage.getItem('orderStatus');
         const savedHistory = localStorage.getItem('orderStatusHistory');
 
-        if (!saved && typeof restorePortalSnapshotIfAvailable === 'function') {
-            restorePortalSnapshotIfAvailable();
-        }
-        
         if (saved) {
             this.currentStatus = saved;
         }
@@ -237,12 +233,8 @@ const statusManager = {
             return;
         }
 
-        // Para aprovar/rejeitar, permitir somente usuários específicos (Leon e Gabriel)
-        const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
-        const currentNormalized = normalize(user);
-        const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
-        if (!allowedApprovers.includes(currentNormalized)) {
-            alert('Apenas Gabriel ou Leon podem aprovar ou rejeitar pedidos.');
+        if (!authManager.isGestor()) {
+            alert('Somente o gestor pode aprovar ou rejeitar pedidos.');
             return;
         }
 
@@ -279,11 +271,9 @@ const statusManager = {
             statusSelect.style.color = color.text;
             statusSelect.style.fontWeight = '600';
             statusSelect.style.border = `2px solid ${color.text}`;
-            const currentUser = (typeof authManager !== 'undefined') ? authManager.getCurrentUser() : null;
-            const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
-            const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
+            const isGestor = typeof authManager !== 'undefined' && authManager.isGestor();
             Array.from(statusSelect.options).forEach(opt => {
-                if (['aprovado', 'rejeitado'].includes(opt.value) && !allowedApprovers.includes(normalize(currentUser))) {
+                if (['aprovado', 'rejeitado'].includes(opt.value) && !isGestor) {
                     opt.disabled = true;
                     opt.style.color = '#999';
                 } else {
@@ -298,8 +288,6 @@ const statusManager = {
     save() {
         localStorage.setItem('orderStatus', this.currentStatus);
         localStorage.setItem('orderStatusHistory', JSON.stringify(this.history));
-        const snapshot = createPortalSnapshot();
-        localStorage.setItem('portal_backup_snapshot', JSON.stringify(snapshot));
     },
     
     // Retorna o histórico formatado para exibição
@@ -317,161 +305,135 @@ const statusManager = {
 };
 // ==========================================
 
-// ========== GERENCIADOR DE AUTENTICAÇÃO (LOCAL) ==========
+// ========== CLIENTE DA API (servidor PHP) ==========
+const API_BASE = 'api/index.php';
+let apiCsrfToken = '';
+
+// Every call goes through here: sends the session cookie, the CSRF token on writes,
+// and turns server errors into Error objects with the server's message.
+async function apiRequest(action, { method = 'GET', body = null, retryOnCsrf = true } = {}) {
+    const options = { method, credentials: 'same-origin', headers: { Accept: 'application/json' } };
+    if (method !== 'GET') {
+        options.headers['Content-Type'] = 'application/json';
+        options.headers['X-CSRF-Token'] = apiCsrfToken;
+        options.body = JSON.stringify(body || {});
+    }
+
+    let response;
+    try {
+        response = await fetch(`${API_BASE}?action=${encodeURIComponent(action)}`, options);
+    } catch (networkError) {
+        throw new Error('Não foi possível falar com o servidor. Verifique sua conexão (o portal precisa estar publicado ou rodando com php -S).');
+    }
+
+    let data = null;
+    try {
+        data = await response.json();
+    } catch (parseError) {
+        data = null;
+    }
+
+    if (response.status === 419 && retryOnCsrf) {
+        await authManager.refreshSession();
+        return apiRequest(action, { method, body, retryOnCsrf: false });
+    }
+    if (response.status === 401 && action !== 'login') {
+        authManager.handleSessionExpired();
+    }
+    if (!response.ok || !data || data.success === false) {
+        const error = new Error((data && data.message) || `Erro ${response.status} ao comunicar com o servidor.`);
+        error.status = response.status;
+        throw error;
+    }
+    if (data.csrfToken) apiCsrfToken = data.csrfToken;
+    return data;
+}
+
+// ========== AUTENTICAÇÃO (sessão no servidor) ==========
+const ROLES = Object.freeze({ GESTOR: 'gestor', ADMIN: 'admin', REP: 'representante' });
+const ROLE_LABELS = Object.freeze({ gestor: 'Gestor', admin: 'Administrador', representante: 'Representante' });
+
+// Roles here only decide what the screen shows; the server re-checks every action.
 const authManager = {
-    users: {}, // username -> { passwordHash, role }
+    profile: null,
     currentUser: null,
     currentRole: null,
 
     normalizeUsername(username) {
-        const normalized = String(username || '').trim().toLowerCase();
-        return normalized === 'gabriel' ? 'gabriel.ferreira' : normalized;
+        return String(username || '').trim().toLowerCase();
     },
 
-    findUser(username) {
-        const normalized = this.normalizeUsername(username);
-        if (!normalized) return null;
-        const matchedKey = Object.keys(this.users).find(key => this.normalizeUsername(key) === normalized);
-        return matchedKey ? { username: matchedKey, user: this.users[matchedKey] } : null;
+    setProfile(user) {
+        this.profile = user || null;
+        this.currentUser = user ? user.username : null;
+        this.currentRole = user ? user.role : null;
+    },
+
+    async refreshSession() {
+        const data = await apiRequest('session');
+        this.setProfile(data.user);
+        return data.user;
     },
 
     async init() {
-        const usersRaw = localStorage.getItem('hr_users');
-        const current = localStorage.getItem('hr_currentUser');
-        const currentRole = localStorage.getItem('hr_currentRole');
         try {
-            const parsed = usersRaw ? JSON.parse(usersRaw) : {};
-            // Compatibilidade com formato antigo: senha em string simples
-            this.users = Object.entries(parsed).reduce((memo, [username, value]) => {
-                if (typeof value === 'string') {
-                    memo[username] = { passwordHash: value, role: 'vendedor' };
-                } else {
-                    memo[username] = {
-                        passwordHash: value && value.passwordHash ? value.passwordHash : '',
-                        role: String((value && value.role) || 'vendedor').trim().toLowerCase()
-                    };
-                }
-                return memo;
-            }, {});
-        } catch (e) {
-            this.users = {};
+            await this.refreshSession();
+        } finally {
+            this.updateUI();
         }
-        const currentUserEntry = this.findUser(current);
-        this.currentUser = currentUserEntry ? currentUserEntry.username : null;
-        this.currentRole = currentUserEntry ? String(currentUserEntry.user.role || 'vendedor').trim().toLowerCase() : null;
-
-        // Garantir usuário padrão Leon como Desenvolvedor
-        const defaultDevUser = 'Leon';
-        const defaultDevPass = 'REMOVIDO';
-        const defaultSupervisorUser = 'Gabriel.Ferreira';
-        const defaultSupervisorPass = 'REMOVIDO';
-
-        const devHash = await this.hashPassword(defaultDevPass);
-        const supervisorHash = await this.hashPassword(defaultSupervisorPass);
-
-        const existingDev = this.findUser(defaultDevUser);
-        if (!existingDev) {
-            this.users[defaultDevUser] = { passwordHash: devHash, role: 'desenvolvedor' };
-        } else {
-            if (existingDev.user.passwordHash !== devHash) {
-                this.users[existingDev.username].passwordHash = devHash;
-            }
-            if (existingDev.user.role !== 'desenvolvedor') {
-                this.users[existingDev.username].role = 'desenvolvedor';
-            }
-        }
-
-        const existingSupervisor = this.findUser(defaultSupervisorUser);
-        if (!existingSupervisor) {
-            this.users[defaultSupervisorUser] = { passwordHash: supervisorHash, role: 'supervisor' };
-        } else {
-            if (existingSupervisor.user.passwordHash !== supervisorHash) {
-                this.users[existingSupervisor.username].passwordHash = supervisorHash;
-            }
-            if (existingSupervisor.user.role !== 'supervisor') {
-                this.users[existingSupervisor.username].role = 'supervisor';
-            }
-        }
-
-        if (this.currentUser && this.users[this.currentUser]) {
-            this.currentRole = this.users[this.currentUser].role;
-        }
-
-        this.save();
-        this.updateUI();
-    },
-
-    async hashPassword(password) {
-        const fallbackHashes = {
-            REMOVIDO: 'REMOVIDO',
-            REMOVIDO: 'REMOVIDO'
-        };
-        if (!globalThis.crypto || !globalThis.crypto.subtle) {
-            if (Object.prototype.hasOwnProperty.call(fallbackHashes, password)) {
-                return fallbackHashes[password];
-            }
-            throw new Error('A segurança do navegador está indisponível. Abra o portal por um servidor local.');
-        }
-        const enc = new TextEncoder();
-        const data = enc.encode(password);
-        const hash = await globalThis.crypto.subtle.digest('SHA-256', data);
-        return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
-    },
-
-    async register(username, password, role = 'vendedor') {
-        const normalized = this.normalizeUsername(username);
-        if (!normalized || !password) throw new Error('Usuário ou senha inválidos');
-        if (this.findUser(username)) throw new Error('Usuário já existe');
-        const h = await this.hashPassword(password);
-        const normalizedRole = String(role || 'vendedor').trim().toLowerCase();
-        this.users[username.trim()] = { passwordHash: h, role: normalizedRole };
-        this.currentUser = username.trim();
-        this.currentRole = normalizedRole;
-        this.save();
-        this.updateUI();
-        return true;
     },
 
     async login(username, password) {
-        const normalized = this.normalizeUsername(username);
-        if (!normalized || !password) throw new Error('Usuário ou senha inválidos');
-        const found = this.findUser(username);
-        if (!found) {
-            throw new Error('Credenciais incorretas');
-        }
-        const h = await this.hashPassword(password);
-        if (found.user.passwordHash !== h) {
-            throw new Error('Credenciais incorretas');
-        }
-        this.currentUser = found.username;
-        this.currentRole = String(found.user.role || 'vendedor').trim().toLowerCase();
-        this.save();
+        if (!username || !password) throw new Error('Informe usuário e senha.');
+        const data = await apiRequest('login', { method: 'POST', body: { username, password } });
+        this.setProfile(data.user);
         this.updateUI();
-        return true;
+        return data.user;
     },
 
-    logout() {
-        this.currentUser = null;
-        this.currentRole = null;
-        this.save();
+    async logout() {
+        try {
+            await apiRequest('logout', { method: 'POST' });
+        } catch (e) {
+            console.warn('Falha ao encerrar a sessão no servidor:', e);
+        }
+        this.setProfile(null);
         this.updateUI();
     },
 
-    save() {
-        localStorage.setItem('hr_users', JSON.stringify(this.users));
-        localStorage.setItem('hr_currentUser', this.currentUser || '');
-        localStorage.setItem('hr_currentRole', this.currentRole || '');
-        if (typeof savePortalSnapshot === 'function') {
-            savePortalSnapshot();
-        }
+    handleSessionExpired() {
+        if (!this.currentUser) return;
+        this.setProfile(null);
+        this.updateUI();
+        showLoginModal('Sua sessão expirou. Faça login novamente.');
     },
 
     getCurrentUser() {
         return this.currentUser;
     },
 
+    getCurrentUserId() {
+        return this.profile ? this.profile.id : null;
+    },
+
+    getDisplayName() {
+        return this.profile ? this.profile.displayName : '';
+    },
+
     getCurrentUserRole() {
-        return String(this.currentRole || 'vendedor').trim().toLowerCase();
+        return String(this.currentRole || '').trim().toLowerCase();
+    },
+
+    isGestor() {
+        return this.getCurrentUserRole() === ROLES.GESTOR;
+    },
+
+    canManageUsers() {
+        return [ROLES.GESTOR, ROLES.ADMIN].includes(this.getCurrentUserRole());
+    },
+
+    mustChangePassword() {
+        return Boolean(this.profile && this.profile.mustChangePassword);
     },
 
     updateUI() {
@@ -479,25 +441,23 @@ const authManager = {
         const currentUserDiv = document.getElementById('currentUser');
         const currentUserName = document.getElementById('currentUserName');
         const supervisorBtn = document.getElementById('supervisorBtn');
+        const usersBtn = document.getElementById('usersBtn');
 
         if (!loginBtn || !currentUserDiv || !currentUserName || !supervisorBtn) return;
 
         if (this.currentUser) {
             loginBtn.style.display = 'none';
             currentUserDiv.style.display = 'flex';
-            currentUserName.textContent = `${this.currentUser} (${this.getCurrentUserRole()})`;
-            if (['supervisor', 'desenvolvedor'].includes(this.getCurrentUserRole())) {
-                supervisorBtn.style.display = 'inline-flex';
-            } else {
-                supervisorBtn.style.display = 'none';
-            }
+            currentUserName.textContent = `${this.getDisplayName() || this.currentUser} (${ROLE_LABELS[this.getCurrentUserRole()] || this.getCurrentUserRole()})`;
+            supervisorBtn.style.display = this.isGestor() ? 'inline-flex' : 'none';
+            if (usersBtn) usersBtn.style.display = this.canManageUsers() ? 'inline-flex' : 'none';
         } else {
             loginBtn.style.display = 'inline-block';
             currentUserDiv.style.display = 'none';
             currentUserName.textContent = '--';
             supervisorBtn.style.display = 'none';
+            if (usersBtn) usersBtn.style.display = 'none';
         }
-        // Refresh drafts, history and supervisor panel when UI changes (login/logout)
         try {
             if (typeof renderDraftsPanel === 'function') renderDraftsPanel();
         } catch (e) {}
@@ -529,9 +489,6 @@ const orderManager = {
 
     save() {
         localStorage.setItem('orderMeta', JSON.stringify(this.meta));
-        if (typeof savePortalSnapshot === 'function') {
-            savePortalSnapshot();
-        }
     },
 
     ensureCreator(username) {
@@ -551,334 +508,71 @@ const orderManager = {
     }
 };
 
-// ========== GERENCIADOR DE SUBMISSÃO DE PEDIDOS ==========
-function readJsonStorage(key, fallback = {}) {
-    try {
-        const raw = localStorage.getItem(key);
-        if (!raw) return fallback;
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === 'object' ? parsed : fallback;
-    } catch (error) {
-        return fallback;
-    }
-}
-
-function createPortalSnapshot() {
-    const deletedSubmissions = deletedSubmissionsManager && deletedSubmissionsManager.deleted && Object.keys(deletedSubmissionsManager.deleted).length
-        ? deletedSubmissionsManager.deleted
-        : readJsonStorage('orderDeletions', {});
-    const activeSubmissions = orderSubmissionManager && orderSubmissionManager.submissions && Object.keys(orderSubmissionManager.submissions).length
-        ? orderSubmissionManager.submissions
-        : readJsonStorage('orderSubmissions', {});
-    const orderSubmissions = Object.fromEntries(
-        Object.entries(activeSubmissions || {}).filter(([id]) => !deletedSubmissions || !deletedSubmissions[id])
-    );
-
-    return {
-        exportedAt: new Date().toISOString(),
-        version: 1,
-        data: {
-            orderSubmissions,
-            deletedSubmissions,
-            hr_users: authManager && authManager.users ? authManager.users : readJsonStorage('hr_users', {}),
-            hr_currentUser: authManager && authManager.currentUser ? authManager.currentUser : (localStorage.getItem('hr_currentUser') || ''),
-            hr_currentRole: authManager && authManager.currentRole ? authManager.currentRole : (localStorage.getItem('hr_currentRole') || ''),
-            orderMeta: orderManager && orderManager.meta ? orderManager.meta : readJsonStorage('orderMeta', { createdBy: null, createdAt: null }),
-            orderStatus: statusManager && statusManager.currentStatus ? statusManager.currentStatus : (localStorage.getItem('orderStatus') || 'rascunho'),
-            orderStatusHistory: statusManager && statusManager.history ? statusManager.history : readJsonStorage('orderStatusHistory', [])
-        }
-    };
-}
-
-function savePortalSnapshot() {
-    try {
-        const currentOrderSubmissions = orderSubmissionManager && orderSubmissionManager.submissions ? orderSubmissionManager.submissions : readJsonStorage('orderSubmissions', {});
-        const managerDeletedSubmissions = deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : {};
-        const storedDeletedSubmissions = Object.assign(
-            {},
-            readJsonStorage('orderDeletionsBackup', {}),
-            readJsonStorage('orderDeletions', {})
-        );
-        const currentDeletedSubmissions = Object.keys(managerDeletedSubmissions).length > 0 ? managerDeletedSubmissions : storedDeletedSubmissions;
-        const backupOrderSubmissions = readJsonStorage('orderSubmissionsBackup', {});
-        const hasStoredData = Object.keys(currentOrderSubmissions || {}).length > 0 || Object.keys(currentDeletedSubmissions || {}).length > 0 || Object.keys(backupOrderSubmissions || {}).length > 0;
-        if (!hasStoredData) {
-            return;
-        }
-
-        const snapshot = createPortalSnapshot();
-        localStorage.setItem('portal_backup_snapshot', JSON.stringify(snapshot));
-        localStorage.setItem('portal_backup_snapshot_latest', JSON.stringify(snapshot));
-    } catch (error) {
-        console.warn('Não foi possível salvar snapshot automático:', error);
-    }
-}
-
-function restorePortalSnapshotIfAvailable() {
-    try {
-        const currentSaved = localStorage.getItem('orderSubmissions');
-        let currentOrderMap = {};
-        try {
-            currentOrderMap = currentSaved ? JSON.parse(currentSaved) : {};
-        } catch (_) {
-            currentOrderMap = {};
-        }
-
-        if (currentSaved && currentSaved !== 'null' && Object.keys(currentOrderMap || {}).length > 0) {
-            return true;
-        }
-
-        const backupSaved = localStorage.getItem('orderSubmissionsBackup');
-        let backupOrderMap = {};
-        try {
-            backupOrderMap = backupSaved ? JSON.parse(backupSaved) : {};
-        } catch (_) {
-            backupOrderMap = {};
-        }
-
-        if (backupSaved && backupSaved !== 'null' && Object.keys(backupOrderMap || {}).length > 0) {
-            localStorage.setItem('orderSubmissions', JSON.stringify(backupOrderMap));
-            if (orderSubmissionManager) orderSubmissionManager.submissions = backupOrderMap;
-            return true;
-        }
-
-        const raw = localStorage.getItem('portal_backup_snapshot') || localStorage.getItem('portal_backup_snapshot_latest');
-        if (!raw) return false;
-        const snapshot = JSON.parse(raw);
-        const data = snapshot && snapshot.data ? snapshot.data : snapshot;
-        if (!data) return false;
-
-        const hasOrderData = !!(data.orderSubmissions && Object.keys(data.orderSubmissions).length > 0);
-        const hasUserData = !!(data.hr_users && Object.keys(data.hr_users).length > 0);
-        if (!hasOrderData && !hasUserData) return false;
-
-        const restoredOrderMap = data.orderSubmissions && Object.keys(data.orderSubmissions).length > 0
-            ? Object.assign({}, currentOrderMap || {}, data.orderSubmissions || {})
-            : (currentOrderMap || {});
-
-        const storedDeletedSubmissions = readJsonStorage('orderDeletions', {});
-        const deletedIds = Object.keys(storedDeletedSubmissions).length > 0
-            ? storedDeletedSubmissions
-            : (data.deletedSubmissions || {});
-        Object.keys(deletedIds).forEach(id => delete restoredOrderMap[id]);
-
-        if (data.orderSubmissions) {
-            localStorage.setItem('orderSubmissions', JSON.stringify(restoredOrderMap));
-            if (orderSubmissionManager) orderSubmissionManager.submissions = restoredOrderMap;
-        }
-        const currentDeletedSubmissions = Object.assign(
-            {},
-            readJsonStorage('orderDeletionsBackup', {}),
-            readJsonStorage('orderDeletions', {})
-        );
-        const restoredDeletedSubmissions = Object.keys(currentDeletedSubmissions).length > 0
-            ? currentDeletedSubmissions
-            : (data.deletedSubmissions && Object.keys(data.deletedSubmissions).length > 0 ? data.deletedSubmissions : {});
-        if (Object.keys(restoredDeletedSubmissions).length > 0 || data.deletedSubmissions) {
-            localStorage.setItem('orderDeletions', JSON.stringify(restoredDeletedSubmissions));
-            if (deletedSubmissionsManager) deletedSubmissionsManager.deleted = restoredDeletedSubmissions;
-        }
-        if (data.hr_users) {
-            localStorage.setItem('hr_users', JSON.stringify(data.hr_users));
-            if (authManager) authManager.users = data.hr_users;
-        }
-        if (data.hr_currentUser !== undefined) {
-            localStorage.setItem('hr_currentUser', String(data.hr_currentUser || ''));
-            if (authManager) authManager.currentUser = data.hr_currentUser || null;
-        }
-        if (data.hr_currentRole !== undefined) {
-            localStorage.setItem('hr_currentRole', String(data.hr_currentRole || ''));
-            if (authManager) authManager.currentRole = data.hr_currentRole || null;
-        }
-        if (data.orderMeta) {
-            localStorage.setItem('orderMeta', JSON.stringify(data.orderMeta));
-            if (orderManager) orderManager.meta = data.orderMeta;
-        }
-        if (data.orderStatus !== undefined) {
-            localStorage.setItem('orderStatus', String(data.orderStatus));
-            if (statusManager) statusManager.currentStatus = data.orderStatus || 'rascunho';
-        }
-        if (data.orderStatusHistory) {
-            localStorage.setItem('orderStatusHistory', JSON.stringify(data.orderStatusHistory));
-            if (statusManager) statusManager.history = Array.isArray(data.orderStatusHistory) ? data.orderStatusHistory : [];
-        }
-
-        return true;
-    } catch (error) {
-        console.warn('Backup automático indisponível:', error);
-        return false;
-    }
-}
-
-window.createPortalSnapshot = createPortalSnapshot;
-window.savePortalSnapshot = savePortalSnapshot;
-window.restorePortalSnapshotIfAvailable = restorePortalSnapshotIfAvailable;
-
+// ========== PEDIDOS (cache local + gravação no servidor) ==========
+// Screens read from these in-memory caches synchronously; every change goes to the
+// API first and the cache is updated with what the server actually saved.
 const orderSubmissionManager = {
-    submissions: {}, // id -> { id, orderNumber, clientName, representativeName, cart, status, submittedAt, submittedBy, rejectionReason, rejectionBy, rejectionAt, approvalAt, supervisorNote }
+    submissions: {},
 
-    init() {
-        const saved = localStorage.getItem('orderSubmissions');
-        const backup = localStorage.getItem('orderSubmissionsBackup') || localStorage.getItem('orderSubmissions_backup');
-        const snapshotRaw = localStorage.getItem('portal_backup_snapshot') || localStorage.getItem('portal_backup_snapshot_latest');
-
-        try {
-            const parsedSaved = saved && saved !== 'null' ? JSON.parse(saved) : null;
-            const parsedBackup = backup && backup !== 'null' ? JSON.parse(backup) : null;
-            const parsedSnapshot = snapshotRaw && snapshotRaw !== 'null' ? JSON.parse(snapshotRaw) : null;
-            const snapshotData = parsedSnapshot && parsedSnapshot.data ? parsedSnapshot.data : parsedSnapshot;
-            const parsedSnapshotOrders = snapshotData && snapshotData.orderSubmissions ? snapshotData.orderSubmissions : null;
-            const deletedOrders = Object.assign(
-                {},
-                readJsonStorage('orderDeletionsBackup', {}),
-                readJsonStorage('orderDeletions', {})
-            );
-
-            const merged = Object.assign(
-                {},
-                parsedBackup && typeof parsedBackup === 'object' ? parsedBackup : {},
-                parsedSaved && typeof parsedSaved === 'object' ? parsedSaved : {},
-                parsedSnapshotOrders && typeof parsedSnapshotOrders === 'object' ? parsedSnapshotOrders : {}
-            );
-
-            Object.keys(deletedOrders).forEach(id => delete merged[id]);
-
-            this.submissions = merged && Object.keys(merged).length > 0 ? merged : {};
-
-            if (Object.keys(this.submissions).length > 0) {
-                localStorage.setItem('orderSubmissions', JSON.stringify(this.submissions));
-                localStorage.setItem('orderSubmissionsBackup', JSON.stringify(this.submissions));
-            }
-        } catch (e) {
-            this.submissions = {};
-            const fallback = (backup && backup !== 'null') ? (() => { try { return JSON.parse(backup); } catch (_) { return {}; } })() : {};
-            this.submissions = fallback && Object.keys(fallback).length > 0 ? fallback : {};
-            if (Object.keys(this.submissions).length > 0) {
-                localStorage.setItem('orderSubmissions', JSON.stringify(this.submissions));
-                localStorage.setItem('orderSubmissionsBackup', JSON.stringify(this.submissions));
-            }
-        }
-
-        if (!Object.keys(this.submissions || {}).length && typeof restorePortalSnapshotIfAvailable === 'function') {
-            restorePortalSnapshotIfAvailable();
-        }
+    setAll(orders) {
+        this.submissions = {};
+        (orders || []).forEach(order => {
+            this.submissions[order.id] = order;
+        });
     },
 
-    save() {
-        if (!this.submissions || Object.keys(this.submissions).length === 0) {
-            const backup = localStorage.getItem('orderSubmissionsBackup');
-            if (backup && backup !== 'null') {
-                try {
-                    const parsed = JSON.parse(backup);
-                    if (parsed && Object.keys(parsed).length > 0) {
-                        this.submissions = parsed;
-                        localStorage.setItem('orderSubmissions', JSON.stringify(parsed));
-                        return;
-                    }
-                } catch (_) {}
-            }
-            return;
-        }
-
-        const serialized = JSON.stringify(this.submissions);
-        localStorage.setItem('orderSubmissions', serialized);
-        localStorage.setItem('orderSubmissionsBackup', serialized);
-        if (typeof savePortalSnapshot === 'function') {
-            savePortalSnapshot();
-        }
+    upsert(order) {
+        if (!order) return;
+        this.submissions[order.id] = order;
+        delete deletedSubmissionsManager.deleted[order.id];
     },
 
-    generateId() {
-        return 'order_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    async saveDraft(draftId, order) {
+        const data = await apiRequest('orders.saveDraft', { method: 'POST', body: { id: draftId, order } });
+        this.upsert(data.order);
+        hiperrollOrderNumberManager.setPreview(data.nextNumber);
+        return data.order;
     },
 
-    saveDraft(orderNumber, clientName, representativeName, cart, savedBy, draftId = null, proposalValidity = '', conditions = null) {
-        if (cart.length === 0) {
-            throw new Error('Adicione itens antes de salvar o rascunho.');
-        }
-
-        const now = new Date().toISOString();
-        if (draftId && this.submissions[draftId] && this.submissions[draftId].status !== 'rascunho') {
-            draftId = null;
-        }
-        const id = draftId && this.submissions[draftId] ? draftId : this.generateId();
-        this.submissions[id] = {
-            id,
-            orderNumber: orderNumber?.trim() || '',
-            clientName: clientName?.trim() || '',
-            representativeName: representativeName?.trim() || '',
-            proposalValidity: proposalValidity?.trim() || this.submissions[id]?.proposalValidity || '',
-            conditions: normalizeOrderConditions(conditions),
-            cart: JSON.parse(JSON.stringify(cart)),
-            status: 'rascunho',
-            submittedAt: this.submissions[id]?.submittedAt || '',
-            submittedBy: this.submissions[id]?.submittedBy || savedBy,
-            savedAt: now,
-            savedBy: savedBy,
-            rejectionReason: '',
-            rejectionBy: '',
-            rejectionAt: '',
-            approvalAt: '',
-            approvalBy: '',
-            supervisorNote: this.submissions[id]?.supervisorNote || ''
-        };
-
-        this.save();
-        return id;
+    async submitOrder(draftId, order) {
+        const data = await apiRequest('orders.submit', { method: 'POST', body: { id: draftId, order } });
+        this.upsert(data.order);
+        hiperrollOrderNumberManager.setPreview(data.nextNumber);
+        return data.order;
     },
 
-    loadDrafts() {
-        return this.getDrafts();
+    async approve(submissionIds, supervisorNote = '') {
+        const ids = Array.isArray(submissionIds) ? submissionIds : [submissionIds];
+        const data = await apiRequest('orders.approve', { method: 'POST', body: { ids, note: supervisorNote } });
+        await loadServerData();
+        return data;
     },
 
-    submitOrder(orderNumber, clientName, representativeName, cart, submittedBy, draftId = null, proposalValidity = '', conditions = null) {
-        if (!orderNumber?.trim() || cart.length === 0) {
-            throw new Error('Pedido deve ter número e itens');
-        }
+    async reject(submissionIds, reason, supervisorNote = '') {
+        const ids = Array.isArray(submissionIds) ? submissionIds : [submissionIds];
+        const data = await apiRequest('orders.reject', { method: 'POST', body: { ids, reason, note: supervisorNote } });
+        await loadServerData();
+        return data;
+    },
 
-        // Enforced here (not only in the UI) so no screen can submit below the minimum silently.
-        const normalizedConditions = normalizeOrderConditions(conditions);
-        const pricing = calculateOrderTotals(cart, normalizedConditions);
-        if (pricing.belowMinimum && normalizedConditions.lowMarginJustification.length < PRICING_RULES.MIN_JUSTIFICATION_LENGTH) {
-            throw new Error(`A margem do pedido (${pricing.margin.toFixed(2)}%) está abaixo do mínimo de ${normalizedConditions.minMargin}%. Informe uma justificativa com pelo menos ${PRICING_RULES.MIN_JUSTIFICATION_LENGTH} caracteres para enviar.`);
-        }
-        if (!pricing.belowMinimum) {
-            normalizedConditions.lowMarginJustification = '';
-        }
+    async setSupervisorNote(submissionId, note) {
+        const data = await apiRequest('orders.note', { method: 'POST', body: { id: submissionId, note } });
+        await loadServerData();
+        return data.order;
+    },
 
-        const now = new Date().toISOString();
-        const useDraftId = draftId && this.submissions[draftId] && this.submissions[draftId].status === 'rascunho';
-        const id = useDraftId ? draftId : this.generateId();
-        this.submissions[id] = {
-            id,
-            orderNumber: orderNumber.trim(),
-            clientName: clientName.trim(),
-            representativeName: representativeName.trim(),
-            proposalValidity: proposalValidity?.trim() || this.submissions[id]?.proposalValidity || '',
-            conditions: normalizedConditions,
-            pricingSnapshot: {
-                margin: pricing.margin,
-                discountPercent: pricing.discountPercent,
-                totalNet: pricing.totalNet,
-                totalInvoice: pricing.totalInvoice,
-                belowMinimum: pricing.belowMinimum
-            },
-            cart: JSON.parse(JSON.stringify(cart)), // Deep copy
-            status: 'analise', // analise, aprovado, rejeitado, rascunho
-            submittedAt: now,
-            submittedBy: submittedBy,
-            savedAt: this.submissions[id]?.savedAt || now,
-            savedBy: this.submissions[id]?.savedBy || submittedBy,
-            rejectionReason: '',
-            rejectionBy: '',
-            rejectionAt: '',
-            approvalAt: '',
-            approvalBy: '',
-            supervisorNote: this.submissions[id]?.supervisorNote || ''
-        };
+    async moveToTrash(submissionIds) {
+        const ids = Array.isArray(submissionIds) ? submissionIds : [submissionIds];
+        const data = await apiRequest('orders.trash', { method: 'POST', body: { ids } });
+        await loadServerData();
+        return data.trashed;
+    },
 
-        this.save();
-        return id;
+    async registerBilling(submissionId, billedItemsMap, invoiceDataUrl, invoiceName) {
+        const invoice = invoiceDataUrl ? { dataUrl: invoiceDataUrl, name: invoiceName } : null;
+        const data = await apiRequest('orders.billing', { method: 'POST', body: { id: submissionId, billed: billedItemsMap, invoice } });
+        this.upsert(data.order);
+        return data.order;
     },
 
     getAll() {
@@ -886,21 +580,16 @@ const orderSubmissionManager = {
     },
 
     getPending() {
-        if (!this.submissions) return [];
-        return Object.values(this.submissions).filter(s => s.status === 'analise');
+        return this.getAll().filter(s => s.status === 'analise');
     },
 
     getDrafts() {
-        if (!this.submissions) return [];
-        return Object.values(this.submissions).filter(s => s.status === 'rascunho');
+        return this.getAll().filter(s => s.status === 'rascunho');
     },
 
-    getUserSubmissions(user) {
-        const normalizedUser = authManager.normalizeUsername(user);
-        return Object.values(this.submissions).filter(s =>
-            authManager.normalizeUsername(s.submittedBy) === normalizedUser ||
-            authManager.normalizeUsername(s.savedBy) === normalizedUser
-        );
+    getOwnSubmissions() {
+        const userId = authManager.getCurrentUserId();
+        return this.getAll().filter(s => s.ownerId === userId);
     },
 
     calculateMargin(submission) {
@@ -908,205 +597,41 @@ const orderSubmissionManager = {
         return calculateOrderTotals(submission.cart, submission.conditions).margin;
     },
 
-    refreshMissedForecastDates() {
-        const all = Object.values(this.submissions || {});
-        all.forEach(submission => {
-            if (!submission || submission.status !== 'aprovado' || submission.billingStatus === 'completo' || !submission.predictedBillingDate) return;
-            const predictedDate = new Date(submission.predictedBillingDate);
-            if (Number.isNaN(predictedDate.getTime())) return;
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const predictedDay = new Date(predictedDate);
-            predictedDay.setHours(0, 0, 0, 0);
-            if (today > predictedDay) {
-                const nextDate = new Date(predictedDate.getTime() + (5 * 24 * 60 * 60 * 1000));
-                submission.predictedBillingDate = nextDate.toISOString();
-            }
-        });
-        this.save();
-    },
-
-    approve(submissionIds, approvedBy, supervisorNote = '') {
-        const ids = Array.isArray(submissionIds) ? submissionIds : [submissionIds];
-        ids.forEach(id => {
-            if (this.submissions[id]) {
-                this.submissions[id].status = 'aprovado';
-                this.submissions[id].approvalAt = new Date().toISOString();
-                this.submissions[id].approvalBy = approvedBy;
-                const approvalDate = new Date(this.submissions[id].approvalAt);
-                const predictedBilling = new Date(approvalDate.getTime() + 8 * 24 * 60 * 60 * 1000);
-                this.submissions[id].predictedBillingDate = predictedBilling.toISOString();
-                this.submissions[id].rejectionReason = '';
-                this.submissions[id].supervisorNote = supervisorNote || this.submissions[id].supervisorNote || '';
-                try {
-                    if (typeof statusManager !== 'undefined' && statusManager && typeof statusManager.addHistoryEntry === 'function') {
-                        statusManager.addHistoryEntry('aprovado', 'Aprovado por supervisor', approvedBy);
-                        statusManager.currentStatus = 'aprovado';
-                        statusManager.updateUI();
-                    }
-                } catch (e) {
-                    console.warn('Não foi possível registrar histórico de aprovação:', e);
-                }
-            }
-        });
-        this.save();
-    },
-
-    reject(submissionIds, reason, rejectedBy, supervisorNote = '') {
-        const ids = Array.isArray(submissionIds) ? submissionIds : [submissionIds];
-        ids.forEach(id => {
-            if (this.submissions[id]) {
-                this.submissions[id].status = 'rejeitado';
-                this.submissions[id].rejectionReason = reason || '';
-                this.submissions[id].rejectionBy = rejectedBy;
-                this.submissions[id].rejectionAt = new Date().toISOString();
-                this.submissions[id].supervisorNote = supervisorNote || this.submissions[id].supervisorNote || '';
-                try {
-                    if (typeof statusManager !== 'undefined' && statusManager && typeof statusManager.addHistoryEntry === 'function') {
-                        statusManager.addHistoryEntry('rejeitado', reason || 'Rejeitado pelo supervisor', rejectedBy);
-                        statusManager.currentStatus = 'rejeitado';
-                        statusManager.updateUI();
-                    }
-                } catch (e) {
-                    console.warn('Não foi possível registrar histórico de rejeição:', e);
-                }
-            }
-        });
-        this.save();
-    },
-
-    setSupervisorNote(submissionId, note) {
-        const submission = this.submissions[submissionId];
-        if (!submission) return false;
-        submission.supervisorNote = note || '';
-        this.save();
-        return true;
-    },
-
     getById(id) {
         return this.submissions[id] || null;
     },
 
-    deleteSubmission(id) {
-        if (this.submissions[id]) {
-            delete this.submissions[id];
-            this.save();
-            return true;
-        }
-        return false;
-    },
-
     getByOrderNumber(orderNumber) {
-        return Object.values(this.submissions).find(s => s.orderNumber === orderNumber);
+        return this.getAll().find(s => s.orderNumber === orderNumber);
     }
 };
 
-// ========== GERENCIADOR DE NÚMEROS HIPER ROLL ==========
+// ========== NÚMERO HIPER ROLL ==========
+// The server assigns the definitive number when the order is first saved (so two
+// representatives can never get the same one); here we only show the next expected number.
 const hiperrollOrderNumberManager = {
-    counterKey: 'hiperroll_order_counter',
-    
-    init() {
-        // Inicializar contador se não existir
-        if (!localStorage.getItem(this.counterKey)) {
-            localStorage.setItem(this.counterKey, '0');
-        }
+    preview: '',
+
+    setPreview(nextNumber) {
+        if (nextNumber) this.preview = nextNumber;
     },
-    
-    getNextOrderNumber() {
-        const currentCounter = parseInt(localStorage.getItem(this.counterKey)) || 0;
-        const nextCounter = currentCounter + 1;
-        localStorage.setItem(this.counterKey, nextCounter.toString());
-        
-        // Formatar com 5 dígitos (00001, 00002, etc.)
-        return String(nextCounter).padStart(5, '0');
-    },
-    
-    getCurrentOrderNumber() {
-        const currentCounter = parseInt(localStorage.getItem(this.counterKey)) || 0;
-        return String(currentCounter).padStart(5, '0');
-    },
-    
-    resetCounter() {
-        localStorage.setItem(this.counterKey, '0');
+
+    applyToForm() {
+        const field = document.getElementById('orderNumberHiperroll');
+        if (field) field.value = this.preview;
+        updateHeaderInfo();
     }
 };
 
-// ========== GERENCIADOR DE EXCLUSÕES (HISTÓRICO/LIXEIRA) ==========
+// ========== LIXEIRA ==========
 const deletedSubmissionsManager = {
-    deletedKey: 'orderDeletions',
-    deleted: {}, // id -> { id, originalSubmission, deletedAt, deletedBy, reason }
+    deleted: {},
 
-    init() {
-        const saved = localStorage.getItem(this.deletedKey);
-        const backup = localStorage.getItem('orderDeletionsBackup');
-        try {
-            const parsedSaved = saved ? JSON.parse(saved) : {};
-            const parsedBackup = backup ? JSON.parse(backup) : {};
-            this.deleted = Object.assign({}, parsedBackup || {}, parsedSaved || {});
-        } catch (e) {
-            this.deleted = {};
-        }
-
-        if (!this.deleted || Object.keys(this.deleted).length === 0) {
-            const snapshotRaw = localStorage.getItem('portal_backup_snapshot') || localStorage.getItem('portal_backup_snapshot_latest');
-            try {
-                const snapshot = snapshotRaw ? JSON.parse(snapshotRaw) : null;
-                const snapshotData = snapshot && snapshot.data ? snapshot.data : snapshot;
-                const snapshotDeleted = snapshotData && snapshotData.deletedSubmissions;
-                if (snapshotDeleted && Object.keys(snapshotDeleted).length > 0) {
-                    this.deleted = Object.assign({}, snapshotDeleted, this.deleted || {});
-                    localStorage.setItem(this.deletedKey, JSON.stringify(this.deleted));
-                    localStorage.setItem('orderDeletionsBackup', JSON.stringify(this.deleted));
-                }
-            } catch (e) {
-                this.deleted = this.deleted || {};
-            }
-        }
-
-        if (Object.keys(this.deleted).length > 0 && orderSubmissionManager && orderSubmissionManager.submissions) {
-            let removedActiveOrder = false;
-            Object.keys(this.deleted).forEach(id => {
-                if (orderSubmissionManager.submissions[id]) {
-                    delete orderSubmissionManager.submissions[id];
-                    removedActiveOrder = true;
-                }
-            });
-            if (removedActiveOrder) {
-                localStorage.setItem('orderSubmissions', JSON.stringify(orderSubmissionManager.submissions));
-                localStorage.setItem('orderSubmissionsBackup', JSON.stringify(orderSubmissionManager.submissions));
-            }
-        }
-    },
-
-    save() {
-        const serialized = JSON.stringify(this.deleted || {});
-        localStorage.setItem(this.deletedKey, serialized);
-        localStorage.setItem('orderDeletionsBackup', serialized);
-        if (typeof savePortalSnapshot === 'function') {
-            savePortalSnapshot();
-        }
-    },
-
-    archiveSubmission(submissionId, submission, deletedBy = 'Sistema', reason = '') {
-        if (!submission) return false;
-        
-        const now = new Date().toISOString();
-        this.deleted[submissionId] = {
-            id: submissionId,
-            orderNumber: submission.orderNumber,
-            clientName: submission.clientName,
-            representativeName: submission.representativeName,
-            status: submission.status,
-            cart: JSON.parse(JSON.stringify(submission.cart)),
-            submittedAt: submission.submittedAt,
-            submittedBy: submission.submittedBy,
-            deletedAt: now,
-            deletedBy: deletedBy,
-            reason: reason || ''
-        };
-        
-        this.save();
-        return true;
+    setAll(orders) {
+        this.deleted = {};
+        (orders || []).forEach(order => {
+            this.deleted[order.id] = order;
+        });
     },
 
     getAll() {
@@ -1117,102 +642,96 @@ const deletedSubmissionsManager = {
         return this.deleted[id] || null;
     },
 
-    deleteByUser(user) {
-        return Object.values(this.deleted).filter(d => 
-            authManager.normalizeUsername(d.deletedBy) === authManager.normalizeUsername(user)
-        );
-    },
-
-    deleteByOrderNumber(orderNumber) {
-        return Object.values(this.deleted).find(d => d.orderNumber === orderNumber);
-    },
-
-    restore(submissionId) {
-        if (!this.deleted[submissionId]) return null;
-        
-        const submission = this.deleted[submissionId];
-        const restored = {
-            id: submissionId,
-            orderNumber: submission.orderNumber,
-            clientName: submission.clientName,
-            representativeName: submission.representativeName,
-            cart: JSON.parse(JSON.stringify(submission.cart)),
-            status: 'rascunho', // Restaurado como rascunho
-            submittedAt: submission.submittedAt,
-            submittedBy: submission.submittedBy,
-            savedAt: new Date().toISOString(),
-            savedBy: authManager.getCurrentUser(),
-            rejectionReason: '',
-            rejectionBy: '',
-            rejectionAt: '',
-            approvalAt: '',
-            approvalBy: '',
-            supervisorNote: ''
-        };
-        
-        delete this.deleted[submissionId];
-        this.save();
-        return restored;
-    },
-
-    permanentlyDelete(submissionId) {
-        if (this.deleted[submissionId]) {
-            delete this.deleted[submissionId];
-            this.save();
-            return true;
-        }
-        return false;
-    },
-
     count() {
         return Object.keys(this.deleted).length;
     },
 
-    updateBilledQuantities(submissionId, billedItemsMap) {
-        const deletion = this.deleted[submissionId];
-        if (!deletion) return false;
-        
-        if (!deletion.billedQuantities) deletion.billedQuantities = {};
-        
-        // Atualizar quantidades faturadas
-        (Array.isArray(deletion.cart) ? deletion.cart : []).forEach(item => {
-            const addedQty = billedItemsMap[item.codigo] || 0;
-            const currentTotal = (deletion.billedQuantities[item.codigo] || 0) + addedQty;
-            deletion.billedQuantities[item.codigo] = Math.min(currentTotal, item.qty);
-        });
-        
-        this.save();
-        return true;
+    async restore(submissionId) {
+        const data = await apiRequest('orders.restore', { method: 'POST', body: { id: submissionId } });
+        orderSubmissionManager.upsert(data.order);
+        return data.order;
+    },
+
+    async permanentlyDelete(submissionId) {
+        await apiRequest('orders.purge', { method: 'POST', body: { id: submissionId } });
+        delete this.deleted[submissionId];
+    },
+
+    async emptyTrash() {
+        const data = await apiRequest('orders.emptyTrash', { method: 'POST' });
+        await loadServerData();
+        return data;
     }
 };
+
+async function loadServerData() {
+    const data = await apiRequest('orders.list');
+    orderSubmissionManager.setAll(data.orders);
+    deletedSubmissionsManager.setAll(data.trash);
+    hiperrollOrderNumberManager.setPreview(data.nextNumber);
+}
+
+// Only the fields the server accepts are sent; prices come from the cart the user built.
+function buildCurrentOrderInput(extraConditions = {}) {
+    return {
+        clientOrderNumber: document.getElementById('orderNumberClient')?.value.trim() || '',
+        clientName: document.getElementById('clientName')?.value.trim() || '',
+        representativeName: document.getElementById('representativeName')?.value.trim() || '',
+        proposalValidity: normalizeProposalValidity(document.getElementById('proposalValidity')?.value || ''),
+        cart: cart.map(item => ({
+            codigo: item.codigo,
+            descricao: item.descricao,
+            fob: item.fob,
+            cif: item.cif,
+            negotiatedPrice: item.negotiatedPrice,
+            unitDiscount: item.unitDiscount,
+            weight: item.weight,
+            qty: item.qty
+        })),
+        conditions: { ...getCurrentOrderConditions(), ...extraConditions }
+    };
+}
 
 // =========================================================
 
 async function init() {
-    // Inicializar autenticação e sistema de status
-    await authManager.init();
     orderManager.init();
     statusManager.init();
-    orderSubmissionManager.init();
-    hiperrollOrderNumberManager.init();
-    deletedSubmissionsManager.init();
-
-    const totalSavedOrders = Object.keys(orderSubmissionManager.submissions || {}).length;
-    const storageEmpty = totalSavedOrders === 0 && (!localStorage.getItem('hr_currentUser') || !localStorage.getItem('orderSubmissions'));
-    if (storageEmpty) {
-        console.warn('[Portal Hiperroll] Storage local vazio ou sem pedidos. Backup automático será restaurado se existir.');
-    }
-    
-    // Gerar número Hiper Roll se não existir
-    const orderNumberField = document.getElementById('orderNumberHiperroll');
-    if (orderNumberField && !orderNumberField.value) {
-        const nextNumber = hiperrollOrderNumberManager.getNextOrderNumber();
-        orderNumberField.value = nextNumber;
-    }
 
     applyPricingRuleLabels();
     const marginThresholdEl = document.getElementById('marginThreshold');
     if (marginThresholdEl) marginThresholdEl.textContent = PRICING_RULES.MIN_ORDER_MARGIN;
+
+    try {
+        await authManager.init();
+    } catch (e) {
+        showLoginModal(e.message);
+        return;
+    }
+
+    if (!authManager.getCurrentUser()) {
+        showLoginModal();
+        return;
+    }
+    if (authManager.mustChangePassword()) {
+        showLoginModal();
+        showChangePasswordModal(true);
+        return;
+    }
+
+    // api/data.php only delivers the price tables to a logged-in session, so a session
+    // created after the page loaded needs one reload. The flag prevents a reload loop.
+    if (window.PORTAL_DATA_LOCKED !== false || typeof PRODUTOS_CSV === 'undefined') {
+        if (!sessionStorage.getItem('hr_data_reload')) {
+            sessionStorage.setItem('hr_data_reload', '1');
+            location.reload();
+        } else {
+            sessionStorage.removeItem('hr_data_reload');
+            showLoginModal('Não foi possível carregar as tabelas de preço. Recarregue a página.');
+        }
+        return;
+    }
+    sessionStorage.removeItem('hr_data_reload');
 
     // 1. Parse Products
     const prodRows = parseCSV(PRODUTOS_CSV);
@@ -1334,15 +853,21 @@ async function init() {
     document.getElementById('cityType').addEventListener('change', updateResults);
     document.getElementById('weightTier').addEventListener('change', updateResults);
 
-    updateHeaderInfo();
-
-    renderDraftsPanel();
-
-    if (!authManager.getCurrentUser()) {
-        showLoginModal();
-    } else {
-        closeLoginModal();
+    try {
+        await loadServerData();
+    } catch (e) {
+        alert(`Não foi possível carregar os pedidos do servidor: ${e.message}`);
     }
+
+    hiperrollOrderNumberManager.applyToForm();
+    const representativeInput = document.getElementById('representativeName');
+    if (representativeInput && !representativeInput.value) {
+        representativeInput.value = authManager.getDisplayName();
+    }
+
+    closeLoginModal();
+    authManager.updateUI();
+    updateTrashBadge();
 }
 
 function getCategoryMatch(product) {
@@ -2093,95 +1618,16 @@ function closeStatusHistory() {
     modal.style.display = 'none';
 }
 
+// The browser downloads the file directly; the session cookie authorizes it (gestor/admin only).
 function exportPortalBackup() {
-    const snapshot = {
-        exportedAt: new Date().toISOString(),
-        version: 1,
-        data: {
-            orderSubmissions: orderSubmissionManager && orderSubmissionManager.submissions ? orderSubmissionManager.submissions : {},
-            deletedSubmissions: deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : {},
-            hr_users: authManager && authManager.users ? authManager.users : {},
-            hr_currentUser: authManager && authManager.currentUser ? authManager.currentUser : '',
-            hr_currentRole: authManager && authManager.currentRole ? authManager.currentRole : '',
-            orderMeta: orderManager && orderManager.meta ? orderManager.meta : {},
-            orderStatus: statusManager && statusManager.currentStatus ? statusManager.currentStatus : 'rascunho',
-            orderStatusHistory: statusManager && statusManager.history ? statusManager.history : []
-        }
-    };
-
-    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `portal_hiperroll_backup_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')} .json`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    alert('Backup exportado com sucesso. Guarde este arquivo em local seguro.');
-}
-
-function restorePortalBackupPrompt() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json,application/json';
-    input.onchange = function (event) {
-        const file = event.target.files && event.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = function () {
-            try {
-                const snapshot = JSON.parse(String(reader.result || '{}'));
-                const data = snapshot && snapshot.data ? snapshot.data : snapshot;
-                if (data && data.orderSubmissions) {
-                    localStorage.setItem('orderSubmissions', JSON.stringify(data.orderSubmissions));
-                    orderSubmissionManager.submissions = data.orderSubmissions || {};
-                }
-                if (data && data.deletedSubmissions) {
-                    localStorage.setItem('orderDeletions', JSON.stringify(data.deletedSubmissions));
-                    if (deletedSubmissionsManager) deletedSubmissionsManager.deleted = data.deletedSubmissions || {};
-                }
-                if (data && data.hr_users) {
-                    localStorage.setItem('hr_users', JSON.stringify(data.hr_users));
-                    if (authManager) authManager.users = data.hr_users || {};
-                }
-                if (data && data.hr_currentUser !== undefined) {
-                    localStorage.setItem('hr_currentUser', String(data.hr_currentUser || ''));
-                    if (authManager) authManager.currentUser = data.hr_currentUser || null;
-                }
-                if (data && data.hr_currentRole !== undefined) {
-                    localStorage.setItem('hr_currentRole', String(data.hr_currentRole || ''));
-                    if (authManager) authManager.currentRole = data.hr_currentRole || null;
-                }
-                if (data && data.orderMeta) {
-                    localStorage.setItem('orderMeta', JSON.stringify(data.orderMeta));
-                    if (orderManager) orderManager.meta = data.orderMeta || { createdBy: null, createdAt: null };
-                }
-                if (data && data.orderStatus !== undefined) {
-                    localStorage.setItem('orderStatus', String(data.orderStatus));
-                    if (statusManager) statusManager.currentStatus = data.orderStatus || 'rascunho';
-                }
-                if (data && data.orderStatusHistory) {
-                    localStorage.setItem('orderStatusHistory', JSON.stringify(data.orderStatusHistory));
-                    if (statusManager) statusManager.history = Array.isArray(data.orderStatusHistory) ? data.orderStatusHistory : [];
-                }
-                localStorage.setItem('portal_backup_snapshot', JSON.stringify(snapshot));
-                if (typeof renderHistoryTab === 'function') renderHistoryTab();
-                if (typeof updateSupervisorPanel === 'function') updateSupervisorPanel();
-                if (typeof renderDraftsPanel === 'function') renderDraftsPanel();
-                alert('Backup restaurado com sucesso!');
-            } catch (error) {
-                console.error('Erro ao restaurar backup:', error);
-                alert('Arquivo de backup inválido ou corrompido.');
-            }
-        };
-        reader.readAsText(file);
-    };
-    input.click();
+    if (!authManager.canManageUsers()) {
+        alert('Somente o gestor ou o administrador podem baixar o backup.');
+        return;
+    }
+    window.location.href = `${API_BASE}?action=backup.export`;
 }
 
 window.exportPortalBackup = exportPortalBackup;
-window.restorePortalBackupPrompt = restorePortalBackupPrompt;
 
 // Fechar modal ao clicar fora
 window.addEventListener('load', function() {
@@ -2229,10 +1675,14 @@ function unlockApp() {
     document.body.classList.remove('login-locked');
 }
 
-function showLoginModal() {
+function showLoginModal(message = '') {
     const screen = document.getElementById('loginScreen');
-    const msg = document.getElementById('loginMessage');
-    if (msg) { msg.style.display = 'none'; msg.textContent = ''; }
+    if (message) {
+        showLoginError(message);
+    } else {
+        const msg = document.getElementById('loginMessage');
+        if (msg) { msg.style.display = 'none'; msg.textContent = ''; }
+    }
     if (screen) screen.classList.add('active');
     lockApp();
 }
@@ -2246,19 +1696,18 @@ function closeLoginModal() {
 async function loginUser() {
     const u = document.getElementById('loginUsername')?.value.trim();
     const p = document.getElementById('loginPassword')?.value || '';
-    const msg = document.getElementById('loginMessage');
-    const loginButton = document.querySelector('.login-actions button:last-child');
+    const loginButton = document.getElementById('loginUserButton');
     if (loginButton) loginButton.disabled = true;
     try {
-        await authManager.login(u, p);
-        if (msg) { msg.style.display = 'none'; }
-        closeLoginModal();
-        updateSupervisorPanel();
-    } catch (e) {
-        if (msg) {
-            msg.style.display = 'block';
-            msg.textContent = e.message || 'Não foi possível entrar. Confira usuário e senha.';
+        const user = await authManager.login(u, p);
+        if (user.mustChangePassword) {
+            showChangePasswordModal(true);
+            return;
         }
+        // Reload so api/data.php delivers the price tables to the new session.
+        location.reload();
+    } catch (e) {
+        showLoginError(e.message || 'Não foi possível entrar. Confira usuário e senha.');
     } finally {
         if (loginButton) loginButton.disabled = false;
     }
@@ -2273,17 +1722,12 @@ function showLoginError(message) {
 }
 
 function bindLoginControls() {
-    const loginButton = document.querySelector('.login-actions button:last-child');
-    const registerButton = document.querySelector('.login-actions button:first-child');
+    const loginButton = document.getElementById('loginUserButton');
     const passwordInput = document.getElementById('loginPassword');
 
     if (loginButton && !loginButton.dataset.bound) {
         loginButton.dataset.bound = 'true';
         loginButton.addEventListener('click', loginUser);
-    }
-    if (registerButton && !registerButton.dataset.bound) {
-        registerButton.dataset.bound = 'true';
-        registerButton.addEventListener('click', registerUser);
     }
     if (passwordInput && !passwordInput.dataset.bound) {
         passwordInput.dataset.bound = 'true';
@@ -2300,45 +1744,224 @@ window.addEventListener('error', event => {
 });
 
 window.loginUser = loginUser;
-window.registerUser = registerUser;
 if (document.readyState === 'loading') {
     window.addEventListener('DOMContentLoaded', bindLoginControls);
 } else {
     bindLoginControls();
 }
 
-async function registerUser() {
-    const u = document.getElementById('loginUsername')?.value.trim();
-    const p = document.getElementById('loginPassword')?.value || '';
-    const msg = document.getElementById('loginMessage');
+async function logoutUser() {
+    await authManager.logout();
+    location.reload();
+}
+
+// ===== Alterar senha =====
+// forced = first access with a temporary password: the modal cannot be dismissed.
+function showChangePasswordModal(forced = false) {
+    const modal = document.getElementById('changePasswordModal');
+    if (!modal) return;
+    modal.dataset.forced = forced ? 'true' : 'false';
+    ['currentPasswordInput', 'newPasswordInput', 'confirmPasswordInput'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    });
+    const subtitle = document.getElementById('changePasswordSubtitle');
+    if (subtitle) {
+        subtitle.textContent = forced
+            ? 'Primeiro acesso: crie uma senha pessoal para continuar.'
+            : 'Informe a senha atual e escolha uma nova.';
+    }
+    ['changePasswordCloseBtn', 'changePasswordCancelBtn'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.style.display = forced ? 'none' : '';
+    });
+    const msg = document.getElementById('changePasswordMessage');
+    if (msg) msg.textContent = '';
+    modal.style.display = 'flex';
+    document.getElementById('currentPasswordInput')?.focus();
+}
+
+function closeChangePasswordModal() {
+    const modal = document.getElementById('changePasswordModal');
+    if (!modal || modal.dataset.forced === 'true') return;
+    modal.style.display = 'none';
+}
+
+async function submitChangePassword() {
+    const currentPassword = document.getElementById('currentPasswordInput')?.value || '';
+    const newPassword = document.getElementById('newPasswordInput')?.value || '';
+    const confirmPassword = document.getElementById('confirmPasswordInput')?.value || '';
+    const msg = document.getElementById('changePasswordMessage');
+    const setMessage = text => { if (msg) msg.textContent = text; };
+
+    if (!currentPassword || !newPassword) {
+        setMessage('Preencha a senha atual e a nova senha.');
+        return;
+    }
+    if (newPassword !== confirmPassword) {
+        setMessage('A confirmação não confere com a nova senha.');
+        return;
+    }
     try {
-        await authManager.register(u, p, 'vendedor');
-        if (msg) { msg.style.display = 'none'; }
-        closeLoginModal();
-        updateSupervisorPanel();
+        await apiRequest('changePassword', { method: 'POST', body: { currentPassword, newPassword } });
+        alert('Senha alterada com sucesso.');
+        location.reload();
+    } catch (e) {
+        setMessage(e.message);
+    }
+}
+
+// ===== Usuários (gestor e administrador) =====
+async function showUsersModal() {
+    const modal = document.getElementById('usersModal');
+    if (!modal) return;
+    populateNewUserRoleOptions();
+    const msg = document.getElementById('usersMessage');
+    if (msg) msg.textContent = '';
+    modal.style.display = 'flex';
+    await refreshUsersTable();
+}
+
+function closeUsersModal() {
+    const modal = document.getElementById('usersModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function populateNewUserRoleOptions() {
+    const select = document.getElementById('newUserRole');
+    if (!select) return;
+    const isAdmin = authManager.getCurrentUserRole() === ROLES.ADMIN;
+    const roles = isAdmin ? [ROLES.REP, ROLES.GESTOR, ROLES.ADMIN] : [ROLES.REP];
+    select.innerHTML = roles.map(role => `<option value="${role}">${ROLE_LABELS[role]}</option>`).join('');
+    select.disabled = roles.length === 1;
+}
+
+function canManageUserAccount(user) {
+    if (authManager.getCurrentUserRole() === ROLES.ADMIN) return true;
+    return authManager.isGestor() && user.role === ROLES.REP;
+}
+
+async function refreshUsersTable() {
+    const container = document.getElementById('usersTableContainer');
+    if (!container) return;
+    container.innerHTML = '<div class="empty-state">Carregando usuários...</div>';
+    try {
+        const data = await apiRequest('users.list');
+        renderUsersTable(data.users || []);
+    } catch (e) {
+        container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderUsersTable(users) {
+    const container = document.getElementById('usersTableContainer');
+    if (!container) return;
+    if (users.length === 0) {
+        container.innerHTML = '<div class="empty-state">Nenhum usuário cadastrado.</div>';
+        return;
+    }
+    const isAdmin = authManager.getCurrentUserRole() === ROLES.ADMIN;
+    const selfId = authManager.getCurrentUserId();
+
+    const rows = users.map(user => {
+        const isSelf = user.id === selfId;
+        const manageable = canManageUserAccount(user) && !isSelf;
+        const lastLogin = user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString('pt-BR') : 'Nunca';
+        const status = user.active
+            ? (user.mustChangePassword ? '<span class="user-status user-status--pending">Senha provisória</span>' : '<span class="user-status user-status--active">Ativo</span>')
+            : '<span class="user-status user-status--inactive">Desativado</span>';
+        const roleCell = isAdmin && !isSelf
+            ? `<select class="user-role-select" onchange="changeUserRole(${user.id}, this.value)">${Object.values(ROLES).map(role =>
+                `<option value="${role}" ${role === user.role ? 'selected' : ''}>${ROLE_LABELS[role]}</option>`).join('')}</select>`
+            : escapeHtml(ROLE_LABELS[user.role] || user.role);
+        const actions = manageable
+            ? `<button class="btn-modal btn-modal-ghost btn-sm" onclick="toggleUserActive(${user.id}, ${!user.active})">${user.active ? 'Desativar' : 'Reativar'}</button>
+               <button class="btn-modal btn-modal-ghost btn-sm" onclick="resetUserPassword(${user.id}, ${escapeHtml(JSON.stringify(user.displayName))})">Redefinir senha</button>`
+            : (isSelf ? '<span class="user-self-note">Você</span>' : '');
+        return `
+            <tr class="${user.active ? '' : 'user-row--inactive'}">
+                <td><strong>${escapeHtml(user.displayName)}</strong></td>
+                <td>${escapeHtml(user.username)}</td>
+                <td>${roleCell}</td>
+                <td>${status}</td>
+                <td>${escapeHtml(lastLogin)}</td>
+                <td class="users-actions">${actions}</td>
+            </tr>
+        `;
+    }).join('');
+
+    container.innerHTML = `
+        <table class="users-table">
+            <thead>
+                <tr><th>Nome</th><th>Login</th><th>Papel</th><th>Situação</th><th>Último acesso</th><th>Ações</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>
+    `;
+}
+
+async function submitNewUser(event) {
+    event.preventDefault();
+    const msg = document.getElementById('usersMessage');
+    const body = {
+        displayName: document.getElementById('newUserName')?.value.trim() || '',
+        username: document.getElementById('newUserLogin')?.value.trim() || '',
+        role: document.getElementById('newUserRole')?.value || ROLES.REP,
+        password: document.getElementById('newUserPassword')?.value || ''
+    };
+    try {
+        const data = await apiRequest('users.create', { method: 'POST', body });
+        event.target.reset();
+        populateNewUserRoleOptions();
+        if (msg) {
+            msg.textContent = `✓ Usuário ${data.user.username} criado. Passe a senha provisória para ele: no primeiro acesso o sistema pedirá uma senha pessoal.`;
+            msg.style.color = 'var(--success)';
+        }
+        await refreshUsersTable();
     } catch (e) {
         if (msg) {
-            msg.style.display = 'block';
-            if (e.message === 'Usuário já existe') {
-                msg.textContent = 'Este usuário já existe. Tente outro login ou faça login.';
-            } else {
-                msg.textContent = e.message || 'Erro ao registrar usuário.';
-            }
+            msg.textContent = e.message;
+            msg.style.color = '';
         }
     }
 }
 
-function logoutUser() {
-    authManager.logout();
-    updateSupervisorPanel();
-    showLoginModal();
+async function toggleUserActive(userId, active) {
+    const ok = confirm(active ? 'Reativar este usuário?' : 'Desativar este usuário? Ele não conseguirá mais entrar, mas os pedidos dele continuam no sistema.');
+    if (!ok) return;
+    try {
+        await apiRequest('users.update', { method: 'POST', body: { id: userId, active } });
+        await refreshUsersTable();
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+async function resetUserPassword(userId, displayName) {
+    const password = prompt(`Nova senha provisória para ${displayName} (mínimo 8 caracteres).\nNo próximo acesso ele terá que criar uma senha pessoal.`);
+    if (!password) return;
+    try {
+        await apiRequest('users.resetPassword', { method: 'POST', body: { id: userId, password } });
+        alert('Senha provisória definida. Informe-a ao usuário.');
+        await refreshUsersTable();
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+async function changeUserRole(userId, role) {
+    try {
+        await apiRequest('users.update', { method: 'POST', body: { id: userId, role } });
+    } catch (e) {
+        alert(e.message);
+    }
+    await refreshUsersTable();
 }
 
 function getCurrentUserDrafts() {
-    const currentUser = authManager.getCurrentUser();
-    if (!currentUser) return [];
+    if (!authManager.getCurrentUser()) return [];
 
-    return orderSubmissionManager.getUserSubmissions(currentUser)
+    return orderSubmissionManager.getOwnSubmissions()
         .filter(submission => submission.status === 'rascunho')
         .sort((a, b) => new Date(b.savedAt || b.submittedAt || 0) - new Date(a.savedAt || a.submittedAt || 0));
 }
@@ -2586,141 +2209,89 @@ function closeSubmitOrderModal() {
     if (msg) msg.textContent = '';
 }
 
-function submitOrder() {
+async function submitOrder() {
     if (cart.length === 0) {
         alert('Adicione itens ao pedido antes de enviar.');
         return;
     }
 
     const selectedDraftValue = document.getElementById('submitDraftSelect')?.value || '';
-    const orderNumberHiperroll = document.getElementById('orderNumberHiperroll')?.value.trim() || '';
-    const orderNumberClient = document.getElementById('orderNumberClient')?.value.trim() || '';
-    const clientName = document.getElementById('clientName')?.value.trim() || '';
-    const representativeName = document.getElementById('representativeName')?.value.trim() || '';
-    const currentUser = authManager.getCurrentUser();
+    const draftIdToUse = selectedDraftValue && selectedDraftValue !== '__new__' ? selectedDraftValue : null;
     const msg = document.getElementById('submitOrderMessage');
+    const submitButton = document.querySelector('#submitOrderModal .btn-modal-danger');
+    if (submitButton) submitButton.disabled = true;
 
     try {
-        // Usar número do cliente se preenchido, senão usar Hiper Roll
-        const orderNumberToUse = orderNumberClient || orderNumberHiperroll;
-        
-        const draftIdToUse = selectedDraftValue && selectedDraftValue !== '__new__' ? selectedDraftValue : null;
-        const proposalValidity = normalizeProposalValidity(document.getElementById('proposalValidity')?.value || '');
-        const conditions = {
-            ...getCurrentOrderConditions(),
+        const order = await orderSubmissionManager.submitOrder(draftIdToUse, buildCurrentOrderInput({
             lowMarginJustification: document.getElementById('submitLowMarginJustification')?.value || ''
-        };
-        const submissionId = orderSubmissionManager.submitOrder(
-            orderNumberToUse,
-            clientName,
-            representativeName,
-            cart,
-            currentUser,
-            draftIdToUse,
-            proposalValidity,
-            conditions
-        );
-        console.log('[Portal Hiperroll] submitOrder() saved submission', {
-            submissionId,
-            newCount: Object.keys(orderSubmissionManager.submissions || {}).length,
-            submission: orderSubmissionManager.getById(submissionId)
-        });
+        }));
 
-        if (msg) {
-            msg.textContent = '✓ Pedido enviado para análise! ID: ' + submissionId;
-            msg.style.color = '#15803d';
-        }
-
-        console.log('[Portal Hiperroll] submitOrder() called, submissionId=', submissionId);
-        console.log('[Portal Hiperroll] orderSubmissionManager count before save =', Object.keys(orderSubmissionManager.submissions || {}).length);
-
-        // Registrar no histórico apenas quando o pedido for efetivamente enviado
         try {
-            statusManager.addHistoryEntry('analise', 'Enviado para análise', currentUser);
+            statusManager.addHistoryEntry('analise', 'Enviado para análise', authManager.getCurrentUser());
             statusManager.currentStatus = 'analise';
             statusManager.updateUI();
         } catch (e) {
             console.warn('Não foi possível registrar histórico de envio:', e);
         }
 
+        closeSubmitOrderModal();
+        resetCurrentOrderForm();
+        alert(`Pedido ${order.orderNumber} enviado com sucesso! Aguardando aprovação do gestor.`);
         const historySearchInput = document.getElementById('historySearchInput');
-        if (historySearchInput) {
-            historySearchInput.value = '';
-        }
-        activeDraftId = null;
-        setLoadedOrderReference('');
+        if (historySearchInput) historySearchInput.value = '';
         switchTab('tab-history');
-        renderHistoryTab();
-
-        setTimeout(() => {
-            closeSubmitOrderModal();
-            cart.length = 0;
-            updateOrderTable();
-            renderDraftsPanel();
-            renderHistoryTab();
-            
-            // Gerar novo número Hiper Roll para o próximo pedido
-            const nextNumber = hiperrollOrderNumberManager.getNextOrderNumber();
-            document.getElementById('orderNumberHiperroll').value = nextNumber;
-            document.getElementById('orderNumberClient').value = '';
-            document.getElementById('clientName').value = '';
-            document.getElementById('representativeName').value = '';
-            document.getElementById('proposalValidity').value = '';
-            setCurrentOrderConditions(null);
-            const justificationInput = document.getElementById('submitLowMarginJustification');
-            if (justificationInput) justificationInput.value = '';
-            alert('Pedido enviado com sucesso! Aguardando aprovação do supervisor.');
-            switchTab('tab-history');
-            renderHistoryTab();
-            setTimeout(() => highlightHistoryCard(submissionId), 250);
-        }, 1500);
+        setTimeout(() => highlightHistoryCard(order.id), 250);
     } catch (e) {
         if (msg) {
             msg.textContent = e.message;
             msg.style.color = '#b91c1c';
         }
+    } finally {
+        if (submitButton) submitButton.disabled = false;
     }
 }
 
-function saveDraftCurrentOrder() {
+function resetCurrentOrderForm() {
+    activeDraftId = null;
+    setLoadedOrderReference('');
+    cart.length = 0;
+    updateOrderTable();
+    ['orderNumberClient', 'clientName', 'proposalValidity'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    });
+    const representativeInput = document.getElementById('representativeName');
+    if (representativeInput) representativeInput.value = authManager.getDisplayName();
+    setCurrentOrderConditions(null);
+    const justificationInput = document.getElementById('submitLowMarginJustification');
+    if (justificationInput) justificationInput.value = '';
+    hiperrollOrderNumberManager.applyToForm();
+    renderDraftsPanel();
+}
+
+async function saveDraftCurrentOrder() {
     if (cart.length === 0) {
         alert('Adicione itens ao pedido antes de salvar o rascunho.');
         return;
     }
 
-    const orderNumberHiperroll = document.getElementById('orderNumberHiperroll')?.value.trim() || '';
-    const orderNumberClient = document.getElementById('orderNumberClient')?.value.trim() || '';
-    const clientName = document.getElementById('clientName')?.value.trim() || '';
-    const representativeName = document.getElementById('representativeName')?.value.trim() || '';
-    const currentUser = authManager.getCurrentUser();
-
     try {
-        // Usar número do cliente se preenchido, senão usar Hiper Roll
-        const orderNumberToUse = orderNumberClient || orderNumberHiperroll;
-        
-        const proposalValidity = normalizeProposalValidity(document.getElementById('proposalValidity')?.value || '');
-        const draftId = orderSubmissionManager.saveDraft(
-            orderNumberToUse,
-            clientName,
-            representativeName,
-            cart,
-            currentUser,
-            activeDraftId,
-            proposalValidity,
-            getCurrentOrderConditions()
-        );
-        activeDraftId = draftId;
+        const order = await orderSubmissionManager.saveDraft(activeDraftId, buildCurrentOrderInput());
+        activeDraftId = order.id;
+        const hiperrollField = document.getElementById('orderNumberHiperroll');
+        if (hiperrollField) hiperrollField.value = order.hiperrollNumber;
+        setLoadedOrderReference(order.orderNumber);
+        updateHeaderInfo();
         renderDraftsPanel();
         renderHistoryTab();
-        // Registrar no histórico apenas quando o rascunho for efetivamente salvo
         try {
-            statusManager.addHistoryEntry('rascunho', 'Rascunho salvo', currentUser);
+            statusManager.addHistoryEntry('rascunho', 'Rascunho salvo', authManager.getCurrentUser());
             statusManager.currentStatus = 'rascunho';
             statusManager.updateUI();
         } catch (e) {
             console.warn('Não foi possível registrar histórico do rascunho:', e);
         }
-        alert('Rascunho salvo com sucesso. Ele já está disponível no painel de rascunhos.');
+        alert(`Rascunho ${order.orderNumber} salvo com sucesso. Ele já está disponível no painel de rascunhos.`);
     } catch (e) {
         alert(e.message);
     }
@@ -2735,6 +2306,9 @@ function loadDraftToCurrentOrder(submissionId, silent = false) {
 
     activeDraftId = submissionId;
     setLoadedOrderReference(submission.orderNumber || '');
+    const hiperrollField = document.getElementById('orderNumberHiperroll');
+    if (hiperrollField) hiperrollField.value = submission.hiperrollNumber || '';
+    document.getElementById('orderNumberClient').value = submission.clientOrderNumber || '';
     document.getElementById('clientName').value = submission.clientName || '';
     document.getElementById('representativeName').value = submission.representativeName || '';
     document.getElementById('proposalValidity').value = submission.proposalValidity || '';
@@ -2742,6 +2316,7 @@ function loadDraftToCurrentOrder(submissionId, silent = false) {
     cart.length = 0;
     (Array.isArray(submission.cart) ? submission.cart : []).forEach(item => cart.push(JSON.parse(JSON.stringify(item))));
     updateOrderTable();
+    updateHeaderInfo();
     renderDraftsPanel();
     closeOrderHistoryModal();
     if (!silent) {
@@ -2757,12 +2332,11 @@ function repeatOrder(submissionId) {
     }
 
     activeDraftId = null;
-    const nextNumber = hiperrollOrderNumberManager.getNextOrderNumber();
-    document.getElementById('orderNumberHiperroll').value = nextNumber;
     setLoadedOrderReference('');
-    document.getElementById('orderNumberClient').value = submission.orderNumber || '';
+    hiperrollOrderNumberManager.applyToForm();
+    document.getElementById('orderNumberClient').value = submission.clientOrderNumber || '';
     document.getElementById('clientName').value = submission.clientName || '';
-    document.getElementById('representativeName').value = submission.representativeName || '';
+    document.getElementById('representativeName').value = submission.representativeName || authManager.getDisplayName();
     document.getElementById('proposalValidity').value = normalizeProposalValidity(submission.proposalValidity || '');
     setCurrentOrderConditions(submission.conditions);
     cart.length = 0;
@@ -2770,6 +2344,7 @@ function repeatOrder(submissionId) {
     updateOrderTable();
     renderDraftsPanel();
     closeOrderHistoryModal();
+    switchTab('tab-order');
     alert('Pedido repetido como novo pedido. Ajuste os dados se necessário e envie novamente.');
 }
 
@@ -2791,80 +2366,67 @@ function closeOrderHistoryModal() {
     if (modal) modal.style.display = 'none';
 }
 
-function deleteSubmission(submissionId) {
+function afterOrdersChanged() {
+    renderDraftsPanel();
+    renderHistoryTab();
+    updateTrashBadge();
+    updateSupervisorPanel();
+}
+
+// Other users change orders too (e.g. the gestor approving), so the list can be refreshed on demand.
+async function reloadOrders() {
+    try {
+        await loadServerData();
+        afterOrdersChanged();
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+async function deleteSubmission(submissionId) {
     const submission = orderSubmissionManager.getById(submissionId);
     if (!submission) {
         alert('Pedido não encontrado.');
         return;
     }
 
-    let confirmMsg = 'Deseja realmente excluir este pedido? Os dados serão armazenados no histórico de exclusões.';
+    let confirmMsg = 'Deseja realmente excluir este pedido? Ele ficará na Lixeira e poderá ser restaurado.';
     if (submission.status === 'analise') {
-        confirmMsg += '\n\n⚠️ Aviso: Este pedido está em análise. Ele permanecerá visível no painel do supervisor para que possa dar andamento.';
+        confirmMsg += '\n\n⚠️ Este pedido está em análise: ele continua visível para o gestor dar andamento.';
     } else if (submission.status === 'aprovado') {
-        confirmMsg += '\n\n⚠️ Aviso: Este pedido já foi aprovado. Ele permanecerá visível no painel do supervisor para rastreamento.';
+        confirmMsg += '\n\n⚠️ Este pedido já foi aprovado: ele continua visível para o gestor, para rastreamento.';
     }
+    if (!confirm(confirmMsg)) return;
 
-    const ok = confirm(confirmMsg);
-    if (!ok) return;
-
-    const deletedBy = authManager.getCurrentUser() || 'Sistema';
-    if (deletedSubmissionsManager.archiveSubmission(submissionId, submission, deletedBy, '')) {
-        orderSubmissionManager.deleteSubmission(submissionId);
-        deletedSubmissionsManager.save();
-        
+    try {
+        await orderSubmissionManager.moveToTrash(submissionId);
         if (activeDraftId === submissionId) {
             activeDraftId = null;
         }
-        renderDraftsPanel();
-        renderHistoryTab();
-        updateTrashBadge();
-        updateSupervisorPanel();
-        
-        let successMsg = 'Pedido excluído com sucesso. Histórico preservado em "Lixeira".';
-        if (['analise', 'aprovado'].includes(submission.status)) {
-            successMsg += '\n\nO pedido continua visível no painel do supervisor.';
-        }
-        alert(successMsg);
+        afterOrdersChanged();
+        alert('Pedido movido para a Lixeira.');
         showOrderHistoryModal();
-    } else {
-        alert('Não foi possível excluir o pedido.');
+    } catch (e) {
+        alert(e.message);
     }
 }
 
-function deleteSelectedSubmissions() {
+async function deleteSelectedSubmissions() {
     const selected = Array.from(document.querySelectorAll('.history-selection-checkbox:checked')).map(input => input.value);
     if (selected.length === 0) {
         alert('Selecione ao menos um pedido para excluir.');
         return;
     }
+    if (!confirm(`Deseja mover os ${selected.length} pedido(s) selecionado(s) para a Lixeira?`)) return;
 
-    const ok = confirm(`Deseja realmente excluir os ${selected.length} pedido(s) selecionado(s)? Os dados serão armazenados no histórico de exclusões.`);
-    if (!ok) return;
-
-    let deletedCount = 0;
-    const deletedBy = authManager.getCurrentUser() || 'Sistema';
-    
-    selected.forEach(id => {
-        const submission = orderSubmissionManager.getById(id);
-        if (submission) {
-            if (deletedSubmissionsManager.archiveSubmission(id, submission, deletedBy, '')) {
-                orderSubmissionManager.deleteSubmission(id);
-                deletedSubmissionsManager.save();
-                deletedCount += 1;
-            }
-        }
-    });
-
-    if (deletedCount > 0) {
-        alert(`${deletedCount} pedido(s) excluído(s) com sucesso. Histórico preservado em "Lixeira".`);
-        updateTrashBadge();
-        renderHistoryTab();
-    } else {
-        alert('Nenhum pedido pôde ser excluído.');
+    try {
+        const count = await orderSubmissionManager.moveToTrash(selected);
+        afterOrdersChanged();
+        alert(`${count} pedido(s) movido(s) para a Lixeira.`);
+        showOrderHistoryModal();
+    } catch (e) {
+        alert(e.message);
     }
-
-    showOrderHistoryModal();
 }
 
 // ========== FUNÇÕES DE GERENCIAMENTO DE LIXEIRA ==========
@@ -3095,56 +2657,54 @@ function closeTrashModal() {
     }
 }
 
-function restoreSubmission(submissionId) {
-    const ok = confirm('Deseja restaurar este pedido como rascunho?');
-    if (!ok) return;
+async function restoreSubmission(submissionId) {
+    if (!confirm('Deseja restaurar este pedido como rascunho?')) return;
 
-    const restored = deletedSubmissionsManager.restore(submissionId);
-    if (restored) {
-        orderSubmissionManager.submissions[submissionId] = restored;
-        orderSubmissionManager.save();
-        updateTrashBadge();
-        alert('Pedido restaurado com sucesso como rascunho!');
+    try {
+        await deletedSubmissionsManager.restore(submissionId);
+        afterOrdersChanged();
+        alert('Pedido restaurado como rascunho.');
         closeTrashModal();
-        showTrashModal(); // Reabrir o modal para atualizar a lista
-        renderHistoryTab();
-        renderDraftsPanel();
-    } else {
-        alert('Não foi possível restaurar o pedido.');
+        if (deletedSubmissionsManager.count() > 0) showTrashModal();
+    } catch (e) {
+        alert(e.message);
     }
 }
 
-function permanentlyDeleteSubmission(submissionId) {
-    const ok = confirm('Tem certeza? Esta ação não pode ser desfeita. O pedido será deletado permanentemente.');
-    if (!ok) return;
+async function permanentlyDeleteSubmission(submissionId) {
+    if (!confirm('Tem certeza? Esta ação não pode ser desfeita. O pedido será excluído definitivamente.')) return;
 
-    if (deletedSubmissionsManager.permanentlyDelete(submissionId)) {
+    try {
+        await deletedSubmissionsManager.permanentlyDelete(submissionId);
         updateTrashBadge();
-        alert('Pedido deletado permanentemente.');
+        alert('Pedido excluído definitivamente.');
         closeTrashModal();
-        showTrashModal();
-    } else {
-        alert('Não foi possível deletar o pedido.');
+        if (deletedSubmissionsManager.count() > 0) showTrashModal();
+    } catch (e) {
+        alert(e.message);
     }
 }
 
-function emptyTrash() {
+async function emptyTrash() {
     const count = deletedSubmissionsManager.count();
     if (count === 0) {
         alert('A lixeira já está vazia.');
         return;
     }
+    if (!confirm(`Tem certeza? Os pedidos da lixeira serão excluídos definitivamente. Esta ação não pode ser desfeita.`)) return;
 
-    const ok = confirm(`Tem certeza? Todos os ${count} pedido(s) na lixeira serão deletados permanentemente. Esta ação não pode ser desfeita.`);
-    if (!ok) return;
-
-    deletedSubmissionsManager.getAll().forEach(deletion => {
-        deletedSubmissionsManager.permanentlyDelete(deletion.id);
-    });
-
-    alert('Lixeira esvaziada com sucesso.');
-    closeTrashModal();
-    updateTrashBadge();
+    try {
+        const result = await deletedSubmissionsManager.emptyTrash();
+        closeTrashModal();
+        afterOrdersChanged();
+        let message = `${result.deleted} pedido(s) excluído(s) definitivamente.`;
+        if (result.kept > 0) {
+            message += `\n\n${result.kept} pedido(s) em análise ou aprovados foram mantidos: somente o gestor pode excluí-los.`;
+        }
+        alert(message);
+    } catch (e) {
+        alert(e.message);
+    }
 }
 
 function updateTrashBadge() {
@@ -3209,11 +2769,9 @@ function openSupervisorOrderActions(submissionId) {
         submission = deletedSubmissionsManager.getById(submissionId);
     }
     
-    const currentUser = authManager.getCurrentUser();
-    const currentRole = authManager.getCurrentUserRole();
     if (!submission) return;
-    if (!['supervisor', 'desenvolvedor'].includes(currentRole)) {
-        alert('Acesso negado. Apenas supervisor ou desenvolvedor podem gerenciar este pedido.');
+    if (!authManager.isGestor()) {
+        alert('Acesso negado. Somente o gestor pode gerenciar este pedido.');
         return;
     }
 
@@ -3243,17 +2801,11 @@ function openSupervisorOrderActions(submissionId) {
     backdrop.id = 'supervisorActionModalBackdrop';
     backdrop.className = 'modal-backdrop';
     backdrop.style.cssText = 'display:flex; z-index:2001;';
-    const normalizeBtn = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
-    const allowedApproversBtns = [normalizeBtn('Leon'), normalizeBtn('Gabriel.Ferreira')];
-    const currentNormalizedBtn = normalizeBtn(currentUser);
+    const canDecide = submission.status === 'analise';
+    const decisionTitle = canDecide ? '' : 'title="Somente pedidos em análise podem ser aprovados ou rejeitados"';
 
-    const approveBtnHtml = allowedApproversBtns.includes(currentNormalizedBtn)
-        ? `<button onclick="handleSupervisorAction('${submission.id}', 'approve')" class="btn-modal btn-modal-success">✅ Aprovar</button>`
-        : `<button disabled title="Apenas Gabriel ou Leon podem aprovar" class="btn-modal btn-modal-success">✅ Aprovar</button>`;
-
-    const rejectBtnHtml = allowedApproversBtns.includes(currentNormalizedBtn)
-        ? `<button onclick="handleSupervisorAction('${submission.id}', 'reject')" class="btn-modal btn-modal-danger">❌ Rejeitar</button>`
-        : `<button disabled title="Apenas Gabriel ou Leon podem rejeitar" class="btn-modal btn-modal-danger">❌ Rejeitar</button>`;
+    const approveBtnHtml = `<button onclick="handleSupervisorAction('${submission.id}', 'approve')" class="btn-modal btn-modal-success" ${canDecide ? '' : 'disabled'} ${decisionTitle}>✅ Aprovar</button>`;
+    const rejectBtnHtml = `<button onclick="handleSupervisorAction('${submission.id}', 'reject')" class="btn-modal btn-modal-danger" ${canDecide ? '' : 'disabled'} ${decisionTitle}>❌ Rejeitar</button>`;
 
     backdrop.innerHTML = `
         <div class="modal-panel modal-panel--md">
@@ -3298,37 +2850,31 @@ function openSupervisorOrderActions(submissionId) {
     document.body.appendChild(backdrop);
 }
 
-function handleSupervisorAction(submissionId, action) {
-    const currentUser = authManager.getCurrentUser();
+async function handleSupervisorAction(submissionId, action) {
     const note = document.getElementById('supervisorActionNote')?.value.trim() || '';
     const reason = document.getElementById('supervisorActionRejectionReason')?.value.trim() || '';
-    const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
-    const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
-    const currentNormalized = normalize(currentUser);
 
-    if (action === 'approve') {
-        if (!allowedApprovers.includes(currentNormalized)) {
-            alert('Apenas Gabriel ou Leon podem aprovar pedidos.');
-            return;
-        }
-        orderSubmissionManager.approve(submissionId, currentUser, note);
-        alert('Pedido aprovado com sucesso.');
-    } else if (action === 'reject') {
-        if (!allowedApprovers.includes(currentNormalized)) {
-            alert('Apenas Gabriel ou Leon podem rejeitar pedidos.');
-            return;
-        }
-        if (!reason) {
-            alert('Informe o motivo da rejeição antes de rejeitar o pedido.');
-            return;
-        }
-        orderSubmissionManager.reject(submissionId, reason, currentUser, note);
-        alert('Pedido rejeitado com sucesso.');
-    } else if (action === 'saveNote') {
-        // Any supervisor or developer can save notes; keep existing behavior
-        orderSubmissionManager.setSupervisorNote(submissionId, note);
-        alert('Observação salva com sucesso.');
+    if (action === 'reject' && !reason) {
+        alert('Informe o motivo da rejeição antes de rejeitar o pedido.');
+        return;
     }
+
+    try {
+        if (action === 'approve') {
+            await orderSubmissionManager.approve(submissionId, note);
+            alert('Pedido aprovado com sucesso.');
+        } else if (action === 'reject') {
+            await orderSubmissionManager.reject(submissionId, reason, note);
+            alert('Pedido rejeitado com sucesso.');
+        } else if (action === 'saveNote') {
+            await orderSubmissionManager.setSupervisorNote(submissionId, note);
+            alert('Observação salva com sucesso.');
+        }
+    } catch (e) {
+        alert(e.message);
+        return;
+    }
+
     closeSupervisorActionModal();
     const searchInput = document.getElementById('historySearchInput');
     if (searchInput) searchInput.value = '';
@@ -3378,23 +2924,17 @@ function refreshMissedForecastDates() {
         });
     };
 
-    if (orderSubmissionManager && typeof orderSubmissionManager.getAll === 'function') {
-        syncForecast(orderSubmissionManager.getAll());
-        orderSubmissionManager.save();
-    }
-    if (deletedSubmissionsManager && typeof deletedSubmissionsManager.getAll === 'function') {
-        syncForecast(deletedSubmissionsManager.getAll());
-        deletedSubmissionsManager.save();
-    }
+    // Display-only: the overdue forecast is pushed forward on screen, the stored date is untouched.
+    syncForecast(orderSubmissionManager.getAll());
+    syncForecast(deletedSubmissionsManager.getAll());
 }
 
 function updateSupervisorPanel() {
     refreshMissedForecastDates();
     const modal = document.getElementById('supervisorModal');
-    const currentUserRole = authManager.getCurrentUserRole();
     const btn = document.getElementById('supervisorBtn');
     if (btn) {
-        btn.style.display = ['supervisor', 'desenvolvedor'].includes(currentUserRole) ? 'inline-flex' : 'none';
+        btn.style.display = authManager.isGestor() ? 'inline-flex' : 'none';
     }
     if (!modal) return;
 
@@ -3417,13 +2957,9 @@ function updateSupervisorPanel() {
         pending = uniquePending.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
         
         if (pending.length === 0) {
-            const currentUser = authManager.getCurrentUser();
-            const currentRole = authManager.getCurrentUserRole();
-            const emptyMessage = ['supervisor', 'desenvolvedor'].includes(currentRole)
-                ? 'Nenhum pedido pendente no momento. Verifique o histórico ou o armazenamento local do portal.'
-                : currentUser
-                    ? 'Nenhum pedido pendente para revisão.'
-                    : 'Nenhum pedido pendente. Faça login para visualizar a fila do supervisor.';
+            const emptyMessage = authManager.isGestor()
+                ? 'Nenhum pedido aguardando aprovação no momento.'
+                : 'Somente o gestor visualiza a fila de aprovação.';
             pendingList.innerHTML = `<div style="padding:15px; text-align:center; color:#64748b;">${emptyMessage}</div>`;
         } else {
             let html = '<div style="display:flex; flex-direction:column; gap:12px;">';
@@ -3483,35 +3019,36 @@ function getSelectedPendingOrders() {
     return Array.from(checkboxes).map(cb => cb.value);
 }
 
-function approvePendingOrders() {
+function describeDecisionResult(verb, result) {
+    const done = (result.orders || []).length;
+    let message = `${done} pedido(s) ${verb} com sucesso!`;
+    if (result.skipped > 0) {
+        message += `\n\n${result.skipped} pedido(s) foram ignorados porque não estavam mais em análise.`;
+    }
+    return message;
+}
+
+async function approvePendingOrders() {
     const selected = getSelectedPendingOrders();
     if (selected.length === 0) {
         alert('Selecione ao menos um pedido para aprovar.');
         return;
     }
 
-    const currentUser = authManager.getCurrentUser();
-    const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
-    const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
-    if (!allowedApprovers.includes(normalize(currentUser))) {
-        alert('Apenas Gabriel ou Leon podem aprovar pedidos.');
-        return;
-    }
-
     const supervisorNote = document.getElementById('supervisorObservationTextarea')?.value.trim() || '';
-    orderSubmissionManager.approve(selected, currentUser, supervisorNote);
-    console.log('[Portal Hiperroll] approvePendingOrders() called, selected=', selected);
-    updateSupervisorPanel();
-    const searchInput = document.getElementById('historySearchInput');
-    if (searchInput) searchInput.value = '';
-    renderHistoryTab();
-    alert(`${selected.length} pedido(s) aprovado(s) com sucesso!`);
-    if (document.getElementById('supervisorObservationTextarea')) {
-        document.getElementById('supervisorObservationTextarea').value = '';
+    try {
+        const result = await orderSubmissionManager.approve(selected, supervisorNote);
+        updateSupervisorPanel();
+        const searchInput = document.getElementById('historySearchInput');
+        if (searchInput) searchInput.value = '';
+        renderHistoryTab();
+        alert(describeDecisionResult('aprovado(s)', result));
+    } catch (e) {
+        alert(e.message);
     }
 }
 
-function rejectPendingOrders() {
+async function rejectPendingOrders() {
     const selected = getSelectedPendingOrders();
     if (selected.length === 0) {
         alert('Selecione ao menos um pedido para rejeitar.');
@@ -3523,26 +3060,16 @@ function rejectPendingOrders() {
         return;
     }
 
-    const currentUser = authManager.getCurrentUser();
-    const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
-    const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
-    if (!allowedApprovers.includes(normalize(currentUser))) {
-        alert('Apenas Gabriel ou Leon podem rejeitar pedidos.');
-        return;
-    }
-
     const supervisorNote = document.getElementById('supervisorObservationTextarea')?.value.trim() || '';
-    orderSubmissionManager.reject(selected, reason, currentUser, supervisorNote);
-    updateSupervisorPanel();
-    const searchInput = document.getElementById('historySearchInput');
-    if (searchInput) searchInput.value = '';
-    renderHistoryTab();
-    alert(`${selected.length} pedido(s) rejeitado(s) com sucesso!`);
-    if (document.getElementById('rejectionReasonTextarea')) {
-        document.getElementById('rejectionReasonTextarea').value = '';
-    }
-    if (document.getElementById('supervisorObservationTextarea')) {
-        document.getElementById('supervisorObservationTextarea').value = '';
+    try {
+        const result = await orderSubmissionManager.reject(selected, reason, supervisorNote);
+        updateSupervisorPanel();
+        const searchInput = document.getElementById('historySearchInput');
+        if (searchInput) searchInput.value = '';
+        renderHistoryTab();
+        alert(describeDecisionResult('rejeitado(s)', result));
+    } catch (e) {
+        alert(e.message);
     }
 }
 
@@ -3688,70 +3215,6 @@ function switchTab(tabId) {
     }
 }
 
-// Sobrescrevendo a exibição antiga de histórico (para quando clicar em 'Meus Pedidos')
-// Extensão do orderSubmissionManager para suportar faturamento e notas fiscais
-if (!orderSubmissionManager.registerBilling) {
-    orderSubmissionManager.registerBilling = function(submissionId, billedItemsMap, invoiceBase64, invoiceName) {
-        const submission = this.submissions[submissionId];
-        if (!submission) return false;
-
-        if (!submission.billedQuantities) submission.billedQuantities = {};
-        if (!submission.invoices) submission.invoices = [];
-        if (!submission.billedQuantities) submission.billedQuantities = {};
-
-        let allComplete = true;
-        let anyBilled = false;
-
-        const cartItems = Array.isArray(submission.cart) ? submission.cart : [];
-        cartItems.forEach(item => {
-            const addedQty = billedItemsMap[item.codigo] || 0;
-            const currentTotal = (submission.billedQuantities[item.codigo] || 0) + addedQty;
-            submission.billedQuantities[item.codigo] = Math.min(currentTotal, item.qty);
-
-            if (submission.billedQuantities[item.codigo] > 0) anyBilled = true;
-            if (submission.billedQuantities[item.codigo] < item.qty) allComplete = false;
-        });
-
-        if (anyBilled && allComplete) {
-            submission.billingStatus = 'completo';
-        } else if (anyBilled) {
-            submission.billingStatus = 'parcial';
-        } else {
-            submission.billingStatus = 'pendente';
-        }
-
-        const now = new Date();
-        const nextPred = new Date(now);
-        nextPred.setDate(nextPred.getDate() + 4);
-
-        if (!submission.billingHistory) submission.billingHistory = [];
-        submission.billingHistory.push({
-            date: now.toISOString(),
-            predictedNextDate: allComplete ? null : nextPred.toISOString(),
-            billedMap: billedItemsMap
-        });
-
-        if (anyBilled) {
-            submission.predictedBillingDate = allComplete ? null : nextPred.toISOString();
-        }
-
-        if (invoiceBase64) {
-            submission.invoices.push({
-                name: invoiceName || 'Nota Fiscal',
-                data: invoiceBase64,
-                date: now.toISOString()
-            });
-        }
-
-        this.save();
-        
-        // Atualizar também na lixeira se o pedido foi deletado
-        deletedSubmissionsManager.updateBilledQuantities(submissionId, billedItemsMap);
-        
-        return true;
-    };
-}
-
 function renderHistoryTab() {
   try {
     refreshMissedForecastDates();
@@ -3759,31 +3222,11 @@ function renderHistoryTab() {
     if (!historyContainer) { console.error('historyTabContent não encontrado'); return; }
     const searchTerm = (document.getElementById('historySearchInput')?.value || '').toLowerCase();
     
-    const currentUser = authManager.getCurrentUser();
-    const role = authManager.getCurrentUserRole();
-    
+    const isGestor = authManager.isGestor();
+
+    // The server already returns only what this user may see (gestor: everyone's orders).
     let submissions = orderSubmissionManager.getAll();
-    console.log('[Portal Hiperroll] renderHistoryTab start', {
-        currentUser,
-        role,
-        totalSubmissions: submissions.length,
-        searchTerm
-    });
-    
-    // Vendedor vê só os seus, Supervisor vê todos
-    if (role === 'vendedor') {
-        const normalizedCurrent = authManager.normalizeUsername(currentUser);
-        submissions = submissions.filter(s =>
-            authManager.normalizeUsername(s.submittedBy) === normalizedCurrent ||
-            authManager.normalizeUsername(s.savedBy) === normalizedCurrent
-        );
-    }
-    console.log('[Portal Hiperroll] renderHistoryTab after role filter', {
-        role,
-        filteredCount: submissions.length,
-        filteredIds: submissions.map(s => ({ id: s.id, status: s.status, orderNumber: s.orderNumber, submittedBy: s.submittedBy }))
-    });
-    
+
     // Sort por data mais recente
     submissions.sort((a, b) => {
         const dateA = new Date(a.submittedAt || a.savedAt || 0);
@@ -3801,15 +3244,14 @@ function renderHistoryTab() {
         );
     }
 
-    const roleNote = role === 'vendedor'
-        ? 'Você vê apenas seus próprios pedidos e rascunhos.'
-        : 'Supervisor/desenvolvedor vê todos os pedidos, inclusive os seus.';
+    const roleNote = isGestor
+        ? 'Como gestor, você vê os pedidos de todos os representantes.'
+        : 'Você vê apenas os seus próprios pedidos e rascunhos.';
 
     if (submissions.length === 0) {
-        const currentUser = authManager.getCurrentUser();
-        const emptyMessage = currentUser
-            ? 'Nenhum pedido encontrado para o usuário atual.'
-            : 'Nenhum pedido encontrado. Faça login para carregar o histórico e o painel do supervisor.';
+        const emptyMessage = authManager.getCurrentUser()
+            ? 'Nenhum pedido encontrado.'
+            : 'Faça login para carregar o histórico de pedidos.';
         historyContainer.innerHTML = `<div style="padding: 20px; text-align: center; color: #64748b;">${emptyMessage}</div>`;
         return;
     }
@@ -3958,14 +3400,17 @@ function renderHistoryTab() {
 
         // Ações
         let actionsHtml = `<div style="margin-top:15px; display:flex; gap:10px; flex-wrap:wrap;">`;
-        if (isDraft) {
+        const isOwnOrder = submission.ownerId === authManager.getCurrentUserId();
+        if (isDraft && isOwnOrder) {
             actionsHtml += `<button onclick="loadDraftToCurrentOrder('${submission.id}')" style="background:#0f172a; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">✏️ Continuar Rascunho</button>`;
-        } else {
+        } else if (!isDraft) {
             actionsHtml += `<button onclick="repeatOrder('${submission.id}')" style="background:#64748b; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">🔁 Repetir Pedido</button>`;
         }
-        
-        // Ações para Supervisor (Faturar)
-        if (role === 'supervisor' || role === 'desenvolvedor') {
+
+        if (isGestor) {
+            if (submission.status === 'analise') {
+                actionsHtml += `<button onclick="openSupervisorOrderActions('${submission.id}')" style="background:#0054A6; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">🧑‍💼 Analisar Pedido</button>`;
+            }
             if (submission.status === 'aprovado' && submission.billingStatus !== 'completo') {
                 actionsHtml += `<button onclick="openBillingModal('${submission.id}')" style="background:#0054A6; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">📦 Faturar / Anexar NF</button>`;
             }
@@ -4083,11 +3528,20 @@ function openBillingModal(submissionId) {
     document.body.appendChild(modal);
 }
 
-function submitBilling(submissionId) {
+function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = event => resolve(event.target.result);
+        reader.onerror = () => reject(new Error('Não foi possível ler o arquivo da nota fiscal.'));
+        reader.readAsDataURL(file);
+    });
+}
+
+async function submitBilling(submissionId) {
     const inputs = document.querySelectorAll('.bill-qty-input');
     const billedMap = {};
     let hasItems = false;
-    
+
     inputs.forEach(inp => {
         const val = parseInt(inp.value) || 0;
         const code = inp.getAttribute('data-codigo');
@@ -4101,29 +3555,21 @@ function submitBilling(submissionId) {
     const file = fileInput.files[0];
 
     if (!hasItems && !file) {
-        alert("Informe alguma quantidade ou anexe uma Nota Fiscal.");
+        alert('Informe alguma quantidade ou anexe uma Nota Fiscal.');
+        return;
+    }
+    if (file && file.size > 2 * 1024 * 1024) {
+        alert('A nota fiscal deve ter no máximo 2 MB.');
         return;
     }
 
-    if (file) {
-        if (file.size > 2 * 1024 * 1024) { 
-            alert("Para esta demonstração local, por favor selecione um arquivo menor que 2MB.");
-            return;
-        }
-        
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const base64Data = e.target.result;
-            orderSubmissionManager.registerBilling(submissionId, billedMap, base64Data, file.name);
-            document.getElementById('billingModalDynamic').remove();
-            renderHistoryTab();
-            alert("Faturamento registrado com sucesso!");
-        };
-        reader.readAsDataURL(file);
-    } else {
-        orderSubmissionManager.registerBilling(submissionId, billedMap, null, null);
+    try {
+        const dataUrl = file ? await readFileAsDataUrl(file) : null;
+        await orderSubmissionManager.registerBilling(submissionId, billedMap, dataUrl, file ? file.name : null);
         document.getElementById('billingModalDynamic').remove();
         renderHistoryTab();
-        alert("Faturamento registrado com sucesso!");
+        alert('Faturamento registrado com sucesso!');
+    } catch (e) {
+        alert(e.message);
     }
 }
