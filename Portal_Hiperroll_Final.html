@@ -48,9 +48,9 @@
                         <div class="info-value" id="headerOrderDate">--</div>
                     </div>
                     <div class="info-box info-box--margin">
-                        <div class="info-label">Margem</div>
+                        <div class="info-label">Margem mín.</div>
                         <div class="margin-value-line">
-                            <div class="info-value" id="marginThreshold">15</div>
+                            <div class="info-value" id="marginThreshold">10</div>
                             <div class="margin-percent">%</div>
                         </div>
                     </div>
@@ -197,7 +197,8 @@
                         <p>Total (FOB): R$&nbsp;<strong id="totalFob">0.00</strong></p>
                         <p>Total (CIF): R$&nbsp;<strong id="totalCif" style="color: var(--primary); font-size: 1.2rem;">0.00</strong></p>
                         <p style="margin-top: 10px; font-size: 0.9rem;">
-                            Margem Média: <strong id="marginPercentage" style="color: var(--primary);">0.00%</strong>
+                            Margem do Pedido: <strong id="marginPercentage" style="color: var(--primary);">0.00%</strong>
+                            <span class="margin-min-hint">(mín. <span data-pricing-rule="MIN_ORDER_MARGIN">10%</span>)</span>
                         </p>
                     </div>
                     <div style="flex: 1; min-width: 250px; display: flex; flex-direction: column; gap: 8px; justify-content: center;">
@@ -209,6 +210,18 @@
                             <label for="orderContract" style="margin-bottom: 0; min-width: 100px;">Contrato (%):</label>
                             <input type="number" id="orderContract" value="0" min="0" max="100" style="width: 80px;" oninput="updateOrderTable()">
                         </div>
+                        <label class="order-condition-toggle" for="orderEarlyPayment">
+                            <input type="checkbox" id="orderEarlyPayment" onchange="updateOrderTable()">
+                            <span>Pagamento antecipado</span>
+                            <span class="order-condition-badge">−<span data-pricing-rule="EARLY_PAYMENT_DISCOUNT">2%</span></span>
+                        </label>
+                        <label class="order-condition-toggle" for="orderFobFreight">
+                            <input type="checkbox" id="orderFobFreight" onchange="updateOrderTable()">
+                            <span>Frete FOB</span>
+                            <span class="order-condition-badge">−<span data-pricing-rule="FOB_FREIGHT_DISCOUNT">3%</span></span>
+                        </label>
+                        <div id="orderDiscountBreakdown" class="order-discount-breakdown"></div>
+                        <div id="orderMinMarginWarning" class="order-min-margin-warning" hidden></div>
                         <div class="print-values" style="display:none; flex-direction:column; gap:6px; font-size:0.95rem;">
                             <div>Desconto (total): <strong id="printDiscount">0%</strong></div>
                             <div>Contrato (total): <strong id="printContract">0%</strong></div>
@@ -290,14 +303,21 @@
                     </select>
                     <div id="submitDraftHint" style="margin-top:8px; font-size:0.87rem; color:var(--text-secondary);">Escolha um rascunho salvo para enviar diretamente ou deixe como novo pedido.</div>
                 </div>
-                <div class="modal-success-box">
-                    <strong>✓ Pedido está pronto para envio</strong>
+                <div id="submitSummaryBox" class="modal-success-box">
+                    <strong id="submitSummaryTitle">✓ Pedido está pronto para envio</strong>
                     <div class="modal-success-details">
                         <div>Número: <strong id="submitOrderNumber">---</strong></div>
                         <div>Cliente: <strong id="submitClientName">---</strong></div>
                         <div>Itens: <strong id="submitItemCount">0</strong></div>
+                        <div>Descontos: <strong id="submitDiscounts">Nenhum</strong></div>
                         <div>Total CIF: <strong id="submitTotalCif">R$ 0.00</strong></div>
+                        <div>Margem do pedido: <strong id="submitMargin">0.00%</strong></div>
                     </div>
+                </div>
+                <div id="submitLowMarginBlock" class="low-margin-justification" hidden>
+                    <label for="submitLowMarginJustification">Justificativa para margem abaixo do mínimo *</label>
+                    <textarea id="submitLowMarginJustification" rows="3" placeholder="Ex.: cliente estratégico, volume elevado, ação comercial combinada com a supervisão..."></textarea>
+                    <small>O pedido chegará ao supervisor com um alerta de margem e esta justificativa.</small>
                 </div>
                 <div id="submitOrderMessage" class="modal-msg"></div>
             </div>

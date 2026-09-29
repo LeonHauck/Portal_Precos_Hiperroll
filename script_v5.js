@@ -14,14 +14,146 @@ let activeDraftId = null;
 
 console.log('[Portal Hiperroll] script_v5.js loaded');
 
-function getMarginStatus(margin) {
-    if (margin > 15) {
+// ===== Regras de precificação e margem (fonte única para tela, rascunho, supervisor e PDF) =====
+const PRICING_RULES = Object.freeze({
+    MIN_ORDER_MARGIN: 10,
+    TARGET_MARGIN: 15,
+    EARLY_PAYMENT_DISCOUNT: 2,
+    FOB_FREIGHT_DISCOUNT: 3,
+    MIN_JUSTIFICATION_LENGTH: 10
+});
+
+function getMarginStatus(margin, minMargin = PRICING_RULES.MIN_ORDER_MARGIN) {
+    if (margin >= PRICING_RULES.TARGET_MARGIN) {
         return { label: 'Verde', color: '#15803d', description: 'Margem segura' };
     }
-    if (margin >= 11) {
+    if (margin >= minMargin) {
         return { label: 'Amarelo', color: '#b45309', description: 'Margem de atenção' };
     }
-    return { label: 'Vermelho', color: '#c53030', description: 'Margem crítica' };
+    return { label: 'Vermelho', color: '#c53030', description: 'Abaixo da margem mínima' };
+}
+
+// Percentages are stored with each order so a later rule change never rewrites
+// what was already submitted; missing values (older orders) fall back to today's rules.
+function normalizeOrderConditions(conditions) {
+    const c = conditions || {};
+    const toPercent = (value, fallback) => {
+        const parsed = parseFloat(value);
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+    };
+    return {
+        manualDiscount: toPercent(c.manualDiscount, 0),
+        contract: toPercent(c.contract, 0),
+        earlyPayment: Boolean(c.earlyPayment),
+        fobFreight: Boolean(c.fobFreight),
+        earlyPaymentPercent: toPercent(c.earlyPaymentPercent, PRICING_RULES.EARLY_PAYMENT_DISCOUNT),
+        fobFreightPercent: toPercent(c.fobFreightPercent, PRICING_RULES.FOB_FREIGHT_DISCOUNT),
+        minMargin: toPercent(c.minMargin, PRICING_RULES.MIN_ORDER_MARGIN),
+        lowMarginJustification: String(c.lowMarginJustification || '').trim()
+    };
+}
+
+function getOrderDiscountPercent(conditions) {
+    const c = normalizeOrderConditions(conditions);
+    return c.manualDiscount
+        + (c.earlyPayment ? c.earlyPaymentPercent : 0)
+        + (c.fobFreight ? c.fobFreightPercent : 0);
+}
+
+// Margin is value-weighted on the net price (after discounts). The contract %
+// grosses up the invoice but is passed back to the client, so it doesn't count as margin.
+function calculateOrderTotals(items, conditions) {
+    const c = normalizeOrderConditions(conditions);
+    const discountPercent = getOrderDiscountPercent(c);
+    const discountFactor = Math.max(1 - discountPercent / 100, 0);
+    const contractFactor = 1 + c.contract / 100;
+
+    const totals = { totalQty: 0, totalWeight: 0, totalFob: 0, totalGross: 0, totalNet: 0, totalInvoice: 0 };
+    const lines = (Array.isArray(items) ? items : []).map(item => {
+        const qty = parseFloat(item.qty) || 0;
+        const fobUnit = parseFloat(item.fob) || 0;
+        const negotiatedUnit = Math.max(parseFloat(item.negotiatedPrice || item.cif) || 0, 0);
+        const netUnit = negotiatedUnit * discountFactor;
+        const invoiceUnit = netUnit * contractFactor;
+        const marginPercent = netUnit > 0 ? ((netUnit - fobUnit) / netUnit) * 100 : 0;
+
+        totals.totalQty += qty;
+        totals.totalWeight += (parseFloat(item.weight) || 0) * qty;
+        totals.totalFob += fobUnit * qty;
+        totals.totalGross += negotiatedUnit * qty;
+        totals.totalNet += netUnit * qty;
+        totals.totalInvoice += invoiceUnit * qty;
+
+        return { item, qty, fobUnit, negotiatedUnit, netUnit, invoiceUnit, marginPercent, subtotal: invoiceUnit * qty };
+    });
+
+    const margin = totals.totalNet > 0 ? ((totals.totalNet - totals.totalFob) / totals.totalNet) * 100 : 0;
+    return {
+        ...totals,
+        conditions: c,
+        discountPercent,
+        lines,
+        margin,
+        belowMinimum: lines.length > 0 && margin < c.minMargin,
+        status: getMarginStatus(margin, c.minMargin)
+    };
+}
+
+function describeOrderDiscounts(conditions) {
+    const c = normalizeOrderConditions(conditions);
+    const parts = [];
+    if (c.manualDiscount > 0) parts.push(`Desconto manual ${c.manualDiscount.toFixed(2)}%`);
+    if (c.earlyPayment) parts.push(`Pagamento antecipado ${c.earlyPaymentPercent.toFixed(2)}%`);
+    if (c.fobFreight) parts.push(`Frete FOB ${c.fobFreightPercent.toFixed(2)}%`);
+    return parts;
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// Shared block shown to the supervisor (details, actions, history): discounts,
+// real margin and the low-margin justification when present.
+function renderOrderConditionsSummary(submission) {
+    const totals = calculateOrderTotals(submission?.cart, submission?.conditions);
+    const c = totals.conditions;
+    const discounts = describeOrderDiscounts(c);
+    const discountsHtml = discounts.length
+        ? discounts.map(d => `<span class="condition-chip">${escapeHtml(d)}</span>`).join('')
+        : '<span class="condition-chip condition-chip--muted">Sem descontos de pedido</span>';
+    const contractHtml = c.contract > 0
+        ? `<span class="condition-chip condition-chip--muted">Contrato +${c.contract.toFixed(2)}%</span>`
+        : '';
+
+    const justificationHtml = totals.belowMinimum
+        ? `<div class="low-margin-alert">
+                <strong>⚠️ Margem abaixo do mínimo de ${c.minMargin.toFixed(0)}%</strong>
+                <div>${c.lowMarginJustification
+                    ? `Justificativa do representante: <em>${escapeHtml(c.lowMarginJustification)}</em>`
+                    : 'Nenhuma justificativa registrada.'}</div>
+            </div>`
+        : '';
+
+    return `
+        <div class="order-conditions-summary">
+            <div class="order-conditions-row">
+                <span class="order-conditions-label">Condições:</span>
+                ${discountsHtml}${contractHtml}
+            </div>
+            <div class="order-conditions-row">
+                <span class="order-conditions-label">Desconto total:</span>
+                <strong>${totals.discountPercent.toFixed(2)}%</strong>
+                <span class="order-conditions-label" style="margin-left:12px;">Margem do pedido:</span>
+                <strong style="color:${totals.status.color};">${totals.margin.toFixed(2)}% (${totals.status.label})</strong>
+            </div>
+            ${justificationHtml}
+        </div>
+    `;
 }
 
 function setLoadedOrderReference(reference = '') {
@@ -660,7 +792,7 @@ const orderSubmissionManager = {
         return 'order_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     },
 
-    saveDraft(orderNumber, clientName, representativeName, cart, savedBy, draftId = null, proposalValidity = '') {
+    saveDraft(orderNumber, clientName, representativeName, cart, savedBy, draftId = null, proposalValidity = '', conditions = null) {
         if (cart.length === 0) {
             throw new Error('Adicione itens antes de salvar o rascunho.');
         }
@@ -676,6 +808,7 @@ const orderSubmissionManager = {
             clientName: clientName?.trim() || '',
             representativeName: representativeName?.trim() || '',
             proposalValidity: proposalValidity?.trim() || this.submissions[id]?.proposalValidity || '',
+            conditions: normalizeOrderConditions(conditions),
             cart: JSON.parse(JSON.stringify(cart)),
             status: 'rascunho',
             submittedAt: this.submissions[id]?.submittedAt || '',
@@ -698,9 +831,19 @@ const orderSubmissionManager = {
         return this.getDrafts();
     },
 
-    submitOrder(orderNumber, clientName, representativeName, cart, submittedBy, draftId = null, proposalValidity = '') {
+    submitOrder(orderNumber, clientName, representativeName, cart, submittedBy, draftId = null, proposalValidity = '', conditions = null) {
         if (!orderNumber?.trim() || cart.length === 0) {
             throw new Error('Pedido deve ter número e itens');
+        }
+
+        // Enforced here (not only in the UI) so no screen can submit below the minimum silently.
+        const normalizedConditions = normalizeOrderConditions(conditions);
+        const pricing = calculateOrderTotals(cart, normalizedConditions);
+        if (pricing.belowMinimum && normalizedConditions.lowMarginJustification.length < PRICING_RULES.MIN_JUSTIFICATION_LENGTH) {
+            throw new Error(`A margem do pedido (${pricing.margin.toFixed(2)}%) está abaixo do mínimo de ${normalizedConditions.minMargin}%. Informe uma justificativa com pelo menos ${PRICING_RULES.MIN_JUSTIFICATION_LENGTH} caracteres para enviar.`);
+        }
+        if (!pricing.belowMinimum) {
+            normalizedConditions.lowMarginJustification = '';
         }
 
         const now = new Date().toISOString();
@@ -712,6 +855,14 @@ const orderSubmissionManager = {
             clientName: clientName.trim(),
             representativeName: representativeName.trim(),
             proposalValidity: proposalValidity?.trim() || this.submissions[id]?.proposalValidity || '',
+            conditions: normalizedConditions,
+            pricingSnapshot: {
+                margin: pricing.margin,
+                discountPercent: pricing.discountPercent,
+                totalNet: pricing.totalNet,
+                totalInvoice: pricing.totalInvoice,
+                belowMinimum: pricing.belowMinimum
+            },
             cart: JSON.parse(JSON.stringify(cart)), // Deep copy
             status: 'analise', // analise, aprovado, rejeitado, rascunho
             submittedAt: now,
@@ -754,17 +905,7 @@ const orderSubmissionManager = {
 
     calculateMargin(submission) {
         if (!submission || !Array.isArray(submission.cart) || submission.cart.length === 0) return 0;
-        let totalWeightedMargin = 0;
-        let totalQty = 0;
-        submission.cart.forEach(item => {
-            const negotiatedPrice = Math.max(item.negotiatedPrice || item.cif || 0, 0);
-            const fob = parseFloat(item.fob || 0) || 0;
-            const marginPercent = negotiatedPrice > 0 ? ((negotiatedPrice - fob) / negotiatedPrice) * 100 : 0;
-            const qty = parseFloat(item.qty || 0) || 0;
-            totalWeightedMargin += marginPercent * qty;
-            totalQty += qty;
-        });
-        return totalQty > 0 ? totalWeightedMargin / totalQty : 0;
+        return calculateOrderTotals(submission.cart, submission.conditions).margin;
     },
 
     refreshMissedForecastDates() {
@@ -1068,7 +1209,11 @@ async function init() {
         const nextNumber = hiperrollOrderNumberManager.getNextOrderNumber();
         orderNumberField.value = nextNumber;
     }
-    
+
+    applyPricingRuleLabels();
+    const marginThresholdEl = document.getElementById('marginThreshold');
+    if (marginThresholdEl) marginThresholdEl.textContent = PRICING_RULES.MIN_ORDER_MARGIN;
+
     // 1. Parse Products
     const prodRows = parseCSV(PRODUTOS_CSV);
     prodRows.forEach((row, index) => {
@@ -1379,11 +1524,54 @@ function addToCart(codigo, fob, cif, weight) {
     updateOrderTable();
 }
 
+function getCurrentOrderConditions() {
+    return normalizeOrderConditions({
+        manualDiscount: document.getElementById('orderDiscount')?.value,
+        contract: document.getElementById('orderContract')?.value,
+        earlyPayment: document.getElementById('orderEarlyPayment')?.checked,
+        fobFreight: document.getElementById('orderFobFreight')?.checked
+    });
+}
+
+function setCurrentOrderConditions(conditions) {
+    const c = normalizeOrderConditions(conditions);
+    const discountInput = document.getElementById('orderDiscount');
+    const contractInput = document.getElementById('orderContract');
+    const earlyPaymentInput = document.getElementById('orderEarlyPayment');
+    const fobFreightInput = document.getElementById('orderFobFreight');
+    if (discountInput) discountInput.value = c.manualDiscount;
+    if (contractInput) contractInput.value = c.contract;
+    if (earlyPaymentInput) earlyPaymentInput.checked = c.earlyPayment;
+    if (fobFreightInput) fobFreightInput.checked = c.fobFreight;
+}
+
+function applyPricingRuleLabels() {
+    document.querySelectorAll('[data-pricing-rule]').forEach(el => {
+        const value = PRICING_RULES[el.dataset.pricingRule];
+        if (value !== undefined) el.textContent = `${value}%`;
+    });
+}
+
+function renderOrderDiscountBreakdown(totals) {
+    const el = document.getElementById('orderDiscountBreakdown');
+    if (!el) return;
+    const parts = describeOrderDiscounts(totals.conditions);
+    el.innerHTML = parts.length
+        ? `Desconto total aplicado: <strong>${totals.discountPercent.toFixed(2)}%</strong> <span>(${parts.map(escapeHtml).join(' + ')})</span>`
+        : 'Nenhum desconto de pedido aplicado.';
+
+    const warning = document.getElementById('orderMinMarginWarning');
+    if (warning) {
+        warning.hidden = !totals.belowMinimum;
+        warning.textContent = totals.belowMinimum
+            ? `⚠️ Margem do pedido abaixo do mínimo de ${totals.conditions.minMargin}%. O envio exigirá uma justificativa e será sinalizado ao supervisor.`
+            : '';
+    }
+}
+
 function updateOrderTable() {
     const container = document.getElementById('orderTableContainer');
     const summaryDiv = document.getElementById('orderSummary');
-    const discount = parseFloat(document.getElementById('orderDiscount').value) || 0;
-    const contract = parseFloat(document.getElementById('orderContract').value) || 0;
 
     if (cart.length === 0) {
         container.innerHTML = '<div class="empty-state">Nenhum item no pedido.</div>';
@@ -1392,6 +1580,8 @@ function updateOrderTable() {
     }
 
     summaryDiv.style.display = 'block';
+
+    const totals = calculateOrderTotals(cart, getCurrentOrderConditions());
 
     let html = `
         <table>
@@ -1404,7 +1594,7 @@ function updateOrderTable() {
                     <th>CIF Unit.</th>
                     <th>Desconto Unit.</th>
                     <th>Preço Negociado</th>
-                    <th>Margem (%)</th>
+                    <th title="Margem sobre o preço líquido, já considerando os descontos do pedido">Margem Líq. (%)</th>
                     <th>Subtotal</th>
                     <th>Ação</th>
                 </tr>
@@ -1412,24 +1602,13 @@ function updateOrderTable() {
             <tbody>
     `;
 
-    let totalWeight = 0;
-    let totalFob = 0;
-    let totalCif = 0;
-    let totalMargin = 0;
-
-    cart.forEach((item, idx) => {
+    totals.lines.forEach((line, idx) => {
+        const item = line.item;
         const subWeight = item.weight * item.qty;
-        const subFob = item.fob * item.qty;
-        const negotiatedPrice = Math.max(item.negotiatedPrice || item.cif, 0);
+        const negotiatedPrice = line.negotiatedUnit;
         const unitDiscount = Math.max(item.unitDiscount || 0, 0);
-        const discountPercent = item.cif > 0 ? (unitDiscount / item.cif) * 100 : 0;
-        const subCifWithDiscountContract = negotiatedPrice * (1 - discount/100) * (1 + contract / 100) * item.qty;
-        const itemMarginPercent = negotiatedPrice > 0 ? ((negotiatedPrice - item.fob) / negotiatedPrice) * 100 : 0;
-
-        totalWeight += subWeight;
-        totalFob += subFob;
-        totalCif += subCifWithDiscountContract;
-        totalMargin += itemMarginPercent * item.qty; // Acumula margem ponderada
+        const itemMarginPercent = line.marginPercent;
+        const subCifWithDiscountContract = line.subtotal;
 
         html += `
             <tr>
@@ -1457,11 +1636,7 @@ function updateOrderTable() {
                     <span class="print-value">R$&nbsp;${negotiatedPrice.toFixed(2)}</span>
                 </td>
                 <td style="text-align: center;">
-                    <span style="color: ${
-                        itemMarginPercent > 15 ? '#15803d' :
-                        itemMarginPercent >= 11 ? '#b45309' :
-                        '#c53030'
-                    }">
+                    <span style="color: ${getMarginStatus(itemMarginPercent, totals.conditions.minMargin).color}">
                         ${itemMarginPercent.toFixed(2)}%
                     </span>
                 </td>
@@ -1476,46 +1651,26 @@ function updateOrderTable() {
     html += '</tbody></table>';
     container.innerHTML = html;
 
-    // Calcular margem média
-    const marginMediana = cart.length > 0 ? totalMargin / cart.reduce((sum, item) => sum + item.qty, 0) : 0;
-    
-    // Atualizar totais
-    document.getElementById('totalWeight').textContent = totalWeight.toFixed(3);
-    document.getElementById('totalFob').textContent = totalFob.toFixed(2);
-    document.getElementById('totalCif').textContent = totalCif.toFixed(2);
+    document.getElementById('totalWeight').textContent = totals.totalWeight.toFixed(3);
+    document.getElementById('totalFob').textContent = totals.totalFob.toFixed(2);
+    document.getElementById('totalCif').textContent = totals.totalInvoice.toFixed(2);
 
-    // Update print-only summary values for discount and contract
     const printDiscountEl = document.getElementById('printDiscount');
     const printContractEl = document.getElementById('printContract');
-    if (printDiscountEl) printDiscountEl.textContent = discount.toFixed(2) + '%';
-    if (printContractEl) printContractEl.textContent = contract.toFixed(2) + '%';
-    
-    // Atualizar margem média e risco do pedido
+    if (printDiscountEl) printDiscountEl.textContent = totals.discountPercent.toFixed(2) + '%';
+    if (printContractEl) printContractEl.textContent = totals.conditions.contract.toFixed(2) + '%';
+
     const marginPercentageElement = document.getElementById('marginPercentage');
-    marginPercentageElement.textContent = marginMediana.toFixed(2) + '%';
-    currentOrderMargin = marginMediana;
-    
-    // Aplicar classe de alerta visual baseada na margem
+    marginPercentageElement.textContent = totals.margin.toFixed(2) + '%';
+    marginPercentageElement.style.color = totals.status.color;
+    currentOrderMargin = totals.margin;
+
     const totalsPriceContainer = document.getElementById('totalsPriceContainer');
-    
-    // Limpar todas as classes anteriores
     totalsPriceContainer.classList.remove('margin-alert', 'margin-warning', 'margin-good');
-    marginPercentageElement.style.color = '';
-    
-    // Aplicar a classe correta baseada na margem
-    if (marginMediana > 15) {
-        // Verde: Margem boa
-        totalsPriceContainer.classList.add('margin-good');
-        marginPercentageElement.style.color = '#15803d';
-    } else if (marginMediana >= 11) {
-        // Amarelo: Margem de transição/aviso
-        totalsPriceContainer.classList.add('margin-warning');
-        marginPercentageElement.style.color = '#b45309';
-    } else {
-        // Vermelho: Margem crítica
-        totalsPriceContainer.classList.add('margin-alert');
-        marginPercentageElement.style.color = '#c53030';
-    }
+    const statusClass = { Verde: 'margin-good', Amarelo: 'margin-warning', Vermelho: 'margin-alert' }[totals.status.label];
+    totalsPriceContainer.classList.add(statusClass);
+
+    renderOrderDiscountBreakdown(totals);
 }
 
 // Atualiza o desconto unitário e recalcula os valores do item
@@ -1587,8 +1742,9 @@ function formatNumber(value, decimals = 2) {
 }
 
 function createPdfExportNode() {
-    const discount = parseFloat(document.getElementById('orderDiscount').value) || 0;
-    const contract = parseFloat(document.getElementById('orderContract').value) || 0;
+    const pricing = calculateOrderTotals(cart, getCurrentOrderConditions());
+    const discount = pricing.discountPercent;
+    const contract = pricing.conditions.contract;
     const orderNumberHiperroll = document.getElementById('orderNumberHiperroll')?.value.trim() || '---';
     const orderNumberClient = document.getElementById('orderNumberClient')?.value.trim() || '---';
     const loadedDraftNumber = document.getElementById('loadedDraftNumber')?.value.trim() || '';
@@ -1598,24 +1754,18 @@ function createPdfExportNode() {
     const proposalValidity = normalizeProposalValidity(document.getElementById('proposalValidity')?.value || '');
     const dateStr = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 
-    let totalWeight = 0;
-    let totalFob = 0;
-    let totalCif = 0;
-    let totalMargin = 0;
+    const totalWeight = pricing.totalWeight;
+    const totalFob = pricing.totalFob;
+    const totalCif = pricing.totalInvoice;
     let rowsHtml = '';
 
-    cart.forEach(item => {
+    pricing.lines.forEach(line => {
+        const item = line.item;
         const subWeight = item.weight * item.qty;
-        const subFob = item.fob * item.qty;
-        const negotiatedPrice = Math.max(item.negotiatedPrice || item.cif, 0);
+        const negotiatedPrice = line.negotiatedUnit;
         const unitDiscount = Math.max(item.unitDiscount || 0, 0);
-        const subtotal = negotiatedPrice * (1 - discount / 100) * (1 + contract / 100) * item.qty;
-        const marginPercent = negotiatedPrice > 0 ? ((negotiatedPrice - item.fob) / negotiatedPrice) * 100 : 0;
-
-        totalWeight += subWeight;
-        totalFob += subFob;
-        totalCif += subtotal;
-        totalMargin += marginPercent * item.qty;
+        const subtotal = line.subtotal;
+        const marginPercent = line.marginPercent;
 
         const shortDesc = summarizeDescription(item.descricao || '', 36);
         rowsHtml += `
@@ -1634,7 +1784,8 @@ function createPdfExportNode() {
         `;
     });
 
-    const averageMargin = cart.length > 0 ? totalMargin / cart.reduce((sum, item) => sum + item.qty, 0) : 0;
+    const averageMargin = pricing.margin;
+    const pdfConditions = describeOrderDiscounts(pricing.conditions);
 
     // Totais adicionais solicitados
     const totalProducts = cart.length;
@@ -1709,10 +1860,11 @@ function createPdfExportNode() {
         <div class="pdf-summary" style="display:grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px; padding: 12px 14px; border: 1px solid #d8e1e8; background:#f8fafc;">
             <div class="summary-row"><span>Desconto Pedido:</span> <strong>${discount.toFixed(2)}%</strong></div>
             <div class="summary-row"><span>Contrato:</span> <strong>${contract.toFixed(2)}%</strong></div>
+            <div class="summary-row" style="grid-column: 1 / -1;"><span>Condições comerciais:</span> <strong>${pdfConditions.length ? escapeHtml(pdfConditions.join(' • ')) : 'Nenhuma'}</strong></div>
             <div class="summary-row"><span>Peso Total:</span> <strong>${totalWeight.toFixed(3)} Kg</strong></div>
             <div class="summary-row"><span>Total FOB:</span> <strong>${formatCurrency(totalFob)}</strong></div>
             <div class="summary-row"><span>Total CIF:</span> <strong>${formatCurrency(totalCif)}</strong></div>
-            <div class="summary-row"><span>Margem Média:</span> <strong>${averageMargin.toFixed(2)}%</strong></div>
+            <div class="summary-row"><span>Margem do Pedido:</span> <strong>${averageMargin.toFixed(2)}%</strong></div>
         </div>
 
         <div class="pdf-table card">
@@ -2217,13 +2369,11 @@ function renderDraftsPanel() {
         // Build collapsible items table HTML (show first 3 rows, hide rest)
         let visibleRows = '';
         let hiddenRows = '';
-        let total = 0;
         if (draft.cart && draft.cart.length) {
             draft.cart.forEach((item, idx) => {
                 const qty = item.qty || 0;
                 const unit = parseFloat(item.negotiatedPrice || item.cif || 0) || 0;
                 const subtotal = unit * qty;
-                total += subtotal;
                 const shortDesc = (item.descricao || '').replace(/"/g, '');
                 const rowHtml = `<tr><td>${item.codigo}</td><td>${shortDesc}</td><td style="width:70px; text-align:center">${qty}</td><td style="width:120px; text-align:right">R$ ${unit.toFixed(2)}</td><td style="width:120px; text-align:right">R$ ${subtotal.toFixed(2)}</td></tr>`;
                 if (idx < 3) visibleRows += rowHtml; else hiddenRows += rowHtml;
@@ -2247,7 +2397,7 @@ function renderDraftsPanel() {
                     </tbody>
                     ${hiddenSection}
                 </table>
-                <div class="draft-items-total">Total: R$ ${total.toFixed(2)}</div>
+                <div class="draft-items-total">Total c/ condições: R$ ${calculateOrderTotals(draft.cart, draft.conditions).totalInvoice.toFixed(2)}</div>
             `;
         } else {
             itemsHtml = '<div style="margin-top:10px; color:#64748b;">Sem itens no rascunho.</div>';
@@ -2308,15 +2458,13 @@ function showDraftModal(submissionId) {
     modal.className = 'draft-modal';
 
     let itemsHtml = '<table class="draft-items-table"><thead><tr><th>Cód</th><th>Descrição</th><th>Qtd</th><th>Valor Unit.</th><th>Subtotal</th></tr></thead><tbody>';
-    let total = 0;
     (submission.cart || []).forEach(item => {
         const qty = item.qty || 0;
         const unit = parseFloat(item.negotiatedPrice || item.cif || 0) || 0;
         const subtotal = unit * qty;
-        total += subtotal;
         itemsHtml += `<tr><td>${item.codigo}</td><td>${(item.descricao||'').replace(/"/g,'')}</td><td style="text-align:center">${qty}</td><td style="text-align:right">R$ ${unit.toFixed(2)}</td><td style="text-align:right">R$ ${subtotal.toFixed(2)}</td></tr>`;
     });
-    itemsHtml += `</tbody></table><div class="draft-items-total">Total: R$ ${total.toFixed(2)}</div>`;
+    itemsHtml += `</tbody></table><div class="draft-items-total">Total c/ condições: R$ ${calculateOrderTotals(submission.cart, submission.conditions).totalInvoice.toFixed(2)}</div>`;
 
     let invoicesHtml = '';
     if (submission.invoices && submission.invoices.length) {
@@ -2398,9 +2546,34 @@ function showSubmitOrderModal() {
     if (submitOrderNumber) submitOrderNumber.textContent = orderNumber;
     if (submitClientName) submitClientName.textContent = clientName || '(Não informado)';
     if (submitItemCount) submitItemCount.textContent = cart.length;
-    
-    const totalCif = parseFloat(document.getElementById('totalCif')?.textContent || 0);
-    if (submitTotalCif) submitTotalCif.textContent = `R$ ${totalCif.toFixed(2)}`;
+
+    const totals = calculateOrderTotals(cart, getCurrentOrderConditions());
+    if (submitTotalCif) submitTotalCif.textContent = `R$ ${totals.totalInvoice.toFixed(2)}`;
+
+    const discountParts = describeOrderDiscounts(totals.conditions);
+    const submitDiscounts = document.getElementById('submitDiscounts');
+    if (submitDiscounts) {
+        submitDiscounts.textContent = discountParts.length
+            ? `${totals.discountPercent.toFixed(2)}% (${discountParts.join(' + ')})`
+            : 'Nenhum';
+    }
+
+    const submitMargin = document.getElementById('submitMargin');
+    if (submitMargin) submitMargin.textContent = `${totals.margin.toFixed(2)}% (${totals.status.label})`;
+
+    const summaryBox = document.getElementById('submitSummaryBox');
+    const summaryTitle = document.getElementById('submitSummaryTitle');
+    if (summaryBox) summaryBox.classList.toggle('is-warning', totals.belowMinimum);
+    if (summaryTitle) {
+        summaryTitle.textContent = totals.belowMinimum
+            ? `⚠️ Margem abaixo do mínimo de ${totals.conditions.minMargin}%`
+            : '✓ Pedido está pronto para envio';
+    }
+
+    const lowMarginBlock = document.getElementById('submitLowMarginBlock');
+    const justificationInput = document.getElementById('submitLowMarginJustification');
+    if (lowMarginBlock) lowMarginBlock.hidden = !totals.belowMinimum;
+    if (justificationInput && !totals.belowMinimum) justificationInput.value = '';
 
     const modal = document.getElementById('submitOrderModal');
     if (modal) modal.style.display = 'flex';
@@ -2433,6 +2606,10 @@ function submitOrder() {
         
         const draftIdToUse = selectedDraftValue && selectedDraftValue !== '__new__' ? selectedDraftValue : null;
         const proposalValidity = normalizeProposalValidity(document.getElementById('proposalValidity')?.value || '');
+        const conditions = {
+            ...getCurrentOrderConditions(),
+            lowMarginJustification: document.getElementById('submitLowMarginJustification')?.value || ''
+        };
         const submissionId = orderSubmissionManager.submitOrder(
             orderNumberToUse,
             clientName,
@@ -2440,7 +2617,8 @@ function submitOrder() {
             cart,
             currentUser,
             draftIdToUse,
-            proposalValidity
+            proposalValidity,
+            conditions
         );
         console.log('[Portal Hiperroll] submitOrder() saved submission', {
             submissionId,
@@ -2488,6 +2666,9 @@ function submitOrder() {
             document.getElementById('clientName').value = '';
             document.getElementById('representativeName').value = '';
             document.getElementById('proposalValidity').value = '';
+            setCurrentOrderConditions(null);
+            const justificationInput = document.getElementById('submitLowMarginJustification');
+            if (justificationInput) justificationInput.value = '';
             alert('Pedido enviado com sucesso! Aguardando aprovação do supervisor.');
             switchTab('tab-history');
             renderHistoryTab();
@@ -2525,7 +2706,8 @@ function saveDraftCurrentOrder() {
             cart,
             currentUser,
             activeDraftId,
-            proposalValidity
+            proposalValidity,
+            getCurrentOrderConditions()
         );
         activeDraftId = draftId;
         renderDraftsPanel();
@@ -2556,6 +2738,7 @@ function loadDraftToCurrentOrder(submissionId, silent = false) {
     document.getElementById('clientName').value = submission.clientName || '';
     document.getElementById('representativeName').value = submission.representativeName || '';
     document.getElementById('proposalValidity').value = submission.proposalValidity || '';
+    setCurrentOrderConditions(submission.conditions);
     cart.length = 0;
     (Array.isArray(submission.cart) ? submission.cart : []).forEach(item => cart.push(JSON.parse(JSON.stringify(item))));
     updateOrderTable();
@@ -2581,6 +2764,7 @@ function repeatOrder(submissionId) {
     document.getElementById('clientName').value = submission.clientName || '';
     document.getElementById('representativeName').value = submission.representativeName || '';
     document.getElementById('proposalValidity').value = normalizeProposalValidity(submission.proposalValidity || '');
+    setCurrentOrderConditions(submission.conditions);
     cart.length = 0;
     (Array.isArray(submission.cart) ? submission.cart : []).forEach(item => cart.push(JSON.parse(JSON.stringify(item))));
     updateOrderTable();
@@ -2844,7 +3028,7 @@ function renderTrashDetails(deletionId, deletion) {
             marginPercent = ((negotiatedPrice - item.fob) / negotiatedPrice) * 100;
         }
         
-        const marginColor = marginPercent > 15 ? '#15803d' : marginPercent >= 11 ? '#b45309' : '#c53030';
+        const marginColor = getMarginStatus(marginPercent, normalizeOrderConditions(deletion.conditions).minMargin).color;
         
         // Cor para a quantidade faturada (verde se completo, amarelo se parcial, cinza se nenhum)
         const billingColor = billedQty === qty ? '#15803d' : billedQty > 0 ? '#f59e0b' : '#9ca3af';
@@ -3001,20 +3185,18 @@ function showSubmissionDetails(submissionId) {
     const timestamp = submission.status === 'rascunho' ? submission.savedAt : submission.submittedAt;
     const dateLabel = timestamp ? new Date(timestamp).toLocaleString('pt-BR') : '---';
 
-    let total = 0;
-    (submission.cart || []).forEach(item => {
-        const qty = item.qty || 0;
-        const unit = parseFloat(item.negotiatedPrice || item.cif || 0) || 0;
-        total += qty * unit;
-    });
+    const pricing = calculateOrderTotals(submission.cart, submission.conditions);
+    const discountParts = describeOrderDiscounts(pricing.conditions);
 
     alert(`Pedido: ${submission.orderNumber}
 Cliente: ${submission.clientName}
 Representante: ${submission.representativeName}
 Criado por: ${submission.submittedBy || submission.savedBy || '(Sem usuário)'}
 Status: ${statusLabel}
-Margem média: ${averageMargin.toFixed(2)}% (${marginStatus.label})
-Valor Total do Pedido: R$ ${total.toFixed(2)}
+Descontos: ${discountParts.length ? `${pricing.discountPercent.toFixed(2)}% (${discountParts.join(' + ')})` : 'Nenhum'}
+Margem do pedido: ${averageMargin.toFixed(2)}% (${marginStatus.label})
+Valor Total do Pedido: R$ ${pricing.totalInvoice.toFixed(2)}
+${pricing.belowMinimum ? `Justificativa (margem abaixo do mínimo): ${pricing.conditions.lowMarginJustification || '(não informada)'}\n` : ''}
 ${submission.status === 'rascunho' ? 'Salvo em:' : 'Enviado em:'} ${dateLabel}
 ${submission.rejectionReason ? `Motivo da Rejeição: ${submission.rejectionReason}
 ` : ''}${submission.supervisorNote ? `Observação do Supervisor: ${submission.supervisorNote}` : ''}`);
@@ -3048,16 +3230,14 @@ function openSupervisorOrderActions(submissionId) {
     const timestamp = submission.status === 'rascunho' ? submission.savedAt : submission.submittedAt;
     const dateLabel = timestamp ? new Date(timestamp).toLocaleString('pt-BR') : '---';
 
-    let itemsHtml = `<table class="draft-items-table" style="width:100%; margin-top:10px;"><thead><tr><th>Cód</th><th>Descrição</th><th>Qtd</th><th style="text-align:right">Unit.</th><th style="text-align:right">Subtotal</th></tr></thead><tbody>`;
-    let total = 0;
-    (submission.cart || []).forEach(item => {
-        const qty = item.qty || 0;
-        const unit = parseFloat(item.negotiatedPrice || item.cif || 0) || 0;
-        const subtotal = unit * qty;
-        total += subtotal;
-        itemsHtml += `<tr><td>${item.codigo}</td><td>${(item.descricao || '').replace(/"/g, '')}</td><td style="text-align:center">${qty}</td><td style="text-align:right">R$ ${unit.toFixed(2)}</td><td style="text-align:right">R$ ${subtotal.toFixed(2)}</td></tr>`;
+    const pricing = calculateOrderTotals(submission.cart, submission.conditions);
+    let itemsHtml = `<table class="draft-items-table" style="width:100%; margin-top:10px;"><thead><tr><th>Cód</th><th>Descrição</th><th>Qtd</th><th style="text-align:right">Unit.</th><th style="text-align:right">Margem</th><th style="text-align:right">Subtotal</th></tr></thead><tbody>`;
+    pricing.lines.forEach(line => {
+        const item = line.item;
+        const marginColor = getMarginStatus(line.marginPercent, pricing.conditions.minMargin).color;
+        itemsHtml += `<tr><td>${item.codigo}</td><td>${(item.descricao || '').replace(/"/g, '')}</td><td style="text-align:center">${line.qty}</td><td style="text-align:right">R$ ${line.negotiatedUnit.toFixed(2)}</td><td style="text-align:right; color:${marginColor}; font-weight:600;">${line.marginPercent.toFixed(2)}%</td><td style="text-align:right">R$ ${line.subtotal.toFixed(2)}</td></tr>`;
     });
-    itemsHtml += `</tbody></table><div style="text-align:right; margin-top:10px; font-weight:700;">Total: R$ ${total.toFixed(2)}</div>`;
+    itemsHtml += `</tbody></table><div style="text-align:right; margin-top:10px; font-weight:700;">Total: R$ ${pricing.totalInvoice.toFixed(2)}</div>`;
 
     const backdrop = document.createElement('div');
     backdrop.id = 'supervisorActionModalBackdrop';
@@ -3094,6 +3274,7 @@ function openSupervisorOrderActions(submissionId) {
                 <button onclick="closeSupervisorActionModal()" class="modal-close-btn" aria-label="Fechar">✕</button>
             </div>
             <div class="modal-body">
+                ${renderOrderConditionsSummary(submission)}
                 ${itemsHtml}
                 <div style="margin-top:20px; display:grid; gap:14px;">
                     <div>
@@ -3179,12 +3360,6 @@ function closeSupervisorPanel() {
     modal.style.display = 'none';
 }
 
-function getMarginRiskLevel(margin) {
-    if (margin > 15) return { label: 'Verde', color: '#15803d' };
-    if (margin >= 11) return { label: 'Amarelo', color: '#b45309' };
-    return { label: 'Vermelho', color: '#b91c1c' };
-}
-
 function refreshMissedForecastDates() {
     const syncForecast = (collection) => {
         if (!Array.isArray(collection)) return;
@@ -3261,6 +3436,10 @@ function updateSupervisorPanel() {
                 // Verificar se foi deletado
                 const isDeleted = !orderSubmissionManager.getById(submission.id);
                 const deletedBadge = isDeleted ? '🗑️ Deletado' : '';
+                const pendingPricing = calculateOrderTotals(submission.cart, submission.conditions);
+                const lowMarginBadge = pendingPricing.belowMinimum
+                    ? `<span class="low-margin-badge" title="${escapeHtml(pendingPricing.conditions.lowMarginJustification || 'Sem justificativa')}">⚠️ Margem ${pendingPricing.margin.toFixed(2)}%</span>`
+                    : '';
                 const bgColor = isDeleted ? '#fef2f2' : '#fafafa';
                 const borderColor = isDeleted ? '#fecaca' : '#ddd';
                 
@@ -3270,7 +3449,7 @@ function updateSupervisorPanel() {
                             <input type="checkbox" class="pending-order-checkbox" value="${submission.id}" style="width:20px; height:20px; flex-shrink:0; margin:0; cursor:pointer;">
                             <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
                                 <div style="font-weight:700; font-size:1.05rem; color:#0f172a;">
-                                    Pedido: ${submission.orderNumber} ${deletedBadge}
+                                    Pedido: ${submission.orderNumber} ${deletedBadge} ${lowMarginBadge}
                                 </div>
                                 <div style="font-size:0.9rem; color:#475569;">
                                     Cliente: <strong style="color:#1e293b;">${submission.clientName}</strong> &bull; Enviado por: <strong>${submission.submittedBy}</strong> &bull; Em: <strong>${submittedDate}</strong> &bull; Itens: <strong>${totalItems}</strong>
@@ -3403,15 +3582,15 @@ function showPendingOrderDetails(submissionId) {
                 <tbody>
     `;
 
-    let totalCif = 0;
-    const cartArray = Array.isArray(submission.cart) ? submission.cart : [];
-    cartArray.forEach(item => {
-        const qty = item.qty || 0;
-        const negotiatedPrice = Math.max(item.negotiatedPrice || item.cif || 0, 0);
-        const subtotal = negotiatedPrice * qty;
-        totalCif += subtotal;
-        const marginPercent = negotiatedPrice > 0 ? ((negotiatedPrice - item.fob) / negotiatedPrice) * 100 : 0;
-        const itemMarginColor = marginPercent > 15 ? '#15803d' : marginPercent >= 11 ? '#b45309' : '#c53030';
+    const pricing = calculateOrderTotals(submission.cart, submission.conditions);
+    const totalCif = pricing.totalInvoice;
+    pricing.lines.forEach(line => {
+        const item = line.item;
+        const qty = line.qty;
+        const negotiatedPrice = line.negotiatedUnit;
+        const subtotal = line.subtotal;
+        const marginPercent = line.marginPercent;
+        const itemMarginColor = getMarginStatus(marginPercent, pricing.conditions.minMargin).color;
         const billedQty = Math.min(submission.billedQuantities?.[item.codigo] || 0, qty);
         const billingColor = billedQty >= qty ? '#15803d' : billedQty > 0 ? '#b45309' : '#64748b';
         
@@ -3434,8 +3613,8 @@ function showPendingOrderDetails(submissionId) {
         </div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:15px; padding:15px; background:#f8fafc; border-radius:6px; border:1px solid #e2e8f0;">
             <div>
-                <span style="color:#475569; font-size:0.9rem;">Margem Média:</span><br>
-                <strong style="color:${orderMarginStatus.color}; font-size:1.1rem;">${averageMargin.toFixed(2)}%</strong> 
+                <span style="color:#475569; font-size:0.9rem;">Margem do Pedido:</span><br>
+                <strong style="color:${orderMarginStatus.color}; font-size:1.1rem;">${averageMargin.toFixed(2)}%</strong>
                 <span style="color:${orderMarginStatus.color}; font-weight:600; font-size:0.9rem;">(${orderMarginStatus.label})</span>
             </div>
             <div style="text-align:right;">
@@ -3465,6 +3644,7 @@ function showPendingOrderDetails(submissionId) {
             <button onclick="document.getElementById('detailsModalBackdrop').remove()" class="modal-close-btn" aria-label="Fechar">✕</button>
         </div>
         <div class="modal-body">
+            ${renderOrderConditionsSummary(submission)}
             ${itemsHtml}
         </div>
         <div class="modal-footer">
@@ -3684,12 +3864,8 @@ function renderHistoryTab() {
         const totalOrdered = cartArray.reduce((sum, item) => sum + (item.qty || 0), 0);
         const totalBilled = cartArray.reduce((sum, item) => sum + ((submission.billedQuantities && submission.billedQuantities[item.codigo]) || 0), 0);
 
-        let totalCif = 0;
-        cartArray.forEach(item => {
-            const negotiated = Math.max(item.negotiatedPrice || item.cif, 0);
-            const subtotal = negotiated * item.qty; 
-            totalCif += subtotal;
-        });
+        const pricing = calculateOrderTotals(cartArray, submission.conditions);
+        const totalCif = pricing.totalInvoice;
 
         let billingSummaryHtml = '';
         if (billingStatus) {
@@ -3715,12 +3891,13 @@ function renderHistoryTab() {
                 </tr>
         `;
         
-        cartArray.forEach(item => {
-            const negotiated = Math.max(item.negotiatedPrice || item.cif, 0);
-            const subtotal = negotiated * item.qty; 
-            const marginPercent = negotiated > 0 ? ((negotiated - item.fob) / negotiated) * 100 : 0;
-            const itemMarginColor = marginPercent > 15 ? '#15803d' : marginPercent >= 11 ? '#b45309' : '#c53030';
-            
+        pricing.lines.forEach(line => {
+            const item = line.item;
+            const negotiated = line.negotiatedUnit;
+            const subtotal = line.subtotal;
+            const marginPercent = line.marginPercent;
+            const itemMarginColor = getMarginStatus(marginPercent, pricing.conditions.minMargin).color;
+
             let billedStr = '';
             if (hasBillingInfo || submission.status === 'aprovado') {
                 const billed = (submission.billedQuantities && submission.billedQuantities[item.codigo]) || 0;
@@ -3807,7 +3984,7 @@ function renderHistoryTab() {
                             Pedido: <strong>${submission.orderNumber || 'Sem número'}</strong><br>
                             Cliente: <strong>${submission.clientName || 'Não informado'}</strong><br>
                             Comprador / Usuário: <strong>${submission.submittedBy || submission.savedBy || '(Sem usuário)'}</strong><br>
-                            Margem média: <strong style="color:${marginStatus.color};">${averageMargin.toFixed(2)}%</strong> <span style="color:${marginStatus.color}; font-weight:700;">${marginStatus.label}</span><br>
+                            Margem do pedido: <strong style="color:${marginStatus.color};">${averageMargin.toFixed(2)}%</strong> <span style="color:${marginStatus.color}; font-weight:700;">${marginStatus.label}</span><br>
                             Total do Pedido: <strong>R$ ${totalCif.toFixed(2)}</strong><br>
                             Data: ${dateStr}<br>
                             Validade da proposta: <strong>${normalizeProposalValidity(submission.proposalValidity || '') || 'Não informada'}</strong>
@@ -3819,6 +3996,7 @@ function renderHistoryTab() {
                         ${predictedBillingBadge}
                     </div>
                 </div>
+                ${renderOrderConditionsSummary(submission)}
                 ${itemsHtml}
                 ${notesHtml}
                 ${billingSummaryHtml}
