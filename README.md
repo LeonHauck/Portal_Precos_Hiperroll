@@ -26,7 +26,8 @@ Além da calculadora, o portal oferece um fluxo de negociação com preço unit�
 - **FOB** = preço 100% NF da linha de produto (R$/kg) × peso do produto.
 - **CIF** = (custo + despesas + frete da UF/praça/faixa de peso) ÷ (custos ÷ preço 100% NF) × peso — o frete recebe o mesmo markup da linha.
 - Exibição de peso, preço FOB e preço CIF por item.
-- **💲 Tabela de Preços (aba do gestor):** custos e preço 100% NF por linha de produto, tabela de frete, cadastro de produtos (linha, peso, ativo/inativo), reajuste percentual em lote com pré-visualização e histórico "de → para" de cada alteração. Mudanças valem imediatamente para todos.
+- **💲 Tabela de Preços (aba do gestor):** custos e preço 100% NF por linha de produto, tabela de frete, cadastro de produtos (linha, peso, ativo/inativo), **preço próprio por produto** (ex.: produto X = R$ 50,00), ações por **categoria** (reajuste %, trocar de linha, voltar ao preço da linha), reajuste percentual em lote com pré-visualização e histórico "de → para" de cada alteração. Mudanças valem imediatamente para todos.
+- **Atualização automática:** cada portal aberto confere a versão da tabela a cada minuto (e ao voltar para a aba do navegador); se o gestor mudou algo, a busca e o pedido aberto se atualizam sozinhos.
 
 ### 🤝 Negociação e margem
 
@@ -133,7 +134,7 @@ Depois da importação, tudo é feito pelo gestor na aba **💲 Tabela de Preço
 
 - **Linhas de produto:** custo, despesas e preço 100% NF (R$/kg); a tela mostra o total de custos e o markup.
 - **Frete:** valores por UF/praça e faixa de peso; é possível adicionar ou remover praças.
-- **Produtos:** descrição, linha de produto, peso e ativo/inativo; cadastro de produtos novos.
+- **Produtos:** descrição, linha de produto, peso, ativo/inativo e **preço FOB próprio** (digitar o valor e Enter; "↺ usar linha" desfaz). Filtro por categoria com ações para todos os produtos listados: reajuste %, mover para outra linha e voltar ao preço da linha. Produtos com preço próprio não acompanham os reajustes da linha. Cadastro de produtos novos.
 - **Reajuste em lote:** um percentual sobre as linhas escolhidas (preço e custos juntos, só preço ou só custos) ou sobre o frete das UFs escolhidas. Sempre com pré-visualização antes de aplicar.
 - **Histórico:** quem mudou, quando, o valor anterior, o novo e o motivo.
 
@@ -178,7 +179,7 @@ Arquivos como `index_backup.html`, `data_backup.js`, `style_backup.css` e `data.
 ## ⚠️ Limitações atuais
 
 - Antes da importação da tabela, o FOB de cada item ainda vem do navegador; depois dela, o servidor recalcula tudo.
-- A ligação produto → linha de produto importada é a mesma regra de palavras-chave usada até hoje; hoje ela coloca os sacos de lixo e as sacarias na linha "Fundo Reto". Revise na aba Tabela de Preços → Produtos.
+- A ligação produto → linha de produto importada é a mesma regra de palavras-chave usada até hoje; hoje ela coloca os sacos de lixo e as sacarias na linha "Fundo Reto". Revise na aba Tabela de Preços → Produtos (filtre a categoria e use "Mover para a linha").
 - As notas fiscais anexadas ficam dentro do banco (em base64); com muitos anexos grandes, vale movê-las para arquivos separados.
 - O histórico de status exibido no botão "📋 Histórico" do resumo do pedido é local ao navegador.
 - Os scripts de atualização dependem de planilhas e caminhos locais que podem variar por máquina.

@@ -2667,6 +2667,65 @@ select.pricing-input {
     cursor: default;
 }
 
+.pricing-input--narrow {
+    min-width: 0;
+    width: 110px;
+}
+
+.pricing-bulkbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    margin-bottom: 12px;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-1);
+    font-size: 0.86rem;
+}
+
+.pricing-bulkbar-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.pricing-bulkbar-group .pricing-input--narrow {
+    width: 80px;
+}
+
+.pricing-row-btn--ghost {
+    background: transparent;
+    color: var(--secondary);
+    border: 1px solid var(--secondary);
+}
+
+.pricing-price-cell {
+    min-width: 130px;
+}
+
+.price-note {
+    margin-top: 4px;
+    font-size: 0.74rem;
+    white-space: nowrap;
+}
+
+.price-badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--primary-light);
+    color: var(--primary);
+    font-weight: 700;
+}
+
+.price-badge--line {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
 .pricing-bulk-select {
     margin: 14px 0;
     font-size: 0.88rem;
