@@ -1,7 +1,13 @@
 .env
+.env.local
 users.json
 /node_modules
 /vendor
 .DS_Store
-.env.local
-users.json
+
+# Banco de dados SQLite e configuração local do servidor (nunca versionar)
+/data/*.sqlite
+/data/*.sqlite-journal
+/data/*.sqlite-wal
+/data/*.sqlite-shm
+/api/config.local.php

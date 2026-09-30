@@ -19,7 +19,7 @@
             } catch (e) { /* localStorage indisponível: mantém tema claro padrão */ }
         }());
     </script>
-    <link rel="stylesheet" href="style.css?v=2">
+    <link rel="stylesheet" href="style.css?v=4">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -63,7 +63,9 @@
                             <span style="font-size:0.85rem; color: rgba(255,255,255,0.8);">Usuário</span>
                             <div style="font-weight: 700; color:#fff;" id="currentUserName">--</div>
                         </div>
-                        <button id="supervisorBtn" onclick="showSupervisorPanel()" class="header-btn header-btn-success" style="display:none;">🧑‍💼 Supervisor</button>
+                        <button id="supervisorBtn" onclick="showSupervisorPanel()" class="header-btn header-btn-success" style="display:none;">🧑‍💼 Aprovações</button>
+                        <button id="usersBtn" onclick="showUsersModal()" class="header-btn header-btn-ghost" style="display:none;">👥 Usuários</button>
+                        <button onclick="showChangePasswordModal(false)" class="header-btn header-btn-ghost" title="Alterar minha senha">🔑 Senha</button>
                         <button onclick="logoutUser()" class="header-btn header-btn-danger">Sair</button>
                     </div>
                     <button id="loginBtn" onclick="showLoginModal()" class="header-btn header-btn-primary">Entrar</button>
@@ -75,6 +77,7 @@
         <nav class="app-tabs">
             <button class="tab-btn active" onclick="switchTab('tab-order')" id="btn-tab-order">📦 Novo Pedido</button>
             <button class="tab-btn" onclick="switchTab('tab-history')" id="btn-tab-history">📋 Histórico e Entregas</button>
+            <button class="tab-btn" onclick="switchTab('tab-pricing')" id="btn-tab-pricing" style="display:none;">💲 Tabela de Preços</button>
         </nav>
 
         <div id="tab-order" class="tab-content active">
@@ -207,7 +210,7 @@
                             <input type="number" id="orderDiscount" value="0" min="0" max="100" style="width: 80px;" oninput="updateOrderTable()">
                         </div>
                         <div style="display: flex; align-items: center; gap: 10px;">
-                            <label for="orderContract" style="margin-bottom: 0; min-width: 100px;">Contrato (%):</label>
+                            <label for="orderContract" style="margin-bottom: 0; min-width: 100px;" title="Acréscimo no pedido para cobrir um custo pago pela Hiperroll (ex.: percentual logístico). Aumenta o valor da nota e reduz a margem %.">Contrato (%):</label>
                             <input type="number" id="orderContract" value="0" min="0" max="100" style="width: 80px;" oninput="updateOrderTable()">
                         </div>
                         <label class="order-condition-toggle" for="orderEarlyPayment">
@@ -245,8 +248,6 @@
             <!-- Action buttons at bottom -->
             <div class="order-actions-row">
                 <button class="btn-action btn-action-ghost" onclick="switchTab('tab-history')">📋 Ver Meus Pedidos</button>
-                <button class="btn-action btn-action-utility" onclick="exportPortalBackup()">💾 Backup</button>
-                <button class="btn-action btn-action-utility" onclick="restorePortalBackupPrompt()">↩️ Restaurar</button>
                 <div class="action-divider"></div>
                 <button class="btn-action btn-action-accent btn-export" onclick="exportPdfControlled()">🖨️ PDF</button>
                 <button class="btn-action btn-action-secondary" onclick="saveDraftCurrentOrder()">💾 Salvar Rascunho</button>
@@ -262,14 +263,22 @@
                     <h2><span class="card-icon">📋</span> Meus Pedidos</h2>
                     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                         <input type="text" id="historySearchInput" placeholder="Buscar por Nº do Pedido, Cliente ou Comprador..." style="padding: 10px; border: 1px solid #ccc; border-radius: 6px; width: 280px;" oninput="renderHistoryTab()">
-                        <button onclick="renderHistoryTab()" style="padding:10px 15px; background:#0054A6; color:white; border:none; border-radius:6px; cursor:pointer;">Atualizar</button>
-                        <button onclick="exportPortalBackup()" style="padding:10px 12px; background:#2563eb; color:white; border:none; border-radius:6px; cursor:pointer;">💾 Backup</button>
-                        <button onclick="restorePortalBackupPrompt()" style="padding:10px 12px; background:#7c3aed; color:white; border:none; border-radius:6px; cursor:pointer;">↩️ Restaurar</button>
+                        <button onclick="reloadOrders()" style="padding:10px 15px; background:#0054A6; color:white; border:none; border-radius:6px; cursor:pointer;">Atualizar</button>
                         <button onclick="showTrashModal()" style="padding:10px 15px; background:#dc2626; color:white; border:none; border-radius:6px; cursor:pointer;">🗑️ Lixeira</button>
                     </div>
                 </div>
 
                 <div id="historyTabContent" style="display: flex; flex-direction: column; gap: 15px;">
+                    <!-- Preenchido via JavaScript -->
+                </div>
+            </section>
+        </div>
+
+        <!-- Tab: Tabela de Preços (gestor edita; administrador importa e consulta) -->
+        <div id="tab-pricing" class="tab-content" style="display: none;">
+            <section class="card" style="margin-top: 20px;">
+                <h2><span class="card-icon">💲</span> Tabela de Preços</h2>
+                <div id="pricingTabContent">
                     <!-- Preenchido via JavaScript -->
                 </div>
             </section>
@@ -335,8 +344,8 @@
                 <div class="modal-header-title">
                     <div class="modal-icon-badge">🧑‍💼</div>
                     <div>
-                        <h3 class="modal-title">Painel Supervisor</h3>
-                        <p class="modal-subtitle">Gerencie os pedidos enviados para aprovação.</p>
+                        <h3 class="modal-title">Aprovações</h3>
+                        <p class="modal-subtitle">Pedidos dos representantes aguardando a decisão do gestor.</p>
                     </div>
                 </div>
                 <button onclick="closeSupervisorPanel()" class="modal-close-btn" aria-label="Fechar">✕</button>
@@ -387,49 +396,114 @@
                 <input id="loginUsername" placeholder="Usuário" autocomplete="username">
                 <input id="loginPassword" type="password" placeholder="Senha" autocomplete="current-password">
                 <div class="login-actions">
-                    <button type="button" id="registerUserButton">Registrar Vendedor</button>
                     <button type="button" id="loginUserButton">Entrar</button>
                 </div>
-                <div class="login-note">Apenas registro de vendedores é permitido aqui. O supervisor terá um login exclusivo configurado separadamente.</div>
+                <div class="login-note">As contas são criadas pelo gestor. Esqueceu a senha? Peça ao gestor para redefini-la.</div>
                 <div id="loginMessage" class="login-message"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Usuários (gestor e administrador) -->
+    <div id="usersModal" class="modal-backdrop" style="display:none; position:fixed; z-index:1004;">
+        <div class="modal-panel modal-panel--lg">
+            <div class="modal-header">
+                <div class="modal-header-title">
+                    <div class="modal-icon-badge">👥</div>
+                    <div>
+                        <h3 class="modal-title">Usuários</h3>
+                        <p class="modal-subtitle">Crie as contas dos representantes e controle quem tem acesso.</p>
+                    </div>
+                </div>
+                <button onclick="closeUsersModal()" class="modal-close-btn" aria-label="Fechar">✕</button>
+            </div>
+            <div class="modal-body">
+                <form id="newUserForm" class="new-user-form" onsubmit="submitNewUser(event)" autocomplete="off">
+                    <div>
+                        <label for="newUserName">Nome</label>
+                        <input id="newUserName" placeholder="Ex.: João da Silva" required maxlength="80">
+                    </div>
+                    <div>
+                        <label for="newUserLogin">Login</label>
+                        <input id="newUserLogin" placeholder="Ex.: joao.silva" required pattern="[A-Za-z0-9._\-]{3,40}" title="3 a 40 caracteres: letras, números, ponto, hífen ou sublinhado">
+                    </div>
+                    <div>
+                        <label for="newUserRole">Papel</label>
+                        <select id="newUserRole"></select>
+                    </div>
+                    <div>
+                        <label for="newUserPassword">Senha provisória</label>
+                        <input id="newUserPassword" type="text" placeholder="Mínimo 8 caracteres" required minlength="8" autocomplete="new-password">
+                    </div>
+                    <button type="submit" class="btn-modal btn-modal-primary">Criar usuário</button>
+                </form>
+                <div id="usersMessage" class="modal-msg"></div>
+                <div id="usersTableContainer" class="users-table-container"></div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="exportPortalBackup()" class="btn-modal btn-modal-ghost" style="margin-right:auto;">⬇️ Baixar backup</button>
+                <button onclick="closeUsersModal()" class="btn-modal btn-modal-primary">Fechar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Revisão de preços: aparece quando o pedido aberto foi montado com uma versão anterior da tabela -->
+    <div id="repriceModal" class="modal-backdrop" style="display:none; position:fixed; z-index:1005;">
+        <div class="modal-panel modal-panel--lg">
+            <div class="modal-header">
+                <div class="modal-header-title">
+                    <div class="modal-icon-badge">💲</div>
+                    <div>
+                        <h3 class="modal-title">Preços atualizados</h3>
+                        <p id="repriceReason" class="modal-subtitle">A tabela de preços mudou.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-body">
+                <p style="color:var(--text-secondary); margin-bottom:14px; font-size:0.92rem; line-height:1.5;">Estes itens do pedido mudaram de preço. Escolha como seguir: manter os preços que você negociou (a margem é recalculada com o novo FOB) ou aplicar a nova tabela mantendo o mesmo desconto em R$ que cada item tinha.</p>
+                <div id="repriceModalBody"></div>
+            </div>
+            <div class="modal-footer reprice-footer">
+                <button onclick="resolveRepriceModal('keep')" class="btn-modal btn-modal-ghost">Manter meus preços negociados <small>margem: <span id="repriceKeepMargin">—</span></small></button>
+                <button onclick="resolveRepriceModal('table')" class="btn-modal btn-modal-primary">Usar os novos preços de tabela <small>margem: <span id="repriceTableMargin">—</span></small></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alterar senha (fica acima da tela de login para o primeiro acesso) -->
+    <div id="changePasswordModal" class="modal-backdrop" style="display:none; position:fixed; z-index:10001;">
+        <div class="modal-panel modal-panel--sm">
+            <div class="modal-header">
+                <div class="modal-header-title">
+                    <div class="modal-icon-badge">🔑</div>
+                    <div>
+                        <h3 class="modal-title">Alterar senha</h3>
+                        <p id="changePasswordSubtitle" class="modal-subtitle">Informe a senha atual e escolha uma nova.</p>
+                    </div>
+                </div>
+                <button id="changePasswordCloseBtn" onclick="closeChangePasswordModal()" class="modal-close-btn" aria-label="Fechar">✕</button>
+            </div>
+            <div class="modal-body">
+                <label for="currentPasswordInput">Senha atual</label>
+                <input id="currentPasswordInput" type="password" autocomplete="current-password">
+                <label for="newPasswordInput" style="margin-top:12px;">Nova senha (mínimo 8 caracteres)</label>
+                <input id="newPasswordInput" type="password" autocomplete="new-password">
+                <label for="confirmPasswordInput" style="margin-top:12px;">Repita a nova senha</label>
+                <input id="confirmPasswordInput" type="password" autocomplete="new-password">
+                <div id="changePasswordMessage" class="modal-msg"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="changePasswordCancelBtn" onclick="closeChangePasswordModal()" class="btn-modal btn-modal-ghost">Cancelar</button>
+                <button onclick="submitChangePassword()" class="btn-modal btn-modal-primary">Salvar nova senha</button>
             </div>
         </div>
     </div>
 
     <!-- html2pdf for controlled PDF export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js"></script>
-    <script src="data.js?v=5"></script>
-    <script>
-        (function () {
-            function showLoginMessage(message) {
-                var element = document.getElementById('loginMessage');
-                if (element) {
-                    element.style.display = 'block';
-                    element.textContent = message;
-                }
-            }
-
-            function bindLoginFallback() {
-                var button = document.getElementById('loginUserButton');
-                if (!button || button.dataset.boundFallback) return;
-                button.dataset.boundFallback = 'true';
-                button.addEventListener('click', function () {
-                    if (typeof window.loginUser === 'function') {
-                        window.loginUser();
-                    } else {
-                        showLoginMessage('O módulo de login não foi carregado. Verifique se o arquivo script_v5.js está na mesma pasta.');
-                    }
-                });
-            }
-
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', bindLoginFallback);
-            } else {
-                bindLoginFallback();
-            }
-        }());
-    </script>
-    <script src="script_v5.js?v=20260819"></script>
+    <!-- Tabelas de preço/custo: entregues pelo servidor somente para usuários logados -->
+    <script src="api/data.php"></script>
+    <script src="script_v5.js?v=20260930"></script>
     <script>
         window.addEventListener('load', function () {
             if (typeof window.loginUser !== 'function') {

@@ -5,9 +5,14 @@ function parseCSV(csv, delimiter = ';') {
     return lines.map(line => line.split(delimiter).map(cell => cell.trim().replace(/"/g, '')));
 }
 
+// Filled by applyCatalog() from the price table in use (see pricingCatalog below).
 const productsData = [];
 const freightData = {};
 const costsData = {};
+// Price table in use. source 'server' = database (editable by the gestor in the "Tabela de Preços" tab);
+// 'legacy' = data.js, used only until the table is imported into the database.
+let pricingCatalog = { source: 'none', imported: false, version: 0, canEdit: false, costLines: [], freight: [], products: [], warnings: [] };
+let legacyCatalog = null;
 const cart = []; // Store order items
 let currentOrderMargin = 0;
 let activeDraftId = null;
@@ -60,8 +65,9 @@ function getOrderDiscountPercent(conditions) {
         + (c.fobFreight ? c.fobFreightPercent : 0);
 }
 
-// Margin is value-weighted on the net price (after discounts). The contract %
-// grosses up the invoice but is passed back to the client, so it doesn't count as margin.
+// Margin is value-weighted. The contract % raises the invoice, but Hiperroll pays that same
+// amount out (logistics/contract cost), so profit stays net − FOB while the margin % is
+// measured against the full invoice: a contract lowers the margin percentage.
 function calculateOrderTotals(items, conditions) {
     const c = normalizeOrderConditions(conditions);
     const discountPercent = getOrderDiscountPercent(c);
@@ -75,7 +81,7 @@ function calculateOrderTotals(items, conditions) {
         const negotiatedUnit = Math.max(parseFloat(item.negotiatedPrice || item.cif) || 0, 0);
         const netUnit = negotiatedUnit * discountFactor;
         const invoiceUnit = netUnit * contractFactor;
-        const marginPercent = netUnit > 0 ? ((netUnit - fobUnit) / netUnit) * 100 : 0;
+        const marginPercent = invoiceUnit > 0 ? ((netUnit - fobUnit) / invoiceUnit) * 100 : 0;
 
         totals.totalQty += qty;
         totals.totalWeight += (parseFloat(item.weight) || 0) * qty;
@@ -87,7 +93,7 @@ function calculateOrderTotals(items, conditions) {
         return { item, qty, fobUnit, negotiatedUnit, netUnit, invoiceUnit, marginPercent, subtotal: invoiceUnit * qty };
     });
 
-    const margin = totals.totalNet > 0 ? ((totals.totalNet - totals.totalFob) / totals.totalNet) * 100 : 0;
+    const margin = totals.totalInvoice > 0 ? ((totals.totalNet - totals.totalFob) / totals.totalInvoice) * 100 : 0;
     return {
         ...totals,
         conditions: c,
@@ -174,10 +180,6 @@ const statusManager = {
         const saved = localStorage.getItem('orderStatus');
         const savedHistory = localStorage.getItem('orderStatusHistory');
 
-        if (!saved && typeof restorePortalSnapshotIfAvailable === 'function') {
-            restorePortalSnapshotIfAvailable();
-        }
-        
         if (saved) {
             this.currentStatus = saved;
         }
@@ -237,12 +239,8 @@ const statusManager = {
             return;
         }
 
-        // Para aprovar/rejeitar, permitir somente usuários específicos (Leon e Gabriel)
-        const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
-        const currentNormalized = normalize(user);
-        const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
-        if (!allowedApprovers.includes(currentNormalized)) {
-            alert('Apenas Gabriel ou Leon podem aprovar ou rejeitar pedidos.');
+        if (!authManager.isGestor()) {
+            alert('Somente o gestor pode aprovar ou rejeitar pedidos.');
             return;
         }
 
@@ -279,11 +277,9 @@ const statusManager = {
             statusSelect.style.color = color.text;
             statusSelect.style.fontWeight = '600';
             statusSelect.style.border = `2px solid ${color.text}`;
-            const currentUser = (typeof authManager !== 'undefined') ? authManager.getCurrentUser() : null;
-            const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
-            const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
+            const isGestor = typeof authManager !== 'undefined' && authManager.isGestor();
             Array.from(statusSelect.options).forEach(opt => {
-                if (['aprovado', 'rejeitado'].includes(opt.value) && !allowedApprovers.includes(normalize(currentUser))) {
+                if (['aprovado', 'rejeitado'].includes(opt.value) && !isGestor) {
                     opt.disabled = true;
                     opt.style.color = '#999';
                 } else {
@@ -298,8 +294,6 @@ const statusManager = {
     save() {
         localStorage.setItem('orderStatus', this.currentStatus);
         localStorage.setItem('orderStatusHistory', JSON.stringify(this.history));
-        const snapshot = createPortalSnapshot();
-        localStorage.setItem('portal_backup_snapshot', JSON.stringify(snapshot));
     },
     
     // Retorna o histórico formatado para exibição
@@ -317,161 +311,141 @@ const statusManager = {
 };
 // ==========================================
 
-// ========== GERENCIADOR DE AUTENTICAÇÃO (LOCAL) ==========
+// ========== CLIENTE DA API (servidor PHP) ==========
+const API_BASE = 'api/index.php';
+let apiCsrfToken = '';
+
+// Every call goes through here: sends the session cookie, the CSRF token on writes,
+// and turns server errors into Error objects with the server's message.
+async function apiRequest(action, { method = 'GET', body = null, retryOnCsrf = true } = {}) {
+    const options = { method, credentials: 'same-origin', headers: { Accept: 'application/json' } };
+    if (method !== 'GET') {
+        options.headers['Content-Type'] = 'application/json';
+        options.headers['X-CSRF-Token'] = apiCsrfToken;
+        options.body = JSON.stringify(body || {});
+    }
+
+    let response;
+    try {
+        response = await fetch(`${API_BASE}?action=${encodeURIComponent(action)}`, options);
+    } catch (networkError) {
+        throw new Error('Não foi possível falar com o servidor. Verifique sua conexão (o portal precisa estar publicado ou rodando com php -S).');
+    }
+
+    let data = null;
+    try {
+        data = await response.json();
+    } catch (parseError) {
+        data = null;
+    }
+
+    if (response.status === 419 && retryOnCsrf) {
+        await authManager.refreshSession();
+        return apiRequest(action, { method, body, retryOnCsrf: false });
+    }
+    if (response.status === 401 && action !== 'login') {
+        authManager.handleSessionExpired();
+    }
+    if (!response.ok || !data || data.success === false) {
+        const error = new Error((data && data.message) || `Erro ${response.status} ao comunicar com o servidor.`);
+        error.status = response.status;
+        error.code = (data && data.code) || null;
+        throw error;
+    }
+    if (data.csrfToken) apiCsrfToken = data.csrfToken;
+    return data;
+}
+
+// ========== AUTENTICAÇÃO (sessão no servidor) ==========
+const ROLES = Object.freeze({ GESTOR: 'gestor', ADMIN: 'admin', REP: 'representante' });
+const ROLE_LABELS = Object.freeze({ gestor: 'Gestor', admin: 'Administrador', representante: 'Representante' });
+
+// Roles here only decide what the screen shows; the server re-checks every action.
 const authManager = {
-    users: {}, // username -> { passwordHash, role }
+    profile: null,
     currentUser: null,
     currentRole: null,
 
     normalizeUsername(username) {
-        const normalized = String(username || '').trim().toLowerCase();
-        return normalized === 'gabriel' ? 'gabriel.ferreira' : normalized;
+        return String(username || '').trim().toLowerCase();
     },
 
-    findUser(username) {
-        const normalized = this.normalizeUsername(username);
-        if (!normalized) return null;
-        const matchedKey = Object.keys(this.users).find(key => this.normalizeUsername(key) === normalized);
-        return matchedKey ? { username: matchedKey, user: this.users[matchedKey] } : null;
+    setProfile(user) {
+        this.profile = user || null;
+        this.currentUser = user ? user.username : null;
+        this.currentRole = user ? user.role : null;
+    },
+
+    async refreshSession() {
+        const data = await apiRequest('session');
+        this.setProfile(data.user);
+        return data.user;
     },
 
     async init() {
-        const usersRaw = localStorage.getItem('hr_users');
-        const current = localStorage.getItem('hr_currentUser');
-        const currentRole = localStorage.getItem('hr_currentRole');
         try {
-            const parsed = usersRaw ? JSON.parse(usersRaw) : {};
-            // Compatibilidade com formato antigo: senha em string simples
-            this.users = Object.entries(parsed).reduce((memo, [username, value]) => {
-                if (typeof value === 'string') {
-                    memo[username] = { passwordHash: value, role: 'vendedor' };
-                } else {
-                    memo[username] = {
-                        passwordHash: value && value.passwordHash ? value.passwordHash : '',
-                        role: String((value && value.role) || 'vendedor').trim().toLowerCase()
-                    };
-                }
-                return memo;
-            }, {});
-        } catch (e) {
-            this.users = {};
+            await this.refreshSession();
+        } finally {
+            this.updateUI();
         }
-        const currentUserEntry = this.findUser(current);
-        this.currentUser = currentUserEntry ? currentUserEntry.username : null;
-        this.currentRole = currentUserEntry ? String(currentUserEntry.user.role || 'vendedor').trim().toLowerCase() : null;
-
-        // Garantir usuário padrão Leon como Desenvolvedor
-        const defaultDevUser = 'Leon';
-        const defaultDevPass = 'REMOVIDO';
-        const defaultSupervisorUser = 'Gabriel.Ferreira';
-        const defaultSupervisorPass = 'REMOVIDO';
-
-        const devHash = await this.hashPassword(defaultDevPass);
-        const supervisorHash = await this.hashPassword(defaultSupervisorPass);
-
-        const existingDev = this.findUser(defaultDevUser);
-        if (!existingDev) {
-            this.users[defaultDevUser] = { passwordHash: devHash, role: 'desenvolvedor' };
-        } else {
-            if (existingDev.user.passwordHash !== devHash) {
-                this.users[existingDev.username].passwordHash = devHash;
-            }
-            if (existingDev.user.role !== 'desenvolvedor') {
-                this.users[existingDev.username].role = 'desenvolvedor';
-            }
-        }
-
-        const existingSupervisor = this.findUser(defaultSupervisorUser);
-        if (!existingSupervisor) {
-            this.users[defaultSupervisorUser] = { passwordHash: supervisorHash, role: 'supervisor' };
-        } else {
-            if (existingSupervisor.user.passwordHash !== supervisorHash) {
-                this.users[existingSupervisor.username].passwordHash = supervisorHash;
-            }
-            if (existingSupervisor.user.role !== 'supervisor') {
-                this.users[existingSupervisor.username].role = 'supervisor';
-            }
-        }
-
-        if (this.currentUser && this.users[this.currentUser]) {
-            this.currentRole = this.users[this.currentUser].role;
-        }
-
-        this.save();
-        this.updateUI();
-    },
-
-    async hashPassword(password) {
-        const fallbackHashes = {
-            REMOVIDO: 'REMOVIDO',
-            REMOVIDO: 'REMOVIDO'
-        };
-        if (!globalThis.crypto || !globalThis.crypto.subtle) {
-            if (Object.prototype.hasOwnProperty.call(fallbackHashes, password)) {
-                return fallbackHashes[password];
-            }
-            throw new Error('A segurança do navegador está indisponível. Abra o portal por um servidor local.');
-        }
-        const enc = new TextEncoder();
-        const data = enc.encode(password);
-        const hash = await globalThis.crypto.subtle.digest('SHA-256', data);
-        return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
-    },
-
-    async register(username, password, role = 'vendedor') {
-        const normalized = this.normalizeUsername(username);
-        if (!normalized || !password) throw new Error('Usuário ou senha inválidos');
-        if (this.findUser(username)) throw new Error('Usuário já existe');
-        const h = await this.hashPassword(password);
-        const normalizedRole = String(role || 'vendedor').trim().toLowerCase();
-        this.users[username.trim()] = { passwordHash: h, role: normalizedRole };
-        this.currentUser = username.trim();
-        this.currentRole = normalizedRole;
-        this.save();
-        this.updateUI();
-        return true;
     },
 
     async login(username, password) {
-        const normalized = this.normalizeUsername(username);
-        if (!normalized || !password) throw new Error('Usuário ou senha inválidos');
-        const found = this.findUser(username);
-        if (!found) {
-            throw new Error('Credenciais incorretas');
-        }
-        const h = await this.hashPassword(password);
-        if (found.user.passwordHash !== h) {
-            throw new Error('Credenciais incorretas');
-        }
-        this.currentUser = found.username;
-        this.currentRole = String(found.user.role || 'vendedor').trim().toLowerCase();
-        this.save();
+        if (!username || !password) throw new Error('Informe usuário e senha.');
+        const data = await apiRequest('login', { method: 'POST', body: { username, password } });
+        this.setProfile(data.user);
         this.updateUI();
-        return true;
+        return data.user;
     },
 
-    logout() {
-        this.currentUser = null;
-        this.currentRole = null;
-        this.save();
+    async logout() {
+        try {
+            await apiRequest('logout', { method: 'POST' });
+        } catch (e) {
+            console.warn('Falha ao encerrar a sessão no servidor:', e);
+        }
+        this.setProfile(null);
         this.updateUI();
     },
 
-    save() {
-        localStorage.setItem('hr_users', JSON.stringify(this.users));
-        localStorage.setItem('hr_currentUser', this.currentUser || '');
-        localStorage.setItem('hr_currentRole', this.currentRole || '');
-        if (typeof savePortalSnapshot === 'function') {
-            savePortalSnapshot();
-        }
+    handleSessionExpired() {
+        if (!this.currentUser) return;
+        this.setProfile(null);
+        this.updateUI();
+        showLoginModal('Sua sessão expirou. Faça login novamente.');
     },
 
     getCurrentUser() {
         return this.currentUser;
     },
 
+    getCurrentUserId() {
+        return this.profile ? this.profile.id : null;
+    },
+
+    getDisplayName() {
+        return this.profile ? this.profile.displayName : '';
+    },
+
     getCurrentUserRole() {
-        return String(this.currentRole || 'vendedor').trim().toLowerCase();
+        return String(this.currentRole || '').trim().toLowerCase();
+    },
+
+    isGestor() {
+        return this.getCurrentUserRole() === ROLES.GESTOR;
+    },
+
+    canManageUsers() {
+        return [ROLES.GESTOR, ROLES.ADMIN].includes(this.getCurrentUserRole());
+    },
+
+    // Gestor edits the price table; admin can import it and look, read-only.
+    canViewPricingAdmin() {
+        return [ROLES.GESTOR, ROLES.ADMIN].includes(this.getCurrentUserRole());
+    },
+
+    mustChangePassword() {
+        return Boolean(this.profile && this.profile.mustChangePassword);
     },
 
     updateUI() {
@@ -479,25 +453,25 @@ const authManager = {
         const currentUserDiv = document.getElementById('currentUser');
         const currentUserName = document.getElementById('currentUserName');
         const supervisorBtn = document.getElementById('supervisorBtn');
+        const usersBtn = document.getElementById('usersBtn');
+        const pricingTabBtn = document.getElementById('btn-tab-pricing');
+        if (pricingTabBtn) pricingTabBtn.style.display = this.currentUser && this.canViewPricingAdmin() ? '' : 'none';
 
         if (!loginBtn || !currentUserDiv || !currentUserName || !supervisorBtn) return;
 
         if (this.currentUser) {
             loginBtn.style.display = 'none';
             currentUserDiv.style.display = 'flex';
-            currentUserName.textContent = `${this.currentUser} (${this.getCurrentUserRole()})`;
-            if (['supervisor', 'desenvolvedor'].includes(this.getCurrentUserRole())) {
-                supervisorBtn.style.display = 'inline-flex';
-            } else {
-                supervisorBtn.style.display = 'none';
-            }
+            currentUserName.textContent = `${this.getDisplayName() || this.currentUser} (${ROLE_LABELS[this.getCurrentUserRole()] || this.getCurrentUserRole()})`;
+            supervisorBtn.style.display = this.isGestor() ? 'inline-flex' : 'none';
+            if (usersBtn) usersBtn.style.display = this.canManageUsers() ? 'inline-flex' : 'none';
         } else {
             loginBtn.style.display = 'inline-block';
             currentUserDiv.style.display = 'none';
             currentUserName.textContent = '--';
             supervisorBtn.style.display = 'none';
+            if (usersBtn) usersBtn.style.display = 'none';
         }
-        // Refresh drafts, history and supervisor panel when UI changes (login/logout)
         try {
             if (typeof renderDraftsPanel === 'function') renderDraftsPanel();
         } catch (e) {}
@@ -529,9 +503,6 @@ const orderManager = {
 
     save() {
         localStorage.setItem('orderMeta', JSON.stringify(this.meta));
-        if (typeof savePortalSnapshot === 'function') {
-            savePortalSnapshot();
-        }
     },
 
     ensureCreator(username) {
@@ -551,334 +522,71 @@ const orderManager = {
     }
 };
 
-// ========== GERENCIADOR DE SUBMISSÃO DE PEDIDOS ==========
-function readJsonStorage(key, fallback = {}) {
-    try {
-        const raw = localStorage.getItem(key);
-        if (!raw) return fallback;
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === 'object' ? parsed : fallback;
-    } catch (error) {
-        return fallback;
-    }
-}
-
-function createPortalSnapshot() {
-    const deletedSubmissions = deletedSubmissionsManager && deletedSubmissionsManager.deleted && Object.keys(deletedSubmissionsManager.deleted).length
-        ? deletedSubmissionsManager.deleted
-        : readJsonStorage('orderDeletions', {});
-    const activeSubmissions = orderSubmissionManager && orderSubmissionManager.submissions && Object.keys(orderSubmissionManager.submissions).length
-        ? orderSubmissionManager.submissions
-        : readJsonStorage('orderSubmissions', {});
-    const orderSubmissions = Object.fromEntries(
-        Object.entries(activeSubmissions || {}).filter(([id]) => !deletedSubmissions || !deletedSubmissions[id])
-    );
-
-    return {
-        exportedAt: new Date().toISOString(),
-        version: 1,
-        data: {
-            orderSubmissions,
-            deletedSubmissions,
-            hr_users: authManager && authManager.users ? authManager.users : readJsonStorage('hr_users', {}),
-            hr_currentUser: authManager && authManager.currentUser ? authManager.currentUser : (localStorage.getItem('hr_currentUser') || ''),
-            hr_currentRole: authManager && authManager.currentRole ? authManager.currentRole : (localStorage.getItem('hr_currentRole') || ''),
-            orderMeta: orderManager && orderManager.meta ? orderManager.meta : readJsonStorage('orderMeta', { createdBy: null, createdAt: null }),
-            orderStatus: statusManager && statusManager.currentStatus ? statusManager.currentStatus : (localStorage.getItem('orderStatus') || 'rascunho'),
-            orderStatusHistory: statusManager && statusManager.history ? statusManager.history : readJsonStorage('orderStatusHistory', [])
-        }
-    };
-}
-
-function savePortalSnapshot() {
-    try {
-        const currentOrderSubmissions = orderSubmissionManager && orderSubmissionManager.submissions ? orderSubmissionManager.submissions : readJsonStorage('orderSubmissions', {});
-        const managerDeletedSubmissions = deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : {};
-        const storedDeletedSubmissions = Object.assign(
-            {},
-            readJsonStorage('orderDeletionsBackup', {}),
-            readJsonStorage('orderDeletions', {})
-        );
-        const currentDeletedSubmissions = Object.keys(managerDeletedSubmissions).length > 0 ? managerDeletedSubmissions : storedDeletedSubmissions;
-        const backupOrderSubmissions = readJsonStorage('orderSubmissionsBackup', {});
-        const hasStoredData = Object.keys(currentOrderSubmissions || {}).length > 0 || Object.keys(currentDeletedSubmissions || {}).length > 0 || Object.keys(backupOrderSubmissions || {}).length > 0;
-        if (!hasStoredData) {
-            return;
-        }
-
-        const snapshot = createPortalSnapshot();
-        localStorage.setItem('portal_backup_snapshot', JSON.stringify(snapshot));
-        localStorage.setItem('portal_backup_snapshot_latest', JSON.stringify(snapshot));
-    } catch (error) {
-        console.warn('Não foi possível salvar snapshot automático:', error);
-    }
-}
-
-function restorePortalSnapshotIfAvailable() {
-    try {
-        const currentSaved = localStorage.getItem('orderSubmissions');
-        let currentOrderMap = {};
-        try {
-            currentOrderMap = currentSaved ? JSON.parse(currentSaved) : {};
-        } catch (_) {
-            currentOrderMap = {};
-        }
-
-        if (currentSaved && currentSaved !== 'null' && Object.keys(currentOrderMap || {}).length > 0) {
-            return true;
-        }
-
-        const backupSaved = localStorage.getItem('orderSubmissionsBackup');
-        let backupOrderMap = {};
-        try {
-            backupOrderMap = backupSaved ? JSON.parse(backupSaved) : {};
-        } catch (_) {
-            backupOrderMap = {};
-        }
-
-        if (backupSaved && backupSaved !== 'null' && Object.keys(backupOrderMap || {}).length > 0) {
-            localStorage.setItem('orderSubmissions', JSON.stringify(backupOrderMap));
-            if (orderSubmissionManager) orderSubmissionManager.submissions = backupOrderMap;
-            return true;
-        }
-
-        const raw = localStorage.getItem('portal_backup_snapshot') || localStorage.getItem('portal_backup_snapshot_latest');
-        if (!raw) return false;
-        const snapshot = JSON.parse(raw);
-        const data = snapshot && snapshot.data ? snapshot.data : snapshot;
-        if (!data) return false;
-
-        const hasOrderData = !!(data.orderSubmissions && Object.keys(data.orderSubmissions).length > 0);
-        const hasUserData = !!(data.hr_users && Object.keys(data.hr_users).length > 0);
-        if (!hasOrderData && !hasUserData) return false;
-
-        const restoredOrderMap = data.orderSubmissions && Object.keys(data.orderSubmissions).length > 0
-            ? Object.assign({}, currentOrderMap || {}, data.orderSubmissions || {})
-            : (currentOrderMap || {});
-
-        const storedDeletedSubmissions = readJsonStorage('orderDeletions', {});
-        const deletedIds = Object.keys(storedDeletedSubmissions).length > 0
-            ? storedDeletedSubmissions
-            : (data.deletedSubmissions || {});
-        Object.keys(deletedIds).forEach(id => delete restoredOrderMap[id]);
-
-        if (data.orderSubmissions) {
-            localStorage.setItem('orderSubmissions', JSON.stringify(restoredOrderMap));
-            if (orderSubmissionManager) orderSubmissionManager.submissions = restoredOrderMap;
-        }
-        const currentDeletedSubmissions = Object.assign(
-            {},
-            readJsonStorage('orderDeletionsBackup', {}),
-            readJsonStorage('orderDeletions', {})
-        );
-        const restoredDeletedSubmissions = Object.keys(currentDeletedSubmissions).length > 0
-            ? currentDeletedSubmissions
-            : (data.deletedSubmissions && Object.keys(data.deletedSubmissions).length > 0 ? data.deletedSubmissions : {});
-        if (Object.keys(restoredDeletedSubmissions).length > 0 || data.deletedSubmissions) {
-            localStorage.setItem('orderDeletions', JSON.stringify(restoredDeletedSubmissions));
-            if (deletedSubmissionsManager) deletedSubmissionsManager.deleted = restoredDeletedSubmissions;
-        }
-        if (data.hr_users) {
-            localStorage.setItem('hr_users', JSON.stringify(data.hr_users));
-            if (authManager) authManager.users = data.hr_users;
-        }
-        if (data.hr_currentUser !== undefined) {
-            localStorage.setItem('hr_currentUser', String(data.hr_currentUser || ''));
-            if (authManager) authManager.currentUser = data.hr_currentUser || null;
-        }
-        if (data.hr_currentRole !== undefined) {
-            localStorage.setItem('hr_currentRole', String(data.hr_currentRole || ''));
-            if (authManager) authManager.currentRole = data.hr_currentRole || null;
-        }
-        if (data.orderMeta) {
-            localStorage.setItem('orderMeta', JSON.stringify(data.orderMeta));
-            if (orderManager) orderManager.meta = data.orderMeta;
-        }
-        if (data.orderStatus !== undefined) {
-            localStorage.setItem('orderStatus', String(data.orderStatus));
-            if (statusManager) statusManager.currentStatus = data.orderStatus || 'rascunho';
-        }
-        if (data.orderStatusHistory) {
-            localStorage.setItem('orderStatusHistory', JSON.stringify(data.orderStatusHistory));
-            if (statusManager) statusManager.history = Array.isArray(data.orderStatusHistory) ? data.orderStatusHistory : [];
-        }
-
-        return true;
-    } catch (error) {
-        console.warn('Backup automático indisponível:', error);
-        return false;
-    }
-}
-
-window.createPortalSnapshot = createPortalSnapshot;
-window.savePortalSnapshot = savePortalSnapshot;
-window.restorePortalSnapshotIfAvailable = restorePortalSnapshotIfAvailable;
-
+// ========== PEDIDOS (cache local + gravação no servidor) ==========
+// Screens read from these in-memory caches synchronously; every change goes to the
+// API first and the cache is updated with what the server actually saved.
 const orderSubmissionManager = {
-    submissions: {}, // id -> { id, orderNumber, clientName, representativeName, cart, status, submittedAt, submittedBy, rejectionReason, rejectionBy, rejectionAt, approvalAt, supervisorNote }
+    submissions: {},
 
-    init() {
-        const saved = localStorage.getItem('orderSubmissions');
-        const backup = localStorage.getItem('orderSubmissionsBackup') || localStorage.getItem('orderSubmissions_backup');
-        const snapshotRaw = localStorage.getItem('portal_backup_snapshot') || localStorage.getItem('portal_backup_snapshot_latest');
-
-        try {
-            const parsedSaved = saved && saved !== 'null' ? JSON.parse(saved) : null;
-            const parsedBackup = backup && backup !== 'null' ? JSON.parse(backup) : null;
-            const parsedSnapshot = snapshotRaw && snapshotRaw !== 'null' ? JSON.parse(snapshotRaw) : null;
-            const snapshotData = parsedSnapshot && parsedSnapshot.data ? parsedSnapshot.data : parsedSnapshot;
-            const parsedSnapshotOrders = snapshotData && snapshotData.orderSubmissions ? snapshotData.orderSubmissions : null;
-            const deletedOrders = Object.assign(
-                {},
-                readJsonStorage('orderDeletionsBackup', {}),
-                readJsonStorage('orderDeletions', {})
-            );
-
-            const merged = Object.assign(
-                {},
-                parsedBackup && typeof parsedBackup === 'object' ? parsedBackup : {},
-                parsedSaved && typeof parsedSaved === 'object' ? parsedSaved : {},
-                parsedSnapshotOrders && typeof parsedSnapshotOrders === 'object' ? parsedSnapshotOrders : {}
-            );
-
-            Object.keys(deletedOrders).forEach(id => delete merged[id]);
-
-            this.submissions = merged && Object.keys(merged).length > 0 ? merged : {};
-
-            if (Object.keys(this.submissions).length > 0) {
-                localStorage.setItem('orderSubmissions', JSON.stringify(this.submissions));
-                localStorage.setItem('orderSubmissionsBackup', JSON.stringify(this.submissions));
-            }
-        } catch (e) {
-            this.submissions = {};
-            const fallback = (backup && backup !== 'null') ? (() => { try { return JSON.parse(backup); } catch (_) { return {}; } })() : {};
-            this.submissions = fallback && Object.keys(fallback).length > 0 ? fallback : {};
-            if (Object.keys(this.submissions).length > 0) {
-                localStorage.setItem('orderSubmissions', JSON.stringify(this.submissions));
-                localStorage.setItem('orderSubmissionsBackup', JSON.stringify(this.submissions));
-            }
-        }
-
-        if (!Object.keys(this.submissions || {}).length && typeof restorePortalSnapshotIfAvailable === 'function') {
-            restorePortalSnapshotIfAvailable();
-        }
+    setAll(orders) {
+        this.submissions = {};
+        (orders || []).forEach(order => {
+            this.submissions[order.id] = order;
+        });
     },
 
-    save() {
-        if (!this.submissions || Object.keys(this.submissions).length === 0) {
-            const backup = localStorage.getItem('orderSubmissionsBackup');
-            if (backup && backup !== 'null') {
-                try {
-                    const parsed = JSON.parse(backup);
-                    if (parsed && Object.keys(parsed).length > 0) {
-                        this.submissions = parsed;
-                        localStorage.setItem('orderSubmissions', JSON.stringify(parsed));
-                        return;
-                    }
-                } catch (_) {}
-            }
-            return;
-        }
-
-        const serialized = JSON.stringify(this.submissions);
-        localStorage.setItem('orderSubmissions', serialized);
-        localStorage.setItem('orderSubmissionsBackup', serialized);
-        if (typeof savePortalSnapshot === 'function') {
-            savePortalSnapshot();
-        }
+    upsert(order) {
+        if (!order) return;
+        this.submissions[order.id] = order;
+        delete deletedSubmissionsManager.deleted[order.id];
     },
 
-    generateId() {
-        return 'order_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    async saveDraft(draftId, order) {
+        const data = await apiRequest('orders.saveDraft', { method: 'POST', body: { id: draftId, order } });
+        this.upsert(data.order);
+        hiperrollOrderNumberManager.setPreview(data.nextNumber);
+        return data.order;
     },
 
-    saveDraft(orderNumber, clientName, representativeName, cart, savedBy, draftId = null, proposalValidity = '', conditions = null) {
-        if (cart.length === 0) {
-            throw new Error('Adicione itens antes de salvar o rascunho.');
-        }
-
-        const now = new Date().toISOString();
-        if (draftId && this.submissions[draftId] && this.submissions[draftId].status !== 'rascunho') {
-            draftId = null;
-        }
-        const id = draftId && this.submissions[draftId] ? draftId : this.generateId();
-        this.submissions[id] = {
-            id,
-            orderNumber: orderNumber?.trim() || '',
-            clientName: clientName?.trim() || '',
-            representativeName: representativeName?.trim() || '',
-            proposalValidity: proposalValidity?.trim() || this.submissions[id]?.proposalValidity || '',
-            conditions: normalizeOrderConditions(conditions),
-            cart: JSON.parse(JSON.stringify(cart)),
-            status: 'rascunho',
-            submittedAt: this.submissions[id]?.submittedAt || '',
-            submittedBy: this.submissions[id]?.submittedBy || savedBy,
-            savedAt: now,
-            savedBy: savedBy,
-            rejectionReason: '',
-            rejectionBy: '',
-            rejectionAt: '',
-            approvalAt: '',
-            approvalBy: '',
-            supervisorNote: this.submissions[id]?.supervisorNote || ''
-        };
-
-        this.save();
-        return id;
+    async submitOrder(draftId, order) {
+        const data = await apiRequest('orders.submit', { method: 'POST', body: { id: draftId, order } });
+        this.upsert(data.order);
+        hiperrollOrderNumberManager.setPreview(data.nextNumber);
+        return data.order;
     },
 
-    loadDrafts() {
-        return this.getDrafts();
+    async approve(submissionIds, supervisorNote = '') {
+        const ids = Array.isArray(submissionIds) ? submissionIds : [submissionIds];
+        const data = await apiRequest('orders.approve', { method: 'POST', body: { ids, note: supervisorNote } });
+        await loadServerData();
+        return data;
     },
 
-    submitOrder(orderNumber, clientName, representativeName, cart, submittedBy, draftId = null, proposalValidity = '', conditions = null) {
-        if (!orderNumber?.trim() || cart.length === 0) {
-            throw new Error('Pedido deve ter número e itens');
-        }
+    async reject(submissionIds, reason, supervisorNote = '') {
+        const ids = Array.isArray(submissionIds) ? submissionIds : [submissionIds];
+        const data = await apiRequest('orders.reject', { method: 'POST', body: { ids, reason, note: supervisorNote } });
+        await loadServerData();
+        return data;
+    },
 
-        // Enforced here (not only in the UI) so no screen can submit below the minimum silently.
-        const normalizedConditions = normalizeOrderConditions(conditions);
-        const pricing = calculateOrderTotals(cart, normalizedConditions);
-        if (pricing.belowMinimum && normalizedConditions.lowMarginJustification.length < PRICING_RULES.MIN_JUSTIFICATION_LENGTH) {
-            throw new Error(`A margem do pedido (${pricing.margin.toFixed(2)}%) está abaixo do mínimo de ${normalizedConditions.minMargin}%. Informe uma justificativa com pelo menos ${PRICING_RULES.MIN_JUSTIFICATION_LENGTH} caracteres para enviar.`);
-        }
-        if (!pricing.belowMinimum) {
-            normalizedConditions.lowMarginJustification = '';
-        }
+    async setSupervisorNote(submissionId, note) {
+        const data = await apiRequest('orders.note', { method: 'POST', body: { id: submissionId, note } });
+        await loadServerData();
+        return data.order;
+    },
 
-        const now = new Date().toISOString();
-        const useDraftId = draftId && this.submissions[draftId] && this.submissions[draftId].status === 'rascunho';
-        const id = useDraftId ? draftId : this.generateId();
-        this.submissions[id] = {
-            id,
-            orderNumber: orderNumber.trim(),
-            clientName: clientName.trim(),
-            representativeName: representativeName.trim(),
-            proposalValidity: proposalValidity?.trim() || this.submissions[id]?.proposalValidity || '',
-            conditions: normalizedConditions,
-            pricingSnapshot: {
-                margin: pricing.margin,
-                discountPercent: pricing.discountPercent,
-                totalNet: pricing.totalNet,
-                totalInvoice: pricing.totalInvoice,
-                belowMinimum: pricing.belowMinimum
-            },
-            cart: JSON.parse(JSON.stringify(cart)), // Deep copy
-            status: 'analise', // analise, aprovado, rejeitado, rascunho
-            submittedAt: now,
-            submittedBy: submittedBy,
-            savedAt: this.submissions[id]?.savedAt || now,
-            savedBy: this.submissions[id]?.savedBy || submittedBy,
-            rejectionReason: '',
-            rejectionBy: '',
-            rejectionAt: '',
-            approvalAt: '',
-            approvalBy: '',
-            supervisorNote: this.submissions[id]?.supervisorNote || ''
-        };
+    async moveToTrash(submissionIds) {
+        const ids = Array.isArray(submissionIds) ? submissionIds : [submissionIds];
+        const data = await apiRequest('orders.trash', { method: 'POST', body: { ids } });
+        await loadServerData();
+        return data.trashed;
+    },
 
-        this.save();
-        return id;
+    async registerBilling(submissionId, billedItemsMap, invoiceDataUrl, invoiceName) {
+        const invoice = invoiceDataUrl ? { dataUrl: invoiceDataUrl, name: invoiceName } : null;
+        const data = await apiRequest('orders.billing', { method: 'POST', body: { id: submissionId, billed: billedItemsMap, invoice } });
+        this.upsert(data.order);
+        return data.order;
     },
 
     getAll() {
@@ -886,21 +594,16 @@ const orderSubmissionManager = {
     },
 
     getPending() {
-        if (!this.submissions) return [];
-        return Object.values(this.submissions).filter(s => s.status === 'analise');
+        return this.getAll().filter(s => s.status === 'analise');
     },
 
     getDrafts() {
-        if (!this.submissions) return [];
-        return Object.values(this.submissions).filter(s => s.status === 'rascunho');
+        return this.getAll().filter(s => s.status === 'rascunho');
     },
 
-    getUserSubmissions(user) {
-        const normalizedUser = authManager.normalizeUsername(user);
-        return Object.values(this.submissions).filter(s =>
-            authManager.normalizeUsername(s.submittedBy) === normalizedUser ||
-            authManager.normalizeUsername(s.savedBy) === normalizedUser
-        );
+    getOwnSubmissions() {
+        const userId = authManager.getCurrentUserId();
+        return this.getAll().filter(s => s.ownerId === userId);
     },
 
     calculateMargin(submission) {
@@ -908,205 +611,41 @@ const orderSubmissionManager = {
         return calculateOrderTotals(submission.cart, submission.conditions).margin;
     },
 
-    refreshMissedForecastDates() {
-        const all = Object.values(this.submissions || {});
-        all.forEach(submission => {
-            if (!submission || submission.status !== 'aprovado' || submission.billingStatus === 'completo' || !submission.predictedBillingDate) return;
-            const predictedDate = new Date(submission.predictedBillingDate);
-            if (Number.isNaN(predictedDate.getTime())) return;
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const predictedDay = new Date(predictedDate);
-            predictedDay.setHours(0, 0, 0, 0);
-            if (today > predictedDay) {
-                const nextDate = new Date(predictedDate.getTime() + (5 * 24 * 60 * 60 * 1000));
-                submission.predictedBillingDate = nextDate.toISOString();
-            }
-        });
-        this.save();
-    },
-
-    approve(submissionIds, approvedBy, supervisorNote = '') {
-        const ids = Array.isArray(submissionIds) ? submissionIds : [submissionIds];
-        ids.forEach(id => {
-            if (this.submissions[id]) {
-                this.submissions[id].status = 'aprovado';
-                this.submissions[id].approvalAt = new Date().toISOString();
-                this.submissions[id].approvalBy = approvedBy;
-                const approvalDate = new Date(this.submissions[id].approvalAt);
-                const predictedBilling = new Date(approvalDate.getTime() + 8 * 24 * 60 * 60 * 1000);
-                this.submissions[id].predictedBillingDate = predictedBilling.toISOString();
-                this.submissions[id].rejectionReason = '';
-                this.submissions[id].supervisorNote = supervisorNote || this.submissions[id].supervisorNote || '';
-                try {
-                    if (typeof statusManager !== 'undefined' && statusManager && typeof statusManager.addHistoryEntry === 'function') {
-                        statusManager.addHistoryEntry('aprovado', 'Aprovado por supervisor', approvedBy);
-                        statusManager.currentStatus = 'aprovado';
-                        statusManager.updateUI();
-                    }
-                } catch (e) {
-                    console.warn('Não foi possível registrar histórico de aprovação:', e);
-                }
-            }
-        });
-        this.save();
-    },
-
-    reject(submissionIds, reason, rejectedBy, supervisorNote = '') {
-        const ids = Array.isArray(submissionIds) ? submissionIds : [submissionIds];
-        ids.forEach(id => {
-            if (this.submissions[id]) {
-                this.submissions[id].status = 'rejeitado';
-                this.submissions[id].rejectionReason = reason || '';
-                this.submissions[id].rejectionBy = rejectedBy;
-                this.submissions[id].rejectionAt = new Date().toISOString();
-                this.submissions[id].supervisorNote = supervisorNote || this.submissions[id].supervisorNote || '';
-                try {
-                    if (typeof statusManager !== 'undefined' && statusManager && typeof statusManager.addHistoryEntry === 'function') {
-                        statusManager.addHistoryEntry('rejeitado', reason || 'Rejeitado pelo supervisor', rejectedBy);
-                        statusManager.currentStatus = 'rejeitado';
-                        statusManager.updateUI();
-                    }
-                } catch (e) {
-                    console.warn('Não foi possível registrar histórico de rejeição:', e);
-                }
-            }
-        });
-        this.save();
-    },
-
-    setSupervisorNote(submissionId, note) {
-        const submission = this.submissions[submissionId];
-        if (!submission) return false;
-        submission.supervisorNote = note || '';
-        this.save();
-        return true;
-    },
-
     getById(id) {
         return this.submissions[id] || null;
     },
 
-    deleteSubmission(id) {
-        if (this.submissions[id]) {
-            delete this.submissions[id];
-            this.save();
-            return true;
-        }
-        return false;
-    },
-
     getByOrderNumber(orderNumber) {
-        return Object.values(this.submissions).find(s => s.orderNumber === orderNumber);
+        return this.getAll().find(s => s.orderNumber === orderNumber);
     }
 };
 
-// ========== GERENCIADOR DE NÚMEROS HIPER ROLL ==========
+// ========== NÚMERO HIPER ROLL ==========
+// The server assigns the definitive number when the order is first saved (so two
+// representatives can never get the same one); here we only show the next expected number.
 const hiperrollOrderNumberManager = {
-    counterKey: 'hiperroll_order_counter',
-    
-    init() {
-        // Inicializar contador se não existir
-        if (!localStorage.getItem(this.counterKey)) {
-            localStorage.setItem(this.counterKey, '0');
-        }
+    preview: '',
+
+    setPreview(nextNumber) {
+        if (nextNumber) this.preview = nextNumber;
     },
-    
-    getNextOrderNumber() {
-        const currentCounter = parseInt(localStorage.getItem(this.counterKey)) || 0;
-        const nextCounter = currentCounter + 1;
-        localStorage.setItem(this.counterKey, nextCounter.toString());
-        
-        // Formatar com 5 dígitos (00001, 00002, etc.)
-        return String(nextCounter).padStart(5, '0');
-    },
-    
-    getCurrentOrderNumber() {
-        const currentCounter = parseInt(localStorage.getItem(this.counterKey)) || 0;
-        return String(currentCounter).padStart(5, '0');
-    },
-    
-    resetCounter() {
-        localStorage.setItem(this.counterKey, '0');
+
+    applyToForm() {
+        const field = document.getElementById('orderNumberHiperroll');
+        if (field) field.value = this.preview;
+        updateHeaderInfo();
     }
 };
 
-// ========== GERENCIADOR DE EXCLUSÕES (HISTÓRICO/LIXEIRA) ==========
+// ========== LIXEIRA ==========
 const deletedSubmissionsManager = {
-    deletedKey: 'orderDeletions',
-    deleted: {}, // id -> { id, originalSubmission, deletedAt, deletedBy, reason }
+    deleted: {},
 
-    init() {
-        const saved = localStorage.getItem(this.deletedKey);
-        const backup = localStorage.getItem('orderDeletionsBackup');
-        try {
-            const parsedSaved = saved ? JSON.parse(saved) : {};
-            const parsedBackup = backup ? JSON.parse(backup) : {};
-            this.deleted = Object.assign({}, parsedBackup || {}, parsedSaved || {});
-        } catch (e) {
-            this.deleted = {};
-        }
-
-        if (!this.deleted || Object.keys(this.deleted).length === 0) {
-            const snapshotRaw = localStorage.getItem('portal_backup_snapshot') || localStorage.getItem('portal_backup_snapshot_latest');
-            try {
-                const snapshot = snapshotRaw ? JSON.parse(snapshotRaw) : null;
-                const snapshotData = snapshot && snapshot.data ? snapshot.data : snapshot;
-                const snapshotDeleted = snapshotData && snapshotData.deletedSubmissions;
-                if (snapshotDeleted && Object.keys(snapshotDeleted).length > 0) {
-                    this.deleted = Object.assign({}, snapshotDeleted, this.deleted || {});
-                    localStorage.setItem(this.deletedKey, JSON.stringify(this.deleted));
-                    localStorage.setItem('orderDeletionsBackup', JSON.stringify(this.deleted));
-                }
-            } catch (e) {
-                this.deleted = this.deleted || {};
-            }
-        }
-
-        if (Object.keys(this.deleted).length > 0 && orderSubmissionManager && orderSubmissionManager.submissions) {
-            let removedActiveOrder = false;
-            Object.keys(this.deleted).forEach(id => {
-                if (orderSubmissionManager.submissions[id]) {
-                    delete orderSubmissionManager.submissions[id];
-                    removedActiveOrder = true;
-                }
-            });
-            if (removedActiveOrder) {
-                localStorage.setItem('orderSubmissions', JSON.stringify(orderSubmissionManager.submissions));
-                localStorage.setItem('orderSubmissionsBackup', JSON.stringify(orderSubmissionManager.submissions));
-            }
-        }
-    },
-
-    save() {
-        const serialized = JSON.stringify(this.deleted || {});
-        localStorage.setItem(this.deletedKey, serialized);
-        localStorage.setItem('orderDeletionsBackup', serialized);
-        if (typeof savePortalSnapshot === 'function') {
-            savePortalSnapshot();
-        }
-    },
-
-    archiveSubmission(submissionId, submission, deletedBy = 'Sistema', reason = '') {
-        if (!submission) return false;
-        
-        const now = new Date().toISOString();
-        this.deleted[submissionId] = {
-            id: submissionId,
-            orderNumber: submission.orderNumber,
-            clientName: submission.clientName,
-            representativeName: submission.representativeName,
-            status: submission.status,
-            cart: JSON.parse(JSON.stringify(submission.cart)),
-            submittedAt: submission.submittedAt,
-            submittedBy: submission.submittedBy,
-            deletedAt: now,
-            deletedBy: deletedBy,
-            reason: reason || ''
-        };
-        
-        this.save();
-        return true;
+    setAll(orders) {
+        this.deleted = {};
+        (orders || []).forEach(order => {
+            this.deleted[order.id] = order;
+        });
     },
 
     getAll() {
@@ -1117,216 +656,111 @@ const deletedSubmissionsManager = {
         return this.deleted[id] || null;
     },
 
-    deleteByUser(user) {
-        return Object.values(this.deleted).filter(d => 
-            authManager.normalizeUsername(d.deletedBy) === authManager.normalizeUsername(user)
-        );
-    },
-
-    deleteByOrderNumber(orderNumber) {
-        return Object.values(this.deleted).find(d => d.orderNumber === orderNumber);
-    },
-
-    restore(submissionId) {
-        if (!this.deleted[submissionId]) return null;
-        
-        const submission = this.deleted[submissionId];
-        const restored = {
-            id: submissionId,
-            orderNumber: submission.orderNumber,
-            clientName: submission.clientName,
-            representativeName: submission.representativeName,
-            cart: JSON.parse(JSON.stringify(submission.cart)),
-            status: 'rascunho', // Restaurado como rascunho
-            submittedAt: submission.submittedAt,
-            submittedBy: submission.submittedBy,
-            savedAt: new Date().toISOString(),
-            savedBy: authManager.getCurrentUser(),
-            rejectionReason: '',
-            rejectionBy: '',
-            rejectionAt: '',
-            approvalAt: '',
-            approvalBy: '',
-            supervisorNote: ''
-        };
-        
-        delete this.deleted[submissionId];
-        this.save();
-        return restored;
-    },
-
-    permanentlyDelete(submissionId) {
-        if (this.deleted[submissionId]) {
-            delete this.deleted[submissionId];
-            this.save();
-            return true;
-        }
-        return false;
-    },
-
     count() {
         return Object.keys(this.deleted).length;
     },
 
-    updateBilledQuantities(submissionId, billedItemsMap) {
-        const deletion = this.deleted[submissionId];
-        if (!deletion) return false;
-        
-        if (!deletion.billedQuantities) deletion.billedQuantities = {};
-        
-        // Atualizar quantidades faturadas
-        (Array.isArray(deletion.cart) ? deletion.cart : []).forEach(item => {
-            const addedQty = billedItemsMap[item.codigo] || 0;
-            const currentTotal = (deletion.billedQuantities[item.codigo] || 0) + addedQty;
-            deletion.billedQuantities[item.codigo] = Math.min(currentTotal, item.qty);
-        });
-        
-        this.save();
-        return true;
+    async restore(submissionId) {
+        const data = await apiRequest('orders.restore', { method: 'POST', body: { id: submissionId } });
+        orderSubmissionManager.upsert(data.order);
+        return data.order;
+    },
+
+    async permanentlyDelete(submissionId) {
+        await apiRequest('orders.purge', { method: 'POST', body: { id: submissionId } });
+        delete this.deleted[submissionId];
+    },
+
+    async emptyTrash() {
+        const data = await apiRequest('orders.emptyTrash', { method: 'POST' });
+        await loadServerData();
+        return data;
     }
 };
+
+async function loadServerData() {
+    const data = await apiRequest('orders.list');
+    orderSubmissionManager.setAll(data.orders);
+    deletedSubmissionsManager.setAll(data.trash);
+    hiperrollOrderNumberManager.setPreview(data.nextNumber);
+}
+
+// Only the fields the server accepts are sent; prices come from the cart the user built.
+function buildCurrentOrderInput(extraConditions = {}) {
+    return {
+        clientOrderNumber: document.getElementById('orderNumberClient')?.value.trim() || '',
+        clientName: document.getElementById('clientName')?.value.trim() || '',
+        representativeName: document.getElementById('representativeName')?.value.trim() || '',
+        proposalValidity: normalizeProposalValidity(document.getElementById('proposalValidity')?.value || ''),
+        cart: cart.map(item => ({
+            codigo: item.codigo,
+            descricao: item.descricao,
+            fob: item.fob,
+            cif: item.cif,
+            negotiatedPrice: item.negotiatedPrice,
+            unitDiscount: item.unitDiscount,
+            weight: item.weight,
+            qty: item.qty,
+            uf: item.uf || '',
+            cityType: item.cityType || '',
+            weightTier: item.weightTier || ''
+        })),
+        conditions: { ...getCurrentOrderConditions(), ...extraConditions },
+        // The server refuses a submit priced on an older table version (see reviewCartPrices).
+        pricingVersion: pricingCatalog.version
+    };
+}
 
 // =========================================================
 
 async function init() {
-    // Inicializar autenticação e sistema de status
-    await authManager.init();
     orderManager.init();
     statusManager.init();
-    orderSubmissionManager.init();
-    hiperrollOrderNumberManager.init();
-    deletedSubmissionsManager.init();
-
-    const totalSavedOrders = Object.keys(orderSubmissionManager.submissions || {}).length;
-    const storageEmpty = totalSavedOrders === 0 && (!localStorage.getItem('hr_currentUser') || !localStorage.getItem('orderSubmissions'));
-    if (storageEmpty) {
-        console.warn('[Portal Hiperroll] Storage local vazio ou sem pedidos. Backup automático será restaurado se existir.');
-    }
-    
-    // Gerar número Hiper Roll se não existir
-    const orderNumberField = document.getElementById('orderNumberHiperroll');
-    if (orderNumberField && !orderNumberField.value) {
-        const nextNumber = hiperrollOrderNumberManager.getNextOrderNumber();
-        orderNumberField.value = nextNumber;
-    }
 
     applyPricingRuleLabels();
     const marginThresholdEl = document.getElementById('marginThreshold');
     if (marginThresholdEl) marginThresholdEl.textContent = PRICING_RULES.MIN_ORDER_MARGIN;
 
-    // 1. Parse Products
-    const prodRows = parseCSV(PRODUTOS_CSV);
-    prodRows.forEach((row, index) => {
-        if (index === 0) return; // Skip headers
-        if (row.length < 10) return;
-        
-        const codigo = row[4]?.trim() || "";
-        const descricao = row[5]?.trim() || "";
+    try {
+        await authManager.init();
+    } catch (e) {
+        showLoginModal(e.message);
+        return;
+    }
 
-        // Filter out header-like rows from the CSV
-        if (!codigo || !descricao ||
-            codigo.toLowerCase().includes("cd") || 
-            codigo.toLowerCase().includes("cod") ||
-            descricao.toLowerCase().includes("descrio") ||
-            descricao.toLowerCase().includes("descricao") ||
-            descricao.toLowerCase() === "produto") {
-            return;
+    if (!authManager.getCurrentUser()) {
+        showLoginModal();
+        return;
+    }
+    if (authManager.mustChangePassword()) {
+        showLoginModal();
+        showChangePasswordModal(true);
+        return;
+    }
+
+    // Once the table is imported, prices come from the database; before that, from data.js.
+    let serverCatalog = null;
+    try {
+        serverCatalog = await fetchPricingCatalog();
+    } catch (e) {
+        console.warn('Tabela de preços do servidor indisponível; usando data.js.', e);
+    }
+
+    // api/data.php only delivers data.js to a logged-in session, so a session created after the
+    // page loaded needs one reload. The flag prevents a reload loop. Not needed after the import.
+    const needsDataJs = !(serverCatalog && serverCatalog.imported);
+    if (needsDataJs && (window.PORTAL_DATA_LOCKED !== false || typeof PRODUTOS_CSV === 'undefined')) {
+        if (!sessionStorage.getItem('hr_data_reload')) {
+            sessionStorage.setItem('hr_data_reload', '1');
+            location.reload();
+        } else {
+            sessionStorage.removeItem('hr_data_reload');
+            showLoginModal('Não foi possível carregar as tabelas de preço. Recarregue a página.');
         }
-
-        const rawWeight = parseFloat(row[18]?.replace(',', '.')) || 0;
-        
-        // Skip zeroed products
-        if (rawWeight === 0) return;
-
-        productsData.push({
-            categoria: row[0],
-            subcat: row[1],
-            codigo: codigo,
-            descricao: descricao,
-            peso: rawWeight,
-            weightRaw: rawWeight, // Guardando valor bruto para cálculos
-            ncm: row[20],
-            originalRow: row
-        });
-    });
-
-    // 2. Parse Costs (Blendas)
-    const costRows = parseCSV(BLENDAS_CSV);
-    costRows.forEach(row => {
-        if (row.length < 13) return;
-        const category = row[1]?.toLowerCase().trim();
-        
-        // Colunas: C(2)=Custo Prod, D(3)=Desp Com, E(4)=Desp Adm, M(12)=100% NF
-        const custoBase = parseFloat(row[2]?.replace(',', '.')) || 0;
-        const despCom = parseFloat(row[3]?.replace(',', '.')) || 0;
-        const despAdm = parseFloat(row[4]?.replace(',', '.')) || 0;
-        let price100 = parseFloat(row[12]?.replace(',', '.')) || parseFloat(row[12]?.replace('R$', '').replace('.', '').replace(',', '.')) || 0;
-        
-        if (category && price100 > 0) {
-            price100 += 0.02; // Ajuste solicitado de R$ 0,02 no valor base
-            
-            const totalCostsWithoutFreight = custoBase + despCom + despAdm;
-            const divisor = totalCostsWithoutFreight / price100;
-
-            if (!costsData[category] || price100 > costsData[category].price100) {
-                costsData[category] = {
-                    price100: price100,
-                    custoBase: custoBase,
-                    despCom: despCom,
-                    despAdm: despAdm,
-                    divisor: divisor
-                };
-            }
-        }
-    });
-
-    // 3. Parse Freight
-    const freightRows = parseCSV(FRETE_CSV);
-    let currentUF = '';
-    let ufEntryCount = 0; // Para identificar a primeira entrada de cada UF
-
-    freightRows.forEach(row => {
-        if (row[0]?.includes('UF')) return;
-        if (row[0]?.length === 2) {
-            if (currentUF !== row[0]) {
-                currentUF = row[0];
-                ufEntryCount = 0; // Reset para novo UF
-            }
-            
-            if (!freightData[currentUF]) freightData[currentUF] = {};
-            
-            const city = (row[1] || '').toLowerCase();
-            const isInterior = city.includes('interior');
-            const isFluvial = city.includes('fluvial');
-            
-            // Lógica: Se for a primeira entrada do UF E não for interior/fluvial, tratamos como CAPITAL
-            // Ou se o nome contiver explicitamente a capital
-            let type = 'Interior';
-            if (isFluvial) {
-                type = 'Fluvial';
-            } else if (isInterior) {
-                type = 'Interior';
-            } else if (ufEntryCount === 0 || city.includes('capital') || city.includes('metropolitana')) {
-                type = 'Capital';
-            }
-            
-            freightData[currentUF][type] = {
-                tier1: parseFloat(row[2]?.replace(',', '.')) || 0,
-                tier2: parseFloat(row[3]?.replace(',', '.')) || 0
-            };
-
-            ufEntryCount++;
-        }
-    });
-
-    // Populate UF select
-    const stateSelect = document.getElementById('stateSelect');
-    Object.keys(freightData).sort().forEach(uf => {
-        const opt = document.createElement('option');
-        opt.value = uf;
-        opt.textContent = uf;
-        stateSelect.appendChild(opt);
-    });
+        return;
+    }
+    sessionStorage.removeItem('hr_data_reload');
+    useCatalog(serverCatalog);
 
     // Event Listeners
     document.getElementById('productSearch').addEventListener('input', updateResults);
@@ -1334,15 +768,319 @@ async function init() {
     document.getElementById('cityType').addEventListener('change', updateResults);
     document.getElementById('weightTier').addEventListener('change', updateResults);
 
-    updateHeaderInfo();
-
-    renderDraftsPanel();
-
-    if (!authManager.getCurrentUser()) {
-        showLoginModal();
-    } else {
-        closeLoginModal();
+    try {
+        await loadServerData();
+    } catch (e) {
+        alert(`Não foi possível carregar os pedidos do servidor: ${e.message}`);
     }
+
+    hiperrollOrderNumberManager.applyToForm();
+    const representativeInput = document.getElementById('representativeName');
+    if (representativeInput && !representativeInput.value) {
+        representativeInput.value = authManager.getDisplayName();
+    }
+
+    closeLoginModal();
+    authManager.updateUI();
+    updateTrashBadge();
+}
+
+// ========== TABELA DE PREÇOS (catálogo) ==========
+
+function parseDecimal(value) {
+    return parseFloat(String(value ?? '').replace(',', '.')) || 0;
+}
+
+// Reads data.js exactly as the portal always did and returns it in the same shape as the
+// server's pricing.get, so the rest of the code never needs to know where prices came from.
+function buildLegacyCatalog() {
+    const products = [];
+    parseCSV(PRODUTOS_CSV).forEach((row, index) => {
+        if (index === 0 || row.length < 10) return;
+        const codigo = row[4]?.trim() || '';
+        const descricao = row[5]?.trim() || '';
+        // Filter out header-like rows from the CSV
+        if (!codigo || !descricao ||
+            codigo.toLowerCase().includes('cd') ||
+            codigo.toLowerCase().includes('cod') ||
+            descricao.toLowerCase().includes('descrio') ||
+            descricao.toLowerCase().includes('descricao') ||
+            descricao.toLowerCase() === 'produto') {
+            return;
+        }
+        const weight = parseDecimal(row[18]);
+        if (weight === 0) return; // Skip zeroed products
+        const product = { codigo, descricao, categoria: row[0] || '', subcat: row[1] || '', weight, ncm: row[20] || '', active: true };
+        product.costLineKey = getCategoryMatch(product);
+        products.push(product);
+    });
+
+    // Colunas: B(1)=Linha, C(2)=Custo Prod, D(3)=Desp Com, E(4)=Desp Adm, M(12)=100% NF.
+    // A line may appear twice in the spreadsheet; the row with the highest 100% NF wins.
+    const costLines = {};
+    parseCSV(BLENDAS_CSV).forEach(row => {
+        if (row.length < 13) return;
+        const name = row[1]?.trim() || '';
+        const key = name.toLowerCase();
+        let price100 = parseFloat(row[12]?.replace(',', '.')) || parseFloat(row[12]?.replace('R$', '').replace('.', '').replace(',', '.')) || 0;
+        const costs = parseDecimal(row[2]) + parseDecimal(row[3]) + parseDecimal(row[4]);
+        // costs > 0 skips the header row, whose "100% NF" label would otherwise parse as 100.
+        if (!key || price100 <= 0 || costs <= 0) return;
+        price100 += 0.02; // Ajuste solicitado de R$ 0,02 no valor base (na importação passa a fazer parte do preço gravado)
+        if (!costLines[key] || price100 > costLines[key].price100) {
+            costLines[key] = {
+                key,
+                name,
+                custoBase: parseDecimal(row[2]),
+                despCom: parseDecimal(row[3]),
+                despAdm: parseDecimal(row[4]),
+                price100: Math.round(price100 * 10000) / 10000
+            };
+        }
+    });
+
+    // The first row of each UF is its capital; "interior"/"fluvial" rows are named. Any other
+    // named city is treated as Interior and replaces it — reported in `warnings` for the gestor.
+    const freight = {};
+    const warnings = [];
+    let currentUF = '';
+    let ufEntryCount = 0;
+    parseCSV(FRETE_CSV).forEach(row => {
+        if (row[0]?.includes('UF') || row[0]?.length !== 2) return;
+        if (currentUF !== row[0]) {
+            currentUF = row[0];
+            ufEntryCount = 0;
+        }
+        const label = row[1] || '';
+        const city = label.toLowerCase();
+        let type = 'Interior';
+        if (city.includes('fluvial')) {
+            type = 'Fluvial';
+        } else if (city.includes('interior')) {
+            type = 'Interior';
+        } else if (ufEntryCount === 0 || city.includes('capital') || city.includes('metropolitana')) {
+            type = 'Capital';
+        }
+        const key = `${currentUF}/${type}`;
+        if (freight[key]) {
+            warnings.push(`${currentUF} · ${type}: a planilha tem duas linhas ("${freight[key].label}" e "${label}") e o portal usa a última, ${label} (R$ ${row[2]} / R$ ${row[3]} por kg). Confira na aba Frete depois de importar.`);
+        }
+        freight[key] = { uf: currentUF, pracaType: type, label, tier1: parseDecimal(row[2]), tier2: parseDecimal(row[3]) };
+        ufEntryCount++;
+    });
+
+    return { costLines: Object.values(costLines), freight: Object.values(freight), products, warnings };
+}
+
+function getLegacyCatalog() {
+    if (!legacyCatalog && typeof PRODUTOS_CSV !== 'undefined' && typeof BLENDAS_CSV !== 'undefined' && typeof FRETE_CSV !== 'undefined') {
+        legacyCatalog = buildLegacyCatalog();
+    }
+    return legacyCatalog;
+}
+
+async function fetchPricingCatalog() {
+    const data = await apiRequest('pricing.get');
+    return data.catalog;
+}
+
+// Rebuilds the in-memory lookups the screens use (productsData, costsData, freightData).
+function applyCatalog(catalog) {
+    pricingCatalog = catalog;
+    productsData.length = 0;
+    Object.keys(costsData).forEach(key => delete costsData[key]);
+    Object.keys(freightData).forEach(uf => delete freightData[uf]);
+
+    catalog.costLines.forEach(line => {
+        const costs = line.custoBase + line.despCom + line.despAdm;
+        costsData[line.key] = { ...line, costs, divisor: line.price100 > 0 ? costs / line.price100 : 0 };
+    });
+    catalog.freight.forEach(row => {
+        if (!freightData[row.uf]) freightData[row.uf] = {};
+        freightData[row.uf][row.pracaType] = { tier1: row.tier1, tier2: row.tier2, label: row.label };
+    });
+    catalog.products.forEach(p => {
+        productsData.push({
+            codigo: p.codigo,
+            descricao: p.descricao,
+            categoria: p.categoria,
+            subcat: p.subcat,
+            ncm: p.ncm,
+            peso: p.weight,
+            weightRaw: p.weight,
+            costLineKey: p.costLineKey,
+            active: p.active !== false
+        });
+    });
+    populateStateSelect();
+}
+
+function useCatalog(serverCatalog) {
+    if (serverCatalog && serverCatalog.imported) {
+        applyCatalog({ ...serverCatalog, source: 'server', warnings: [] });
+        return;
+    }
+    const legacy = getLegacyCatalog() || { costLines: [], freight: [], products: [], warnings: [] };
+    applyCatalog({ ...legacy, source: 'legacy', imported: false, version: 0, canEdit: Boolean(serverCatalog && serverCatalog.canEdit) });
+}
+
+function populateStateSelect() {
+    const select = document.getElementById('stateSelect');
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = '<option value="">Selecione um Estado</option>' + Object.keys(freightData).sort()
+        .map(uf => `<option value="${escapeHtml(uf)}">${escapeHtml(uf)}</option>`).join('');
+    if (current && freightData[current]) select.value = current;
+}
+
+function getCurrentRegionFilters() {
+    return {
+        uf: document.getElementById('stateSelect')?.value || '',
+        cityType: document.getElementById('cityType')?.value || '',
+        weightTier: document.getElementById('weightTier')?.value || ''
+    };
+}
+
+// FOB = preço 100% NF × peso. CIF = (custos + frete da região) ÷ (custos ÷ preço 100% NF) × peso,
+// i.e. the freight is added to the cost and gets the same markup. Same formulas as
+// server_item_prices() in api/lib/catalog.php, which recalculates them when an order is saved.
+function computeItemPrices(product, { uf, cityType, weightTier } = {}) {
+    const line = costsData[product.costLineKey];
+    if (!line) return { fob: 0, cif: 0, rate: 0 };
+    const fob = line.price100 * product.weightRaw;
+    const fData = freightData[uf] ? freightData[uf][cityType] : null;
+    const rate = fData ? (fData[weightTier] || 0) : 0;
+    const cif = line.divisor > 0 ? (line.costs + rate) / line.divisor * product.weightRaw : 0;
+    return { fob, cif, rate };
+}
+
+// Refreshes whatever shows prices after the table changed.
+function afterCatalogChanged() {
+    if (document.getElementById('stateSelect')?.value) updateResults();
+    if (document.getElementById('tab-pricing')?.classList.contains('active')) renderPricingTab();
+}
+
+// Swaps the table in use; if its version changed, the order being built is reviewed.
+async function applyServerCatalog(serverCatalog, reason) {
+    const before = `${pricingCatalog.source}:${pricingCatalog.version}`;
+    useCatalog(serverCatalog);
+    afterCatalogChanged();
+    if (`${pricingCatalog.source}:${pricingCatalog.version}` !== before) {
+        await reviewCartPrices(reason);
+    }
+}
+
+async function refreshPricingCatalog(reason = 'A tabela de preços foi atualizada pelo gestor.') {
+    await applyServerCatalog(await fetchPricingCatalog(), reason);
+}
+
+// ----- "Avisar e atualizar": revisão de preços do pedido aberto -----
+
+// Compares each cart item with the table in use. Items without a region (older drafts) only get
+// their FOB updated, since their CIF depends on a region the portal didn't record.
+function planCartRepricing(items) {
+    const changes = [];
+    const missing = [];
+    items.forEach(item => {
+        const product = productsData.find(p => p.codigo === item.codigo);
+        if (!product || !product.active) {
+            missing.push(item);
+            return;
+        }
+        const prices = computeItemPrices(product, item);
+        const newCif = item.uf ? prices.cif : item.cif;
+        const changed = Math.abs(prices.fob - item.fob) >= 0.005 || Math.abs(newCif - item.cif) >= 0.005;
+        changes.push({ item, newFob: prices.fob, newCif, newWeight: product.weightRaw, changed });
+    });
+    return { changes, missing, hasDifferences: missing.length > 0 || changes.some(c => c.changed) };
+}
+
+// 'keep'  = the negotiated price stays; the discount against the new table is recalculated.
+// 'table' = the same R$ discount as before is applied on top of the new table price.
+function applyCartRepricing(plan, choice) {
+    plan.changes.forEach(({ item, newFob, newCif, newWeight }) => {
+        const previousDiscount = item.unitDiscount || 0;
+        item.fob = newFob;
+        item.cif = newCif;
+        item.weight = newWeight;
+        if (choice === 'table') {
+            item.negotiatedPrice = Math.max(newCif - previousDiscount, 0);
+        }
+        item.unitDiscount = Math.max(newCif - item.negotiatedPrice, 0);
+    });
+    plan.missing.forEach(item => {
+        const idx = cart.indexOf(item);
+        if (idx >= 0) cart.splice(idx, 1);
+    });
+}
+
+function previewRepricingMargin(plan, choice) {
+    const clones = plan.changes.map(c => ({ ...c.item }));
+    applyCartRepricing({ changes: plan.changes.map((c, i) => ({ ...c, item: clones[i] })), missing: [] }, choice);
+    return calculateOrderTotals(clones, getCurrentOrderConditions()).margin;
+}
+
+async function reviewCartPrices(reason) {
+    if (!cart.length) return 'none';
+    const plan = planCartRepricing(cart);
+    if (!plan.hasDifferences) {
+        applyCartRepricing(plan, 'keep'); // only aligns sub-cent differences and weights
+        updateOrderTable();
+        return 'none';
+    }
+    const choice = await showRepriceModal(reason, plan);
+    applyCartRepricing(plan, choice);
+    updateOrderTable();
+    return choice;
+}
+
+let repriceModalResolver = null;
+
+function showRepriceModal(reason, plan) {
+    const modal = document.getElementById('repriceModal');
+    const body = document.getElementById('repriceModalBody');
+    if (!modal || !body) {
+        return Promise.resolve(confirm(`${reason}\n\nOK = usar os novos preços de tabela\nCancelar = manter os preços negociados`) ? 'table' : 'keep');
+    }
+    const money = value => `<span class="nowrap">R$ ${formatBRL(value)}</span>`;
+    const arrow = (before, after) => Math.abs(before - after) < 0.005
+        ? money(after)
+        : `<span class="reprice-old">${money(before)}</span> → <strong>${money(after)}</strong>`;
+    const rows = plan.changes.filter(c => c.changed).map(({ item, newFob, newCif }) => `
+        <tr>
+            <td><strong>${escapeHtml(item.codigo)}</strong><div class="reprice-desc">${escapeHtml(item.descricao || '')}</div></td>
+            <td>${arrow(item.fob, newFob)}</td>
+            <td>${arrow(item.cif, newCif)}</td>
+            <td>${money(item.negotiatedPrice)}</td>
+            <td>${money(Math.max(newCif - (item.unitDiscount || 0), 0))}</td>
+        </tr>`).join('');
+    const missing = plan.missing.length
+        ? `<div class="pricing-warning"><strong>Saíram da tabela e serão retirados do pedido:</strong> ${plan.missing.map(i => escapeHtml(`${i.codigo} (${i.descricao || ''})`)).join(', ')}</div>`
+        : '';
+
+    document.getElementById('repriceReason').textContent = reason;
+    document.getElementById('repriceKeepMargin').textContent = `${previewRepricingMargin(plan, 'keep').toFixed(2)}%`;
+    document.getElementById('repriceTableMargin').textContent = `${previewRepricingMargin(plan, 'table').toFixed(2)}%`;
+    body.innerHTML = `
+        ${rows ? `<div class="results-table-container"><table class="pricing-table">
+            <thead><tr><th>Produto</th><th>FOB</th><th>CIF de tabela</th><th>Seu preço hoje</th><th>Com a nova tabela</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>` : ''}
+        ${missing}`;
+    modal.style.display = 'flex';
+    return new Promise(resolve => { repriceModalResolver = resolve; });
+}
+
+function resolveRepriceModal(choice) {
+    const modal = document.getElementById('repriceModal');
+    if (modal) modal.style.display = 'none';
+    const resolve = repriceModalResolver;
+    repriceModalResolver = null;
+    if (resolve) resolve(choice);
+}
+
+function formatBRL(value, decimals = 2) {
+    return Number(value || 0).toLocaleString('pt-BR', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
 function getCategoryMatch(product) {
@@ -1430,8 +1168,9 @@ function updateResults() {
     });
 
     const filtered = productsData.filter(p => {
+        if (!p.active) return false; // inactive products only show up in the gestor's price tab
         if (keywords.length === 0) return true; // MOSTRAR TODOS se a busca estiver vazia
-        
+
         const fullText = `${p.descricao} ${p.codigo} ${p.categoria} ${p.subcat}`.toLowerCase();
         return keywords.every(key => fullText.includes(key));
     }); // Limite removido para mostrar todos os itens
@@ -1455,38 +1194,20 @@ function updateResults() {
             <tbody>
     `;
 
-    filtered.forEach((p, idx) => {
-        const catKey = getCategoryMatch(p);
-        const costInfo = costsData[catKey] || { price100: 0, divisor: 0.625 };
-        
-        const basePricePerKg = costInfo.price100;
-        const fobPrice = basePricePerKg * p.weightRaw;
-        
-        const fData = freightData[uf] ? freightData[uf][cityType] : null;
-        const rate = fData ? fData[weightTier] : 0;
-        
-        // CÁLCULO CIF DE ALTA PRECISÃO (Summing freight to base cost first)
-        const divisor = costInfo.divisor || 0.625;
-        const totalCostPerKg = costInfo.custoBase + costInfo.despCom + costInfo.despAdm + rate;
-        const cifPricePerKg = totalCostPerKg / divisor;
-        const cifPrice = cifPricePerKg * p.weightRaw;
-
-        const freightCost = rate * p.weightRaw;
-        
-        // Formatando para exibir na tela (o toFixed(2) já arredonda 93.778 para 93.78)
-        const cifDisplay = cifPrice.toFixed(2);
+    filtered.forEach(p => {
+        const { fob: fobPrice, cif: cifPrice } = computeItemPrices(p, { uf, cityType, weightTier });
 
                html += `
             <tr>
                 <td>
-                    <div style="font-weight:600">${p.codigo}</div>
-                    <div style="font-size:0.85rem; color:#6b7280">${p.descricao}</div>
+                    <div style="font-weight:600">${escapeHtml(p.codigo)}</div>
+                    <div style="font-size:0.85rem; color:#6b7280">${escapeHtml(p.descricao)}</div>
                 </td>
                 <td>${p.peso.toFixed(3)}</td>
                 <td class="price-tag price-fob">R$&nbsp;${fobPrice.toFixed(2)}</td>
-                <td class="price-tag price-cif">R$&nbsp;${cifDisplay}</td>
+                <td class="price-tag price-cif">R$&nbsp;${cifPrice.toFixed(2)}</td>
                 <td class="col-action">
-                    <button onclick="addToCart('${p.codigo}', ${fobPrice}, ${cifPrice}, ${p.weightRaw})">
+                    <button onclick="addToCart(this.dataset.codigo)" data-codigo="${escapeHtml(p.codigo)}">
                         ➕ Adicionar
                     </button>
                 </td>
@@ -1499,7 +1220,9 @@ function updateResults() {
     container.innerHTML = html;
 }
 
-function addToCart(codigo, fob, cif, weight) {
+// Prices are calculated here from the table in use and the region selected in the filters;
+// the region is stored with the item so the CIF can be recalculated if the table changes.
+function addToCart(codigo) {
     const p = productsData.find(item => item.codigo === codigo);
     if (!p) return;
 
@@ -1510,6 +1233,8 @@ function addToCart(codigo, fob, cif, weight) {
     if (existing) {
         existing.qty++;
     } else {
+        const region = getCurrentRegionFilters();
+        const { fob, cif } = computeItemPrices(p, region);
         cart.push({
             codigo: p.codigo,
             descricao: p.descricao,
@@ -1517,8 +1242,11 @@ function addToCart(codigo, fob, cif, weight) {
             cif: cif, // Preço CIF original (referência)
             negotiatedPrice: cif,
             unitDiscount: 0,
-            weight: weight,
-            qty: 1
+            weight: p.weightRaw,
+            qty: 1,
+            uf: region.uf,
+            cityType: region.cityType,
+            weightTier: region.weightTier
         });
     }
     updateOrderTable();
@@ -2093,95 +1821,16 @@ function closeStatusHistory() {
     modal.style.display = 'none';
 }
 
+// The browser downloads the file directly; the session cookie authorizes it (gestor/admin only).
 function exportPortalBackup() {
-    const snapshot = {
-        exportedAt: new Date().toISOString(),
-        version: 1,
-        data: {
-            orderSubmissions: orderSubmissionManager && orderSubmissionManager.submissions ? orderSubmissionManager.submissions : {},
-            deletedSubmissions: deletedSubmissionsManager && deletedSubmissionsManager.deleted ? deletedSubmissionsManager.deleted : {},
-            hr_users: authManager && authManager.users ? authManager.users : {},
-            hr_currentUser: authManager && authManager.currentUser ? authManager.currentUser : '',
-            hr_currentRole: authManager && authManager.currentRole ? authManager.currentRole : '',
-            orderMeta: orderManager && orderManager.meta ? orderManager.meta : {},
-            orderStatus: statusManager && statusManager.currentStatus ? statusManager.currentStatus : 'rascunho',
-            orderStatusHistory: statusManager && statusManager.history ? statusManager.history : []
-        }
-    };
-
-    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `portal_hiperroll_backup_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')} .json`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    alert('Backup exportado com sucesso. Guarde este arquivo em local seguro.');
-}
-
-function restorePortalBackupPrompt() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json,application/json';
-    input.onchange = function (event) {
-        const file = event.target.files && event.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = function () {
-            try {
-                const snapshot = JSON.parse(String(reader.result || '{}'));
-                const data = snapshot && snapshot.data ? snapshot.data : snapshot;
-                if (data && data.orderSubmissions) {
-                    localStorage.setItem('orderSubmissions', JSON.stringify(data.orderSubmissions));
-                    orderSubmissionManager.submissions = data.orderSubmissions || {};
-                }
-                if (data && data.deletedSubmissions) {
-                    localStorage.setItem('orderDeletions', JSON.stringify(data.deletedSubmissions));
-                    if (deletedSubmissionsManager) deletedSubmissionsManager.deleted = data.deletedSubmissions || {};
-                }
-                if (data && data.hr_users) {
-                    localStorage.setItem('hr_users', JSON.stringify(data.hr_users));
-                    if (authManager) authManager.users = data.hr_users || {};
-                }
-                if (data && data.hr_currentUser !== undefined) {
-                    localStorage.setItem('hr_currentUser', String(data.hr_currentUser || ''));
-                    if (authManager) authManager.currentUser = data.hr_currentUser || null;
-                }
-                if (data && data.hr_currentRole !== undefined) {
-                    localStorage.setItem('hr_currentRole', String(data.hr_currentRole || ''));
-                    if (authManager) authManager.currentRole = data.hr_currentRole || null;
-                }
-                if (data && data.orderMeta) {
-                    localStorage.setItem('orderMeta', JSON.stringify(data.orderMeta));
-                    if (orderManager) orderManager.meta = data.orderMeta || { createdBy: null, createdAt: null };
-                }
-                if (data && data.orderStatus !== undefined) {
-                    localStorage.setItem('orderStatus', String(data.orderStatus));
-                    if (statusManager) statusManager.currentStatus = data.orderStatus || 'rascunho';
-                }
-                if (data && data.orderStatusHistory) {
-                    localStorage.setItem('orderStatusHistory', JSON.stringify(data.orderStatusHistory));
-                    if (statusManager) statusManager.history = Array.isArray(data.orderStatusHistory) ? data.orderStatusHistory : [];
-                }
-                localStorage.setItem('portal_backup_snapshot', JSON.stringify(snapshot));
-                if (typeof renderHistoryTab === 'function') renderHistoryTab();
-                if (typeof updateSupervisorPanel === 'function') updateSupervisorPanel();
-                if (typeof renderDraftsPanel === 'function') renderDraftsPanel();
-                alert('Backup restaurado com sucesso!');
-            } catch (error) {
-                console.error('Erro ao restaurar backup:', error);
-                alert('Arquivo de backup inválido ou corrompido.');
-            }
-        };
-        reader.readAsText(file);
-    };
-    input.click();
+    if (!authManager.canManageUsers()) {
+        alert('Somente o gestor ou o administrador podem baixar o backup.');
+        return;
+    }
+    window.location.href = `${API_BASE}?action=backup.export`;
 }
 
 window.exportPortalBackup = exportPortalBackup;
-window.restorePortalBackupPrompt = restorePortalBackupPrompt;
 
 // Fechar modal ao clicar fora
 window.addEventListener('load', function() {
@@ -2229,10 +1878,14 @@ function unlockApp() {
     document.body.classList.remove('login-locked');
 }
 
-function showLoginModal() {
+function showLoginModal(message = '') {
     const screen = document.getElementById('loginScreen');
-    const msg = document.getElementById('loginMessage');
-    if (msg) { msg.style.display = 'none'; msg.textContent = ''; }
+    if (message) {
+        showLoginError(message);
+    } else {
+        const msg = document.getElementById('loginMessage');
+        if (msg) { msg.style.display = 'none'; msg.textContent = ''; }
+    }
     if (screen) screen.classList.add('active');
     lockApp();
 }
@@ -2246,19 +1899,18 @@ function closeLoginModal() {
 async function loginUser() {
     const u = document.getElementById('loginUsername')?.value.trim();
     const p = document.getElementById('loginPassword')?.value || '';
-    const msg = document.getElementById('loginMessage');
-    const loginButton = document.querySelector('.login-actions button:last-child');
+    const loginButton = document.getElementById('loginUserButton');
     if (loginButton) loginButton.disabled = true;
     try {
-        await authManager.login(u, p);
-        if (msg) { msg.style.display = 'none'; }
-        closeLoginModal();
-        updateSupervisorPanel();
-    } catch (e) {
-        if (msg) {
-            msg.style.display = 'block';
-            msg.textContent = e.message || 'Não foi possível entrar. Confira usuário e senha.';
+        const user = await authManager.login(u, p);
+        if (user.mustChangePassword) {
+            showChangePasswordModal(true);
+            return;
         }
+        // Reload so api/data.php delivers the price tables to the new session.
+        location.reload();
+    } catch (e) {
+        showLoginError(e.message || 'Não foi possível entrar. Confira usuário e senha.');
     } finally {
         if (loginButton) loginButton.disabled = false;
     }
@@ -2273,17 +1925,12 @@ function showLoginError(message) {
 }
 
 function bindLoginControls() {
-    const loginButton = document.querySelector('.login-actions button:last-child');
-    const registerButton = document.querySelector('.login-actions button:first-child');
+    const loginButton = document.getElementById('loginUserButton');
     const passwordInput = document.getElementById('loginPassword');
 
     if (loginButton && !loginButton.dataset.bound) {
         loginButton.dataset.bound = 'true';
         loginButton.addEventListener('click', loginUser);
-    }
-    if (registerButton && !registerButton.dataset.bound) {
-        registerButton.dataset.bound = 'true';
-        registerButton.addEventListener('click', registerUser);
     }
     if (passwordInput && !passwordInput.dataset.bound) {
         passwordInput.dataset.bound = 'true';
@@ -2300,45 +1947,224 @@ window.addEventListener('error', event => {
 });
 
 window.loginUser = loginUser;
-window.registerUser = registerUser;
 if (document.readyState === 'loading') {
     window.addEventListener('DOMContentLoaded', bindLoginControls);
 } else {
     bindLoginControls();
 }
 
-async function registerUser() {
-    const u = document.getElementById('loginUsername')?.value.trim();
-    const p = document.getElementById('loginPassword')?.value || '';
-    const msg = document.getElementById('loginMessage');
+async function logoutUser() {
+    await authManager.logout();
+    location.reload();
+}
+
+// ===== Alterar senha =====
+// forced = first access with a temporary password: the modal cannot be dismissed.
+function showChangePasswordModal(forced = false) {
+    const modal = document.getElementById('changePasswordModal');
+    if (!modal) return;
+    modal.dataset.forced = forced ? 'true' : 'false';
+    ['currentPasswordInput', 'newPasswordInput', 'confirmPasswordInput'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    });
+    const subtitle = document.getElementById('changePasswordSubtitle');
+    if (subtitle) {
+        subtitle.textContent = forced
+            ? 'Primeiro acesso: crie uma senha pessoal para continuar.'
+            : 'Informe a senha atual e escolha uma nova.';
+    }
+    ['changePasswordCloseBtn', 'changePasswordCancelBtn'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.style.display = forced ? 'none' : '';
+    });
+    const msg = document.getElementById('changePasswordMessage');
+    if (msg) msg.textContent = '';
+    modal.style.display = 'flex';
+    document.getElementById('currentPasswordInput')?.focus();
+}
+
+function closeChangePasswordModal() {
+    const modal = document.getElementById('changePasswordModal');
+    if (!modal || modal.dataset.forced === 'true') return;
+    modal.style.display = 'none';
+}
+
+async function submitChangePassword() {
+    const currentPassword = document.getElementById('currentPasswordInput')?.value || '';
+    const newPassword = document.getElementById('newPasswordInput')?.value || '';
+    const confirmPassword = document.getElementById('confirmPasswordInput')?.value || '';
+    const msg = document.getElementById('changePasswordMessage');
+    const setMessage = text => { if (msg) msg.textContent = text; };
+
+    if (!currentPassword || !newPassword) {
+        setMessage('Preencha a senha atual e a nova senha.');
+        return;
+    }
+    if (newPassword !== confirmPassword) {
+        setMessage('A confirmação não confere com a nova senha.');
+        return;
+    }
     try {
-        await authManager.register(u, p, 'vendedor');
-        if (msg) { msg.style.display = 'none'; }
-        closeLoginModal();
-        updateSupervisorPanel();
+        await apiRequest('changePassword', { method: 'POST', body: { currentPassword, newPassword } });
+        alert('Senha alterada com sucesso.');
+        location.reload();
+    } catch (e) {
+        setMessage(e.message);
+    }
+}
+
+// ===== Usuários (gestor e administrador) =====
+async function showUsersModal() {
+    const modal = document.getElementById('usersModal');
+    if (!modal) return;
+    populateNewUserRoleOptions();
+    const msg = document.getElementById('usersMessage');
+    if (msg) msg.textContent = '';
+    modal.style.display = 'flex';
+    await refreshUsersTable();
+}
+
+function closeUsersModal() {
+    const modal = document.getElementById('usersModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function populateNewUserRoleOptions() {
+    const select = document.getElementById('newUserRole');
+    if (!select) return;
+    const isAdmin = authManager.getCurrentUserRole() === ROLES.ADMIN;
+    const roles = isAdmin ? [ROLES.REP, ROLES.GESTOR, ROLES.ADMIN] : [ROLES.REP];
+    select.innerHTML = roles.map(role => `<option value="${role}">${ROLE_LABELS[role]}</option>`).join('');
+    select.disabled = roles.length === 1;
+}
+
+function canManageUserAccount(user) {
+    if (authManager.getCurrentUserRole() === ROLES.ADMIN) return true;
+    return authManager.isGestor() && user.role === ROLES.REP;
+}
+
+async function refreshUsersTable() {
+    const container = document.getElementById('usersTableContainer');
+    if (!container) return;
+    container.innerHTML = '<div class="empty-state">Carregando usuários...</div>';
+    try {
+        const data = await apiRequest('users.list');
+        renderUsersTable(data.users || []);
+    } catch (e) {
+        container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderUsersTable(users) {
+    const container = document.getElementById('usersTableContainer');
+    if (!container) return;
+    if (users.length === 0) {
+        container.innerHTML = '<div class="empty-state">Nenhum usuário cadastrado.</div>';
+        return;
+    }
+    const isAdmin = authManager.getCurrentUserRole() === ROLES.ADMIN;
+    const selfId = authManager.getCurrentUserId();
+
+    const rows = users.map(user => {
+        const isSelf = user.id === selfId;
+        const manageable = canManageUserAccount(user) && !isSelf;
+        const lastLogin = user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString('pt-BR') : 'Nunca';
+        const status = user.active
+            ? (user.mustChangePassword ? '<span class="user-status user-status--pending">Senha provisória</span>' : '<span class="user-status user-status--active">Ativo</span>')
+            : '<span class="user-status user-status--inactive">Desativado</span>';
+        const roleCell = isAdmin && !isSelf
+            ? `<select class="user-role-select" onchange="changeUserRole(${user.id}, this.value)">${Object.values(ROLES).map(role =>
+                `<option value="${role}" ${role === user.role ? 'selected' : ''}>${ROLE_LABELS[role]}</option>`).join('')}</select>`
+            : escapeHtml(ROLE_LABELS[user.role] || user.role);
+        const actions = manageable
+            ? `<button class="btn-modal btn-modal-ghost btn-sm" onclick="toggleUserActive(${user.id}, ${!user.active})">${user.active ? 'Desativar' : 'Reativar'}</button>
+               <button class="btn-modal btn-modal-ghost btn-sm" onclick="resetUserPassword(${user.id}, ${escapeHtml(JSON.stringify(user.displayName))})">Redefinir senha</button>`
+            : (isSelf ? '<span class="user-self-note">Você</span>' : '');
+        return `
+            <tr class="${user.active ? '' : 'user-row--inactive'}">
+                <td><strong>${escapeHtml(user.displayName)}</strong></td>
+                <td>${escapeHtml(user.username)}</td>
+                <td>${roleCell}</td>
+                <td>${status}</td>
+                <td>${escapeHtml(lastLogin)}</td>
+                <td class="users-actions">${actions}</td>
+            </tr>
+        `;
+    }).join('');
+
+    container.innerHTML = `
+        <table class="users-table">
+            <thead>
+                <tr><th>Nome</th><th>Login</th><th>Papel</th><th>Situação</th><th>Último acesso</th><th>Ações</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>
+    `;
+}
+
+async function submitNewUser(event) {
+    event.preventDefault();
+    const msg = document.getElementById('usersMessage');
+    const body = {
+        displayName: document.getElementById('newUserName')?.value.trim() || '',
+        username: document.getElementById('newUserLogin')?.value.trim() || '',
+        role: document.getElementById('newUserRole')?.value || ROLES.REP,
+        password: document.getElementById('newUserPassword')?.value || ''
+    };
+    try {
+        const data = await apiRequest('users.create', { method: 'POST', body });
+        event.target.reset();
+        populateNewUserRoleOptions();
+        if (msg) {
+            msg.textContent = `✓ Usuário ${data.user.username} criado. Passe a senha provisória para ele: no primeiro acesso o sistema pedirá uma senha pessoal.`;
+            msg.style.color = 'var(--success)';
+        }
+        await refreshUsersTable();
     } catch (e) {
         if (msg) {
-            msg.style.display = 'block';
-            if (e.message === 'Usuário já existe') {
-                msg.textContent = 'Este usuário já existe. Tente outro login ou faça login.';
-            } else {
-                msg.textContent = e.message || 'Erro ao registrar usuário.';
-            }
+            msg.textContent = e.message;
+            msg.style.color = '';
         }
     }
 }
 
-function logoutUser() {
-    authManager.logout();
-    updateSupervisorPanel();
-    showLoginModal();
+async function toggleUserActive(userId, active) {
+    const ok = confirm(active ? 'Reativar este usuário?' : 'Desativar este usuário? Ele não conseguirá mais entrar, mas os pedidos dele continuam no sistema.');
+    if (!ok) return;
+    try {
+        await apiRequest('users.update', { method: 'POST', body: { id: userId, active } });
+        await refreshUsersTable();
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+async function resetUserPassword(userId, displayName) {
+    const password = prompt(`Nova senha provisória para ${displayName} (mínimo 8 caracteres).\nNo próximo acesso ele terá que criar uma senha pessoal.`);
+    if (!password) return;
+    try {
+        await apiRequest('users.resetPassword', { method: 'POST', body: { id: userId, password } });
+        alert('Senha provisória definida. Informe-a ao usuário.');
+        await refreshUsersTable();
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+async function changeUserRole(userId, role) {
+    try {
+        await apiRequest('users.update', { method: 'POST', body: { id: userId, role } });
+    } catch (e) {
+        alert(e.message);
+    }
+    await refreshUsersTable();
 }
 
 function getCurrentUserDrafts() {
-    const currentUser = authManager.getCurrentUser();
-    if (!currentUser) return [];
+    if (!authManager.getCurrentUser()) return [];
 
-    return orderSubmissionManager.getUserSubmissions(currentUser)
+    return orderSubmissionManager.getOwnSubmissions()
         .filter(submission => submission.status === 'rascunho')
         .sort((a, b) => new Date(b.savedAt || b.submittedAt || 0) - new Date(a.savedAt || a.submittedAt || 0));
 }
@@ -2508,8 +2334,8 @@ function populateSubmitOrderDraftSelection() {
     }
 }
 
-function prepareDraftForSubmission(submissionId) {
-    loadDraftToCurrentOrder(submissionId, true);
+async function prepareDraftForSubmission(submissionId) {
+    await loadDraftToCurrentOrder(submissionId, true);
     const select = document.getElementById('submitDraftSelect');
     if (select) {
         select.value = submissionId;
@@ -2586,147 +2412,113 @@ function closeSubmitOrderModal() {
     if (msg) msg.textContent = '';
 }
 
-function submitOrder() {
+async function submitOrder() {
     if (cart.length === 0) {
         alert('Adicione itens ao pedido antes de enviar.');
         return;
     }
 
     const selectedDraftValue = document.getElementById('submitDraftSelect')?.value || '';
-    const orderNumberHiperroll = document.getElementById('orderNumberHiperroll')?.value.trim() || '';
-    const orderNumberClient = document.getElementById('orderNumberClient')?.value.trim() || '';
-    const clientName = document.getElementById('clientName')?.value.trim() || '';
-    const representativeName = document.getElementById('representativeName')?.value.trim() || '';
-    const currentUser = authManager.getCurrentUser();
+    const draftIdToUse = selectedDraftValue && selectedDraftValue !== '__new__' ? selectedDraftValue : null;
     const msg = document.getElementById('submitOrderMessage');
+    const submitButton = document.querySelector('#submitOrderModal .btn-modal-danger');
+    if (submitButton) submitButton.disabled = true;
 
     try {
-        // Usar número do cliente se preenchido, senão usar Hiper Roll
-        const orderNumberToUse = orderNumberClient || orderNumberHiperroll;
-        
-        const draftIdToUse = selectedDraftValue && selectedDraftValue !== '__new__' ? selectedDraftValue : null;
-        const proposalValidity = normalizeProposalValidity(document.getElementById('proposalValidity')?.value || '');
-        const conditions = {
-            ...getCurrentOrderConditions(),
+        const order = await orderSubmissionManager.submitOrder(draftIdToUse, buildCurrentOrderInput({
             lowMarginJustification: document.getElementById('submitLowMarginJustification')?.value || ''
-        };
-        const submissionId = orderSubmissionManager.submitOrder(
-            orderNumberToUse,
-            clientName,
-            representativeName,
-            cart,
-            currentUser,
-            draftIdToUse,
-            proposalValidity,
-            conditions
-        );
-        console.log('[Portal Hiperroll] submitOrder() saved submission', {
-            submissionId,
-            newCount: Object.keys(orderSubmissionManager.submissions || {}).length,
-            submission: orderSubmissionManager.getById(submissionId)
-        });
+        }));
 
-        if (msg) {
-            msg.textContent = '✓ Pedido enviado para análise! ID: ' + submissionId;
-            msg.style.color = '#15803d';
-        }
-
-        console.log('[Portal Hiperroll] submitOrder() called, submissionId=', submissionId);
-        console.log('[Portal Hiperroll] orderSubmissionManager count before save =', Object.keys(orderSubmissionManager.submissions || {}).length);
-
-        // Registrar no histórico apenas quando o pedido for efetivamente enviado
         try {
-            statusManager.addHistoryEntry('analise', 'Enviado para análise', currentUser);
+            statusManager.addHistoryEntry('analise', 'Enviado para análise', authManager.getCurrentUser());
             statusManager.currentStatus = 'analise';
             statusManager.updateUI();
         } catch (e) {
             console.warn('Não foi possível registrar histórico de envio:', e);
         }
 
+        closeSubmitOrderModal();
+        resetCurrentOrderForm();
+        alert(`Pedido ${order.orderNumber} enviado com sucesso! Aguardando aprovação do gestor.`);
         const historySearchInput = document.getElementById('historySearchInput');
-        if (historySearchInput) {
-            historySearchInput.value = '';
-        }
-        activeDraftId = null;
-        setLoadedOrderReference('');
+        if (historySearchInput) historySearchInput.value = '';
         switchTab('tab-history');
-        renderHistoryTab();
-
-        setTimeout(() => {
-            closeSubmitOrderModal();
-            cart.length = 0;
-            updateOrderTable();
-            renderDraftsPanel();
-            renderHistoryTab();
-            
-            // Gerar novo número Hiper Roll para o próximo pedido
-            const nextNumber = hiperrollOrderNumberManager.getNextOrderNumber();
-            document.getElementById('orderNumberHiperroll').value = nextNumber;
-            document.getElementById('orderNumberClient').value = '';
-            document.getElementById('clientName').value = '';
-            document.getElementById('representativeName').value = '';
-            document.getElementById('proposalValidity').value = '';
-            setCurrentOrderConditions(null);
-            const justificationInput = document.getElementById('submitLowMarginJustification');
-            if (justificationInput) justificationInput.value = '';
-            alert('Pedido enviado com sucesso! Aguardando aprovação do supervisor.');
-            switchTab('tab-history');
-            renderHistoryTab();
-            setTimeout(() => highlightHistoryCard(submissionId), 250);
-        }, 1500);
+        setTimeout(() => highlightHistoryCard(order.id), 250);
     } catch (e) {
+        // The gestor changed the table while this order was being built: reload it, show what
+        // changed, then reopen this modal with the new totals so the representative sends again.
+        if (e.code === 'pricing_outdated') {
+            closeSubmitOrderModal();
+            try {
+                await refreshPricingCatalog('A tabela de preços foi atualizada pelo gestor enquanto você montava este pedido.');
+            } catch (refreshError) {
+                alert(refreshError.message);
+                return;
+            }
+            showSubmitOrderModal();
+            const refreshedMsg = document.getElementById('submitOrderMessage');
+            if (refreshedMsg) {
+                refreshedMsg.textContent = 'Os preços foram revisados com a tabela nova. Confira a margem e clique em "Enviar Pedido" novamente.';
+                refreshedMsg.style.color = '#b45309';
+            }
+            return;
+        }
         if (msg) {
             msg.textContent = e.message;
             msg.style.color = '#b91c1c';
         }
+    } finally {
+        if (submitButton) submitButton.disabled = false;
     }
 }
 
-function saveDraftCurrentOrder() {
+function resetCurrentOrderForm() {
+    activeDraftId = null;
+    setLoadedOrderReference('');
+    cart.length = 0;
+    updateOrderTable();
+    ['orderNumberClient', 'clientName', 'proposalValidity'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    });
+    const representativeInput = document.getElementById('representativeName');
+    if (representativeInput) representativeInput.value = authManager.getDisplayName();
+    setCurrentOrderConditions(null);
+    const justificationInput = document.getElementById('submitLowMarginJustification');
+    if (justificationInput) justificationInput.value = '';
+    hiperrollOrderNumberManager.applyToForm();
+    renderDraftsPanel();
+}
+
+async function saveDraftCurrentOrder() {
     if (cart.length === 0) {
         alert('Adicione itens ao pedido antes de salvar o rascunho.');
         return;
     }
 
-    const orderNumberHiperroll = document.getElementById('orderNumberHiperroll')?.value.trim() || '';
-    const orderNumberClient = document.getElementById('orderNumberClient')?.value.trim() || '';
-    const clientName = document.getElementById('clientName')?.value.trim() || '';
-    const representativeName = document.getElementById('representativeName')?.value.trim() || '';
-    const currentUser = authManager.getCurrentUser();
-
     try {
-        // Usar número do cliente se preenchido, senão usar Hiper Roll
-        const orderNumberToUse = orderNumberClient || orderNumberHiperroll;
-        
-        const proposalValidity = normalizeProposalValidity(document.getElementById('proposalValidity')?.value || '');
-        const draftId = orderSubmissionManager.saveDraft(
-            orderNumberToUse,
-            clientName,
-            representativeName,
-            cart,
-            currentUser,
-            activeDraftId,
-            proposalValidity,
-            getCurrentOrderConditions()
-        );
-        activeDraftId = draftId;
+        const order = await orderSubmissionManager.saveDraft(activeDraftId, buildCurrentOrderInput());
+        activeDraftId = order.id;
+        const hiperrollField = document.getElementById('orderNumberHiperroll');
+        if (hiperrollField) hiperrollField.value = order.hiperrollNumber;
+        setLoadedOrderReference(order.orderNumber);
+        updateHeaderInfo();
         renderDraftsPanel();
         renderHistoryTab();
-        // Registrar no histórico apenas quando o rascunho for efetivamente salvo
         try {
-            statusManager.addHistoryEntry('rascunho', 'Rascunho salvo', currentUser);
+            statusManager.addHistoryEntry('rascunho', 'Rascunho salvo', authManager.getCurrentUser());
             statusManager.currentStatus = 'rascunho';
             statusManager.updateUI();
         } catch (e) {
             console.warn('Não foi possível registrar histórico do rascunho:', e);
         }
-        alert('Rascunho salvo com sucesso. Ele já está disponível no painel de rascunhos.');
+        alert(`Rascunho ${order.orderNumber} salvo com sucesso. Ele já está disponível no painel de rascunhos.`);
     } catch (e) {
         alert(e.message);
     }
 }
 
-function loadDraftToCurrentOrder(submissionId, silent = false) {
+async function loadDraftToCurrentOrder(submissionId, silent = false) {
     const submission = orderSubmissionManager.getById(submissionId);
     if (!submission) {
         alert('Rascunho não encontrado.');
@@ -2735,6 +2527,9 @@ function loadDraftToCurrentOrder(submissionId, silent = false) {
 
     activeDraftId = submissionId;
     setLoadedOrderReference(submission.orderNumber || '');
+    const hiperrollField = document.getElementById('orderNumberHiperroll');
+    if (hiperrollField) hiperrollField.value = submission.hiperrollNumber || '';
+    document.getElementById('orderNumberClient').value = submission.clientOrderNumber || '';
     document.getElementById('clientName').value = submission.clientName || '';
     document.getElementById('representativeName').value = submission.representativeName || '';
     document.getElementById('proposalValidity').value = submission.proposalValidity || '';
@@ -2742,14 +2537,16 @@ function loadDraftToCurrentOrder(submissionId, silent = false) {
     cart.length = 0;
     (Array.isArray(submission.cart) ? submission.cart : []).forEach(item => cart.push(JSON.parse(JSON.stringify(item))));
     updateOrderTable();
+    updateHeaderInfo();
     renderDraftsPanel();
     closeOrderHistoryModal();
-    if (!silent) {
+    const repriced = await reviewCartPrices('A tabela de preços mudou desde que este rascunho foi salvo.');
+    if (!silent && repriced === 'none') {
         alert('Rascunho carregado. Edite o pedido ou envie quando estiver pronto.');
     }
 }
 
-function repeatOrder(submissionId) {
+async function repeatOrder(submissionId) {
     const submission = orderSubmissionManager.getById(submissionId);
     if (!submission) {
         alert('Pedido não encontrado.');
@@ -2757,12 +2554,11 @@ function repeatOrder(submissionId) {
     }
 
     activeDraftId = null;
-    const nextNumber = hiperrollOrderNumberManager.getNextOrderNumber();
-    document.getElementById('orderNumberHiperroll').value = nextNumber;
     setLoadedOrderReference('');
-    document.getElementById('orderNumberClient').value = submission.orderNumber || '';
+    hiperrollOrderNumberManager.applyToForm();
+    document.getElementById('orderNumberClient').value = submission.clientOrderNumber || '';
     document.getElementById('clientName').value = submission.clientName || '';
-    document.getElementById('representativeName').value = submission.representativeName || '';
+    document.getElementById('representativeName').value = submission.representativeName || authManager.getDisplayName();
     document.getElementById('proposalValidity').value = normalizeProposalValidity(submission.proposalValidity || '');
     setCurrentOrderConditions(submission.conditions);
     cart.length = 0;
@@ -2770,7 +2566,11 @@ function repeatOrder(submissionId) {
     updateOrderTable();
     renderDraftsPanel();
     closeOrderHistoryModal();
-    alert('Pedido repetido como novo pedido. Ajuste os dados se necessário e envie novamente.');
+    switchTab('tab-order');
+    const repriced = await reviewCartPrices('A tabela de preços mudou desde este pedido.');
+    if (repriced === 'none') {
+        alert('Pedido repetido como novo pedido. Ajuste os dados se necessário e envie novamente.');
+    }
 }
 
 function showOrderHistoryModal() {
@@ -2791,80 +2591,69 @@ function closeOrderHistoryModal() {
     if (modal) modal.style.display = 'none';
 }
 
-function deleteSubmission(submissionId) {
+function afterOrdersChanged() {
+    renderDraftsPanel();
+    renderHistoryTab();
+    updateTrashBadge();
+    updateSupervisorPanel();
+}
+
+// Other users change orders and prices too (e.g. the gestor approving or adjusting the table),
+// so both can be refreshed on demand.
+async function reloadOrders() {
+    try {
+        await loadServerData();
+        afterOrdersChanged();
+        await refreshPricingCatalog();
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+async function deleteSubmission(submissionId) {
     const submission = orderSubmissionManager.getById(submissionId);
     if (!submission) {
         alert('Pedido não encontrado.');
         return;
     }
 
-    let confirmMsg = 'Deseja realmente excluir este pedido? Os dados serão armazenados no histórico de exclusões.';
+    let confirmMsg = 'Deseja realmente excluir este pedido? Ele ficará na Lixeira e poderá ser restaurado.';
     if (submission.status === 'analise') {
-        confirmMsg += '\n\n⚠️ Aviso: Este pedido está em análise. Ele permanecerá visível no painel do supervisor para que possa dar andamento.';
+        confirmMsg += '\n\n⚠️ Este pedido está em análise: ele continua visível para o gestor dar andamento.';
     } else if (submission.status === 'aprovado') {
-        confirmMsg += '\n\n⚠️ Aviso: Este pedido já foi aprovado. Ele permanecerá visível no painel do supervisor para rastreamento.';
+        confirmMsg += '\n\n⚠️ Este pedido já foi aprovado: ele continua visível para o gestor, para rastreamento.';
     }
+    if (!confirm(confirmMsg)) return;
 
-    const ok = confirm(confirmMsg);
-    if (!ok) return;
-
-    const deletedBy = authManager.getCurrentUser() || 'Sistema';
-    if (deletedSubmissionsManager.archiveSubmission(submissionId, submission, deletedBy, '')) {
-        orderSubmissionManager.deleteSubmission(submissionId);
-        deletedSubmissionsManager.save();
-        
+    try {
+        await orderSubmissionManager.moveToTrash(submissionId);
         if (activeDraftId === submissionId) {
             activeDraftId = null;
         }
-        renderDraftsPanel();
-        renderHistoryTab();
-        updateTrashBadge();
-        updateSupervisorPanel();
-        
-        let successMsg = 'Pedido excluído com sucesso. Histórico preservado em "Lixeira".';
-        if (['analise', 'aprovado'].includes(submission.status)) {
-            successMsg += '\n\nO pedido continua visível no painel do supervisor.';
-        }
-        alert(successMsg);
+        afterOrdersChanged();
+        alert('Pedido movido para a Lixeira.');
         showOrderHistoryModal();
-    } else {
-        alert('Não foi possível excluir o pedido.');
+    } catch (e) {
+        alert(e.message);
     }
 }
 
-function deleteSelectedSubmissions() {
+async function deleteSelectedSubmissions() {
     const selected = Array.from(document.querySelectorAll('.history-selection-checkbox:checked')).map(input => input.value);
     if (selected.length === 0) {
         alert('Selecione ao menos um pedido para excluir.');
         return;
     }
+    if (!confirm(`Deseja mover os ${selected.length} pedido(s) selecionado(s) para a Lixeira?`)) return;
 
-    const ok = confirm(`Deseja realmente excluir os ${selected.length} pedido(s) selecionado(s)? Os dados serão armazenados no histórico de exclusões.`);
-    if (!ok) return;
-
-    let deletedCount = 0;
-    const deletedBy = authManager.getCurrentUser() || 'Sistema';
-    
-    selected.forEach(id => {
-        const submission = orderSubmissionManager.getById(id);
-        if (submission) {
-            if (deletedSubmissionsManager.archiveSubmission(id, submission, deletedBy, '')) {
-                orderSubmissionManager.deleteSubmission(id);
-                deletedSubmissionsManager.save();
-                deletedCount += 1;
-            }
-        }
-    });
-
-    if (deletedCount > 0) {
-        alert(`${deletedCount} pedido(s) excluído(s) com sucesso. Histórico preservado em "Lixeira".`);
-        updateTrashBadge();
-        renderHistoryTab();
-    } else {
-        alert('Nenhum pedido pôde ser excluído.');
+    try {
+        const count = await orderSubmissionManager.moveToTrash(selected);
+        afterOrdersChanged();
+        alert(`${count} pedido(s) movido(s) para a Lixeira.`);
+        showOrderHistoryModal();
+    } catch (e) {
+        alert(e.message);
     }
-
-    showOrderHistoryModal();
 }
 
 // ========== FUNÇÕES DE GERENCIAMENTO DE LIXEIRA ==========
@@ -3095,56 +2884,54 @@ function closeTrashModal() {
     }
 }
 
-function restoreSubmission(submissionId) {
-    const ok = confirm('Deseja restaurar este pedido como rascunho?');
-    if (!ok) return;
+async function restoreSubmission(submissionId) {
+    if (!confirm('Deseja restaurar este pedido como rascunho?')) return;
 
-    const restored = deletedSubmissionsManager.restore(submissionId);
-    if (restored) {
-        orderSubmissionManager.submissions[submissionId] = restored;
-        orderSubmissionManager.save();
-        updateTrashBadge();
-        alert('Pedido restaurado com sucesso como rascunho!');
+    try {
+        await deletedSubmissionsManager.restore(submissionId);
+        afterOrdersChanged();
+        alert('Pedido restaurado como rascunho.');
         closeTrashModal();
-        showTrashModal(); // Reabrir o modal para atualizar a lista
-        renderHistoryTab();
-        renderDraftsPanel();
-    } else {
-        alert('Não foi possível restaurar o pedido.');
+        if (deletedSubmissionsManager.count() > 0) showTrashModal();
+    } catch (e) {
+        alert(e.message);
     }
 }
 
-function permanentlyDeleteSubmission(submissionId) {
-    const ok = confirm('Tem certeza? Esta ação não pode ser desfeita. O pedido será deletado permanentemente.');
-    if (!ok) return;
+async function permanentlyDeleteSubmission(submissionId) {
+    if (!confirm('Tem certeza? Esta ação não pode ser desfeita. O pedido será excluído definitivamente.')) return;
 
-    if (deletedSubmissionsManager.permanentlyDelete(submissionId)) {
+    try {
+        await deletedSubmissionsManager.permanentlyDelete(submissionId);
         updateTrashBadge();
-        alert('Pedido deletado permanentemente.');
+        alert('Pedido excluído definitivamente.');
         closeTrashModal();
-        showTrashModal();
-    } else {
-        alert('Não foi possível deletar o pedido.');
+        if (deletedSubmissionsManager.count() > 0) showTrashModal();
+    } catch (e) {
+        alert(e.message);
     }
 }
 
-function emptyTrash() {
+async function emptyTrash() {
     const count = deletedSubmissionsManager.count();
     if (count === 0) {
         alert('A lixeira já está vazia.');
         return;
     }
+    if (!confirm(`Tem certeza? Os pedidos da lixeira serão excluídos definitivamente. Esta ação não pode ser desfeita.`)) return;
 
-    const ok = confirm(`Tem certeza? Todos os ${count} pedido(s) na lixeira serão deletados permanentemente. Esta ação não pode ser desfeita.`);
-    if (!ok) return;
-
-    deletedSubmissionsManager.getAll().forEach(deletion => {
-        deletedSubmissionsManager.permanentlyDelete(deletion.id);
-    });
-
-    alert('Lixeira esvaziada com sucesso.');
-    closeTrashModal();
-    updateTrashBadge();
+    try {
+        const result = await deletedSubmissionsManager.emptyTrash();
+        closeTrashModal();
+        afterOrdersChanged();
+        let message = `${result.deleted} pedido(s) excluído(s) definitivamente.`;
+        if (result.kept > 0) {
+            message += `\n\n${result.kept} pedido(s) em análise ou aprovados foram mantidos: somente o gestor pode excluí-los.`;
+        }
+        alert(message);
+    } catch (e) {
+        alert(e.message);
+    }
 }
 
 function updateTrashBadge() {
@@ -3209,11 +2996,9 @@ function openSupervisorOrderActions(submissionId) {
         submission = deletedSubmissionsManager.getById(submissionId);
     }
     
-    const currentUser = authManager.getCurrentUser();
-    const currentRole = authManager.getCurrentUserRole();
     if (!submission) return;
-    if (!['supervisor', 'desenvolvedor'].includes(currentRole)) {
-        alert('Acesso negado. Apenas supervisor ou desenvolvedor podem gerenciar este pedido.');
+    if (!authManager.isGestor()) {
+        alert('Acesso negado. Somente o gestor pode gerenciar este pedido.');
         return;
     }
 
@@ -3243,17 +3028,11 @@ function openSupervisorOrderActions(submissionId) {
     backdrop.id = 'supervisorActionModalBackdrop';
     backdrop.className = 'modal-backdrop';
     backdrop.style.cssText = 'display:flex; z-index:2001;';
-    const normalizeBtn = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
-    const allowedApproversBtns = [normalizeBtn('Leon'), normalizeBtn('Gabriel.Ferreira')];
-    const currentNormalizedBtn = normalizeBtn(currentUser);
+    const canDecide = submission.status === 'analise';
+    const decisionTitle = canDecide ? '' : 'title="Somente pedidos em análise podem ser aprovados ou rejeitados"';
 
-    const approveBtnHtml = allowedApproversBtns.includes(currentNormalizedBtn)
-        ? `<button onclick="handleSupervisorAction('${submission.id}', 'approve')" class="btn-modal btn-modal-success">✅ Aprovar</button>`
-        : `<button disabled title="Apenas Gabriel ou Leon podem aprovar" class="btn-modal btn-modal-success">✅ Aprovar</button>`;
-
-    const rejectBtnHtml = allowedApproversBtns.includes(currentNormalizedBtn)
-        ? `<button onclick="handleSupervisorAction('${submission.id}', 'reject')" class="btn-modal btn-modal-danger">❌ Rejeitar</button>`
-        : `<button disabled title="Apenas Gabriel ou Leon podem rejeitar" class="btn-modal btn-modal-danger">❌ Rejeitar</button>`;
+    const approveBtnHtml = `<button onclick="handleSupervisorAction('${submission.id}', 'approve')" class="btn-modal btn-modal-success" ${canDecide ? '' : 'disabled'} ${decisionTitle}>✅ Aprovar</button>`;
+    const rejectBtnHtml = `<button onclick="handleSupervisorAction('${submission.id}', 'reject')" class="btn-modal btn-modal-danger" ${canDecide ? '' : 'disabled'} ${decisionTitle}>❌ Rejeitar</button>`;
 
     backdrop.innerHTML = `
         <div class="modal-panel modal-panel--md">
@@ -3298,37 +3077,31 @@ function openSupervisorOrderActions(submissionId) {
     document.body.appendChild(backdrop);
 }
 
-function handleSupervisorAction(submissionId, action) {
-    const currentUser = authManager.getCurrentUser();
+async function handleSupervisorAction(submissionId, action) {
     const note = document.getElementById('supervisorActionNote')?.value.trim() || '';
     const reason = document.getElementById('supervisorActionRejectionReason')?.value.trim() || '';
-    const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
-    const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
-    const currentNormalized = normalize(currentUser);
 
-    if (action === 'approve') {
-        if (!allowedApprovers.includes(currentNormalized)) {
-            alert('Apenas Gabriel ou Leon podem aprovar pedidos.');
-            return;
-        }
-        orderSubmissionManager.approve(submissionId, currentUser, note);
-        alert('Pedido aprovado com sucesso.');
-    } else if (action === 'reject') {
-        if (!allowedApprovers.includes(currentNormalized)) {
-            alert('Apenas Gabriel ou Leon podem rejeitar pedidos.');
-            return;
-        }
-        if (!reason) {
-            alert('Informe o motivo da rejeição antes de rejeitar o pedido.');
-            return;
-        }
-        orderSubmissionManager.reject(submissionId, reason, currentUser, note);
-        alert('Pedido rejeitado com sucesso.');
-    } else if (action === 'saveNote') {
-        // Any supervisor or developer can save notes; keep existing behavior
-        orderSubmissionManager.setSupervisorNote(submissionId, note);
-        alert('Observação salva com sucesso.');
+    if (action === 'reject' && !reason) {
+        alert('Informe o motivo da rejeição antes de rejeitar o pedido.');
+        return;
     }
+
+    try {
+        if (action === 'approve') {
+            await orderSubmissionManager.approve(submissionId, note);
+            alert('Pedido aprovado com sucesso.');
+        } else if (action === 'reject') {
+            await orderSubmissionManager.reject(submissionId, reason, note);
+            alert('Pedido rejeitado com sucesso.');
+        } else if (action === 'saveNote') {
+            await orderSubmissionManager.setSupervisorNote(submissionId, note);
+            alert('Observação salva com sucesso.');
+        }
+    } catch (e) {
+        alert(e.message);
+        return;
+    }
+
     closeSupervisorActionModal();
     const searchInput = document.getElementById('historySearchInput');
     if (searchInput) searchInput.value = '';
@@ -3378,23 +3151,17 @@ function refreshMissedForecastDates() {
         });
     };
 
-    if (orderSubmissionManager && typeof orderSubmissionManager.getAll === 'function') {
-        syncForecast(orderSubmissionManager.getAll());
-        orderSubmissionManager.save();
-    }
-    if (deletedSubmissionsManager && typeof deletedSubmissionsManager.getAll === 'function') {
-        syncForecast(deletedSubmissionsManager.getAll());
-        deletedSubmissionsManager.save();
-    }
+    // Display-only: the overdue forecast is pushed forward on screen, the stored date is untouched.
+    syncForecast(orderSubmissionManager.getAll());
+    syncForecast(deletedSubmissionsManager.getAll());
 }
 
 function updateSupervisorPanel() {
     refreshMissedForecastDates();
     const modal = document.getElementById('supervisorModal');
-    const currentUserRole = authManager.getCurrentUserRole();
     const btn = document.getElementById('supervisorBtn');
     if (btn) {
-        btn.style.display = ['supervisor', 'desenvolvedor'].includes(currentUserRole) ? 'inline-flex' : 'none';
+        btn.style.display = authManager.isGestor() ? 'inline-flex' : 'none';
     }
     if (!modal) return;
 
@@ -3417,13 +3184,9 @@ function updateSupervisorPanel() {
         pending = uniquePending.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
         
         if (pending.length === 0) {
-            const currentUser = authManager.getCurrentUser();
-            const currentRole = authManager.getCurrentUserRole();
-            const emptyMessage = ['supervisor', 'desenvolvedor'].includes(currentRole)
-                ? 'Nenhum pedido pendente no momento. Verifique o histórico ou o armazenamento local do portal.'
-                : currentUser
-                    ? 'Nenhum pedido pendente para revisão.'
-                    : 'Nenhum pedido pendente. Faça login para visualizar a fila do supervisor.';
+            const emptyMessage = authManager.isGestor()
+                ? 'Nenhum pedido aguardando aprovação no momento.'
+                : 'Somente o gestor visualiza a fila de aprovação.';
             pendingList.innerHTML = `<div style="padding:15px; text-align:center; color:#64748b;">${emptyMessage}</div>`;
         } else {
             let html = '<div style="display:flex; flex-direction:column; gap:12px;">';
@@ -3483,35 +3246,36 @@ function getSelectedPendingOrders() {
     return Array.from(checkboxes).map(cb => cb.value);
 }
 
-function approvePendingOrders() {
+function describeDecisionResult(verb, result) {
+    const done = (result.orders || []).length;
+    let message = `${done} pedido(s) ${verb} com sucesso!`;
+    if (result.skipped > 0) {
+        message += `\n\n${result.skipped} pedido(s) foram ignorados porque não estavam mais em análise.`;
+    }
+    return message;
+}
+
+async function approvePendingOrders() {
     const selected = getSelectedPendingOrders();
     if (selected.length === 0) {
         alert('Selecione ao menos um pedido para aprovar.');
         return;
     }
 
-    const currentUser = authManager.getCurrentUser();
-    const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
-    const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
-    if (!allowedApprovers.includes(normalize(currentUser))) {
-        alert('Apenas Gabriel ou Leon podem aprovar pedidos.');
-        return;
-    }
-
     const supervisorNote = document.getElementById('supervisorObservationTextarea')?.value.trim() || '';
-    orderSubmissionManager.approve(selected, currentUser, supervisorNote);
-    console.log('[Portal Hiperroll] approvePendingOrders() called, selected=', selected);
-    updateSupervisorPanel();
-    const searchInput = document.getElementById('historySearchInput');
-    if (searchInput) searchInput.value = '';
-    renderHistoryTab();
-    alert(`${selected.length} pedido(s) aprovado(s) com sucesso!`);
-    if (document.getElementById('supervisorObservationTextarea')) {
-        document.getElementById('supervisorObservationTextarea').value = '';
+    try {
+        const result = await orderSubmissionManager.approve(selected, supervisorNote);
+        updateSupervisorPanel();
+        const searchInput = document.getElementById('historySearchInput');
+        if (searchInput) searchInput.value = '';
+        renderHistoryTab();
+        alert(describeDecisionResult('aprovado(s)', result));
+    } catch (e) {
+        alert(e.message);
     }
 }
 
-function rejectPendingOrders() {
+async function rejectPendingOrders() {
     const selected = getSelectedPendingOrders();
     if (selected.length === 0) {
         alert('Selecione ao menos um pedido para rejeitar.');
@@ -3523,26 +3287,16 @@ function rejectPendingOrders() {
         return;
     }
 
-    const currentUser = authManager.getCurrentUser();
-    const normalize = (s) => (typeof authManager !== 'undefined') ? authManager.normalizeUsername(s) : String(s || '').trim().toLowerCase();
-    const allowedApprovers = [normalize('Leon'), normalize('Gabriel.Ferreira')];
-    if (!allowedApprovers.includes(normalize(currentUser))) {
-        alert('Apenas Gabriel ou Leon podem rejeitar pedidos.');
-        return;
-    }
-
     const supervisorNote = document.getElementById('supervisorObservationTextarea')?.value.trim() || '';
-    orderSubmissionManager.reject(selected, reason, currentUser, supervisorNote);
-    updateSupervisorPanel();
-    const searchInput = document.getElementById('historySearchInput');
-    if (searchInput) searchInput.value = '';
-    renderHistoryTab();
-    alert(`${selected.length} pedido(s) rejeitado(s) com sucesso!`);
-    if (document.getElementById('rejectionReasonTextarea')) {
-        document.getElementById('rejectionReasonTextarea').value = '';
-    }
-    if (document.getElementById('supervisorObservationTextarea')) {
-        document.getElementById('supervisorObservationTextarea').value = '';
+    try {
+        const result = await orderSubmissionManager.reject(selected, reason, supervisorNote);
+        updateSupervisorPanel();
+        const searchInput = document.getElementById('historySearchInput');
+        if (searchInput) searchInput.value = '';
+        renderHistoryTab();
+        alert(describeDecisionResult('rejeitado(s)', result));
+    } catch (e) {
+        alert(e.message);
     }
 }
 
@@ -3686,70 +3440,9 @@ function switchTab(tabId) {
         }
         renderHistoryTab();
     }
-}
-
-// Sobrescrevendo a exibição antiga de histórico (para quando clicar em 'Meus Pedidos')
-// Extensão do orderSubmissionManager para suportar faturamento e notas fiscais
-if (!orderSubmissionManager.registerBilling) {
-    orderSubmissionManager.registerBilling = function(submissionId, billedItemsMap, invoiceBase64, invoiceName) {
-        const submission = this.submissions[submissionId];
-        if (!submission) return false;
-
-        if (!submission.billedQuantities) submission.billedQuantities = {};
-        if (!submission.invoices) submission.invoices = [];
-        if (!submission.billedQuantities) submission.billedQuantities = {};
-
-        let allComplete = true;
-        let anyBilled = false;
-
-        const cartItems = Array.isArray(submission.cart) ? submission.cart : [];
-        cartItems.forEach(item => {
-            const addedQty = billedItemsMap[item.codigo] || 0;
-            const currentTotal = (submission.billedQuantities[item.codigo] || 0) + addedQty;
-            submission.billedQuantities[item.codigo] = Math.min(currentTotal, item.qty);
-
-            if (submission.billedQuantities[item.codigo] > 0) anyBilled = true;
-            if (submission.billedQuantities[item.codigo] < item.qty) allComplete = false;
-        });
-
-        if (anyBilled && allComplete) {
-            submission.billingStatus = 'completo';
-        } else if (anyBilled) {
-            submission.billingStatus = 'parcial';
-        } else {
-            submission.billingStatus = 'pendente';
-        }
-
-        const now = new Date();
-        const nextPred = new Date(now);
-        nextPred.setDate(nextPred.getDate() + 4);
-
-        if (!submission.billingHistory) submission.billingHistory = [];
-        submission.billingHistory.push({
-            date: now.toISOString(),
-            predictedNextDate: allComplete ? null : nextPred.toISOString(),
-            billedMap: billedItemsMap
-        });
-
-        if (anyBilled) {
-            submission.predictedBillingDate = allComplete ? null : nextPred.toISOString();
-        }
-
-        if (invoiceBase64) {
-            submission.invoices.push({
-                name: invoiceName || 'Nota Fiscal',
-                data: invoiceBase64,
-                date: now.toISOString()
-            });
-        }
-
-        this.save();
-        
-        // Atualizar também na lixeira se o pedido foi deletado
-        deletedSubmissionsManager.updateBilledQuantities(submissionId, billedItemsMap);
-        
-        return true;
-    };
+    if (tabId === 'tab-pricing') {
+        renderPricingTab();
+    }
 }
 
 function renderHistoryTab() {
@@ -3759,31 +3452,11 @@ function renderHistoryTab() {
     if (!historyContainer) { console.error('historyTabContent não encontrado'); return; }
     const searchTerm = (document.getElementById('historySearchInput')?.value || '').toLowerCase();
     
-    const currentUser = authManager.getCurrentUser();
-    const role = authManager.getCurrentUserRole();
-    
+    const isGestor = authManager.isGestor();
+
+    // The server already returns only what this user may see (gestor: everyone's orders).
     let submissions = orderSubmissionManager.getAll();
-    console.log('[Portal Hiperroll] renderHistoryTab start', {
-        currentUser,
-        role,
-        totalSubmissions: submissions.length,
-        searchTerm
-    });
-    
-    // Vendedor vê só os seus, Supervisor vê todos
-    if (role === 'vendedor') {
-        const normalizedCurrent = authManager.normalizeUsername(currentUser);
-        submissions = submissions.filter(s =>
-            authManager.normalizeUsername(s.submittedBy) === normalizedCurrent ||
-            authManager.normalizeUsername(s.savedBy) === normalizedCurrent
-        );
-    }
-    console.log('[Portal Hiperroll] renderHistoryTab after role filter', {
-        role,
-        filteredCount: submissions.length,
-        filteredIds: submissions.map(s => ({ id: s.id, status: s.status, orderNumber: s.orderNumber, submittedBy: s.submittedBy }))
-    });
-    
+
     // Sort por data mais recente
     submissions.sort((a, b) => {
         const dateA = new Date(a.submittedAt || a.savedAt || 0);
@@ -3801,15 +3474,14 @@ function renderHistoryTab() {
         );
     }
 
-    const roleNote = role === 'vendedor'
-        ? 'Você vê apenas seus próprios pedidos e rascunhos.'
-        : 'Supervisor/desenvolvedor vê todos os pedidos, inclusive os seus.';
+    const roleNote = isGestor
+        ? 'Como gestor, você vê os pedidos de todos os representantes.'
+        : 'Você vê apenas os seus próprios pedidos e rascunhos.';
 
     if (submissions.length === 0) {
-        const currentUser = authManager.getCurrentUser();
-        const emptyMessage = currentUser
-            ? 'Nenhum pedido encontrado para o usuário atual.'
-            : 'Nenhum pedido encontrado. Faça login para carregar o histórico e o painel do supervisor.';
+        const emptyMessage = authManager.getCurrentUser()
+            ? 'Nenhum pedido encontrado.'
+            : 'Faça login para carregar o histórico de pedidos.';
         historyContainer.innerHTML = `<div style="padding: 20px; text-align: center; color: #64748b;">${emptyMessage}</div>`;
         return;
     }
@@ -3958,14 +3630,17 @@ function renderHistoryTab() {
 
         // Ações
         let actionsHtml = `<div style="margin-top:15px; display:flex; gap:10px; flex-wrap:wrap;">`;
-        if (isDraft) {
+        const isOwnOrder = submission.ownerId === authManager.getCurrentUserId();
+        if (isDraft && isOwnOrder) {
             actionsHtml += `<button onclick="loadDraftToCurrentOrder('${submission.id}')" style="background:#0f172a; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">✏️ Continuar Rascunho</button>`;
-        } else {
+        } else if (!isDraft) {
             actionsHtml += `<button onclick="repeatOrder('${submission.id}')" style="background:#64748b; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">🔁 Repetir Pedido</button>`;
         }
-        
-        // Ações para Supervisor (Faturar)
-        if (role === 'supervisor' || role === 'desenvolvedor') {
+
+        if (isGestor) {
+            if (submission.status === 'analise') {
+                actionsHtml += `<button onclick="openSupervisorOrderActions('${submission.id}')" style="background:#0054A6; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">🧑‍💼 Analisar Pedido</button>`;
+            }
             if (submission.status === 'aprovado' && submission.billingStatus !== 'completo') {
                 actionsHtml += `<button onclick="openBillingModal('${submission.id}')" style="background:#0054A6; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">📦 Faturar / Anexar NF</button>`;
             }
@@ -4083,11 +3758,20 @@ function openBillingModal(submissionId) {
     document.body.appendChild(modal);
 }
 
-function submitBilling(submissionId) {
+function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = event => resolve(event.target.result);
+        reader.onerror = () => reject(new Error('Não foi possível ler o arquivo da nota fiscal.'));
+        reader.readAsDataURL(file);
+    });
+}
+
+async function submitBilling(submissionId) {
     const inputs = document.querySelectorAll('.bill-qty-input');
     const billedMap = {};
     let hasItems = false;
-    
+
     inputs.forEach(inp => {
         const val = parseInt(inp.value) || 0;
         const code = inp.getAttribute('data-codigo');
@@ -4101,29 +3785,639 @@ function submitBilling(submissionId) {
     const file = fileInput.files[0];
 
     if (!hasItems && !file) {
-        alert("Informe alguma quantidade ou anexe uma Nota Fiscal.");
+        alert('Informe alguma quantidade ou anexe uma Nota Fiscal.');
+        return;
+    }
+    if (file && file.size > 2 * 1024 * 1024) {
+        alert('A nota fiscal deve ter no máximo 2 MB.');
         return;
     }
 
-    if (file) {
-        if (file.size > 2 * 1024 * 1024) { 
-            alert("Para esta demonstração local, por favor selecione um arquivo menor que 2MB.");
-            return;
-        }
-        
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const base64Data = e.target.result;
-            orderSubmissionManager.registerBilling(submissionId, billedMap, base64Data, file.name);
-            document.getElementById('billingModalDynamic').remove();
-            renderHistoryTab();
-            alert("Faturamento registrado com sucesso!");
-        };
-        reader.readAsDataURL(file);
-    } else {
-        orderSubmissionManager.registerBilling(submissionId, billedMap, null, null);
+    try {
+        const dataUrl = file ? await readFileAsDataUrl(file) : null;
+        await orderSubmissionManager.registerBilling(submissionId, billedMap, dataUrl, file ? file.name : null);
         document.getElementById('billingModalDynamic').remove();
         renderHistoryTab();
-        alert("Faturamento registrado com sucesso!");
+        alert('Faturamento registrado com sucesso!');
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+// ==========================================
+// ABA "TABELA DE PREÇOS" (gestor edita; administrador importa e consulta)
+// Every save goes to the server, which validates, records "de → para" in the price history and
+// bumps the table version; the screen then reloads the table returned by the server.
+// ==========================================
+
+const PRICING_FIELD_LABELS = Object.freeze({
+    name: 'Nome',
+    custo_base: 'Custo produto (R$/kg)',
+    desp_com: 'Desp. comercial (R$/kg)',
+    desp_adm: 'Desp. administrativa (R$/kg)',
+    price100: 'Preço 100% NF (R$/kg)',
+    label: 'Descrição da praça',
+    tier1: 'Frete 150–199 kg (R$/kg)',
+    tier2: 'Frete acima de 200 kg (R$/kg)',
+    descricao: 'Descrição',
+    categoria: 'Categoria',
+    subcat: 'Subcategoria',
+    cost_line_key: 'Linha de produto',
+    weight: 'Peso (kg)',
+    ncm: 'NCM',
+    active: 'Ativo',
+    import: 'Importação',
+    removido: 'Praça removida'
+});
+const PRICING_MONEY_FIELDS = ['custo_base', 'desp_com', 'desp_adm', 'price100', 'tier1', 'tier2'];
+const PRACA_OPTIONS = ['Capital', 'Interior', 'Fluvial'];
+
+let pricingTabSection = 'lines';
+let pricingProductFilter = '';
+let pricingShowInactive = false;
+let pricingBulkPreview = null;
+
+function pricingCanEdit() {
+    return pricingCatalog.source === 'server' && Boolean(pricingCatalog.canEdit);
+}
+
+function setPricingMessage(text, type = 'info') {
+    const el = document.getElementById('pricingMessage');
+    if (!el) return;
+    el.textContent = text || '';
+    el.className = `pricing-message${text ? ` is-${type}` : ''}`;
+}
+
+function renderPricingTab() {
+    const container = document.getElementById('pricingTabContent');
+    if (!container) return;
+    if (!authManager.canViewPricingAdmin()) {
+        container.innerHTML = '';
+        return;
+    }
+    if (!pricingCatalog.imported) {
+        container.innerHTML = renderPricingImportPanel();
+        return;
+    }
+
+    const sections = [
+        ['lines', '🏷️ Linhas de produto'],
+        ['freight', '🚚 Frete'],
+        ['products', '📦 Produtos'],
+        ['bulk', '📈 Reajuste em lote'],
+        ['history', '🕘 Histórico']
+    ];
+    container.innerHTML = `
+        <div class="pricing-toolbar">
+            <div class="pricing-sections" role="tablist">
+                ${sections.map(([id, label]) => `<button type="button" role="tab" class="pricing-section-btn${id === pricingTabSection ? ' active' : ''}" onclick="switchPricingSection('${id}')">${label}</button>`).join('')}
+            </div>
+            <div class="pricing-meta">Versão da tabela: <strong>${pricingCatalog.version}</strong>${pricingCanEdit() ? '' : ' · <span class="pricing-readonly">somente leitura (a edição é do gestor)</span>'}</div>
+        </div>
+        <div id="pricingMessage" class="pricing-message"></div>
+        <div id="pricingSectionBody"></div>`;
+
+    const renderers = {
+        lines: renderPricingLines,
+        freight: renderPricingFreight,
+        products: renderPricingProducts,
+        bulk: renderPricingBulk,
+        history: renderPricingHistory
+    };
+    (renderers[pricingTabSection] || renderPricingLines)(document.getElementById('pricingSectionBody'));
+}
+
+function switchPricingSection(section) {
+    pricingTabSection = section;
+    pricingBulkPreview = null;
+    renderPricingTab();
+}
+
+function pricingSaveBar(onSave) {
+    return `
+        <div class="pricing-savebar">
+            <input id="pricingNote" class="pricing-input pricing-input--text" maxlength="300" placeholder="Motivo da alteração (opcional, fica no histórico)">
+            <button type="button" class="btn-modal btn-modal-ghost" onclick="renderPricingTab()">Descartar</button>
+            <button type="button" id="pricingSaveBtn" class="btn-modal btn-modal-primary" onclick="${onSave}" disabled>Salvar alterações</button>
+        </div>`;
+}
+
+// Value for a number input: always shows cents ("29.20"), keeps extra decimals if a value has them.
+function priceInputValue(value) {
+    const number = Number(value) || 0;
+    return Math.abs(number * 100 - Math.round(number * 100)) < 1e-9 ? number.toFixed(2) : String(number);
+}
+
+function getPricingNote() {
+    return document.getElementById('pricingNote')?.value.trim() || '';
+}
+
+function readPricingNumber(scope, field) {
+    const el = scope.querySelector(`[data-field="${field}"]`);
+    return el ? parseFloat(el.value) || 0 : 0;
+}
+
+function markPricingDirty(row) {
+    row.classList.add('is-dirty');
+    const btn = document.getElementById('pricingSaveBtn');
+    if (btn) btn.disabled = false;
+}
+
+// Sends one change, then swaps in the table the server returns (the open cart gets reviewed).
+async function sendPricingChange(action, body) {
+    try {
+        const data = await apiRequest(action, { method: 'POST', body });
+        await applyServerCatalog(data.catalog, 'Você alterou a tabela de preços. Confira o pedido que está montando.');
+        renderPricingTab();
+        const count = data.changed ?? (data.changes ? data.changes.length : 0);
+        setPricingMessage(
+            count ? `Alterações salvas (${count}). Já valem para todos. Versão da tabela: ${pricingCatalog.version}.` : 'Nada mudou: os valores já eram esses.',
+            count ? 'success' : 'info'
+        );
+        return data;
+    } catch (e) {
+        setPricingMessage(e.message, 'error');
+        return null;
+    }
+}
+
+// ----- Importação (uma única vez) -----
+
+function renderPricingImportPanel() {
+    const legacy = getLegacyCatalog();
+    if (!legacy) {
+        return '<div class="empty-state">A tabela ainda não foi importada e o arquivo data.js não está disponível no servidor.</div>';
+    }
+    const warnings = legacy.warnings.length
+        ? `<div class="pricing-warning"><strong>Conferir depois da importação:</strong><ul>${legacy.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul></div>`
+        : '';
+    return `
+        <div class="pricing-import">
+            <h3>Importar a tabela atual para o sistema</h3>
+            <p>Hoje os preços vêm do arquivo <code>data.js</code>. A importação copia para o banco exatamente os valores que o portal usa agora, então nenhum preço muda. A partir daí o gestor edita tudo por esta aba, e cada alteração vale na hora para todos os representantes.</p>
+            <ul class="pricing-import-counts">
+                <li><strong>${legacy.costLines.length}</strong> linhas de produto</li>
+                <li><strong>${legacy.freight.length}</strong> praças de frete</li>
+                <li><strong>${legacy.products.length}</strong> produtos</li>
+            </ul>
+            <p class="pricing-hint">O preço 100% NF de cada linha já entra com o ajuste de R$ 0,02 que hoje é somado no código.</p>
+            ${warnings}
+            <button type="button" class="btn-modal btn-modal-primary" onclick="importPricingCatalog()">⬆️ Importar tabela atual</button>
+            <div id="pricingMessage" class="pricing-message"></div>
+        </div>`;
+}
+
+async function importPricingCatalog() {
+    const legacy = getLegacyCatalog();
+    if (!legacy) return;
+    if (!confirm('Importar a tabela atual para o sistema? Isso é feito uma única vez; depois as alterações passam a ser feitas nesta aba.')) return;
+    try {
+        const data = await apiRequest('pricing.import', {
+            method: 'POST',
+            body: { costLines: legacy.costLines, freight: legacy.freight, products: legacy.products }
+        });
+        await applyServerCatalog(data.catalog, 'A tabela de preços passou a vir do sistema. Confira o pedido que está montando.');
+        renderPricingTab();
+        setPricingMessage(`Tabela importada: ${data.imported.costLines} linhas de produto, ${data.imported.freight} praças de frete e ${data.imported.products} produtos.`, 'success');
+    } catch (e) {
+        setPricingMessage(e.message, 'error');
+    }
+}
+
+// ----- Linhas de produto -----
+
+function formatMarkup(line) {
+    const costs = line.custoBase + line.despCom + line.despAdm;
+    if (costs <= 0) return '—';
+    const pct = (line.price100 / costs - 1) * 100;
+    return `${pct >= 0 ? '+' : ''}${formatBRL(pct, 1)}%`;
+}
+
+function renderPricingLines(body) {
+    const editable = pricingCanEdit();
+    const dis = editable ? '' : 'disabled';
+    const money = (field, value, extra = '') => `<input type="number" step="0.01" min="0" class="pricing-input${extra}" data-field="${field}" value="${priceInputValue(value)}" ${dis} oninput="onPricingLineInput(this)">`;
+    const rows = pricingCatalog.costLines.map(line => `
+        <tr data-line-key="${escapeHtml(line.key)}">
+            <td><input class="pricing-input pricing-input--text" data-field="name" value="${escapeHtml(line.name)}" maxlength="80" ${dis} oninput="onPricingLineInput(this)"></td>
+            <td>${money('custoBase', line.custoBase)}</td>
+            <td>${money('despCom', line.despCom)}</td>
+            <td>${money('despAdm', line.despAdm)}</td>
+            <td class="pricing-computed" data-computed="costs">${formatBRL(line.custoBase + line.despCom + line.despAdm)}</td>
+            <td>${money('price100', line.price100, ' pricing-input--strong')}</td>
+            <td class="pricing-computed" data-computed="markup">${formatMarkup(line)}</td>
+            <td class="pricing-computed">${productsData.filter(p => p.costLineKey === line.key && p.active).length}</td>
+        </tr>`).join('');
+
+    body.innerHTML = `
+        <p class="pricing-hint">Valores em R$ por kg. <strong>FOB</strong> de um produto = preço 100% NF × peso. <strong>CIF</strong> = (custos + frete da região) com o mesmo markup (preço 100% NF ÷ custos).</p>
+        <div class="results-table-container">
+            <table class="pricing-table">
+                <thead><tr><th>Linha de produto</th><th>Custo produto</th><th>Desp. comercial</th><th>Desp. adm.</th><th>Total custos</th><th>Preço 100% NF</th><th>Markup s/ custos</th><th>Produtos</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+        ${editable ? `
+        <details class="pricing-new">
+            <summary>➕ Nova linha de produto</summary>
+            <div class="pricing-form-grid">
+                <label>Nome<input id="newLineName" class="pricing-input pricing-input--text" maxlength="80"></label>
+                <label>Custo produto<input id="newLineCustoBase" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <label>Desp. comercial<input id="newLineDespCom" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <label>Desp. adm.<input id="newLineDespAdm" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <label>Preço 100% NF<input id="newLinePrice100" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <button type="button" class="btn-modal btn-modal-ghost" onclick="createPricingLine()">Criar linha</button>
+            </div>
+        </details>
+        ${pricingSaveBar('savePricingLines()')}` : ''}`;
+}
+
+function readPricingLineRow(row) {
+    return {
+        key: row.dataset.lineKey,
+        name: row.querySelector('[data-field="name"]').value.trim(),
+        custoBase: readPricingNumber(row, 'custoBase'),
+        despCom: readPricingNumber(row, 'despCom'),
+        despAdm: readPricingNumber(row, 'despAdm'),
+        price100: readPricingNumber(row, 'price100')
+    };
+}
+
+function onPricingLineInput(input) {
+    const row = input.closest('tr');
+    const line = readPricingLineRow(row);
+    row.querySelector('[data-computed="costs"]').textContent = formatBRL(line.custoBase + line.despCom + line.despAdm);
+    row.querySelector('[data-computed="markup"]').textContent = formatMarkup(line);
+    markPricingDirty(row);
+}
+
+async function savePricingLines() {
+    const lines = [...document.querySelectorAll('#pricingSectionBody tr.is-dirty[data-line-key]')].map(readPricingLineRow);
+    if (!lines.length) return;
+    if (!confirm(`Salvar ${lines.length} linha(s) de produto? Os novos preços valem imediatamente para todos os representantes.`)) return;
+    await sendPricingChange('pricing.updateCostLines', { lines, note: getPricingNote() });
+}
+
+async function createPricingLine() {
+    const name = document.getElementById('newLineName')?.value.trim() || '';
+    if (!name) {
+        setPricingMessage('Informe o nome da nova linha de produto.', 'error');
+        return;
+    }
+    const key = name.toLowerCase();
+    if (costsData[key]) {
+        setPricingMessage('Já existe uma linha de produto com esse nome.', 'error');
+        return;
+    }
+    const num = id => parseFloat(document.getElementById(id)?.value) || 0;
+    await sendPricingChange('pricing.updateCostLines', {
+        lines: [{ key, name, custoBase: num('newLineCustoBase'), despCom: num('newLineDespCom'), despAdm: num('newLineDespAdm'), price100: num('newLinePrice100') }],
+        note: 'Nova linha de produto'
+    });
+}
+
+// ----- Frete -----
+
+function renderPricingFreight(body) {
+    const editable = pricingCanEdit();
+    const dis = editable ? '' : 'disabled';
+    const dirty = 'oninput="markPricingDirty(this.closest(\'tr\'))"';
+    const rows = pricingCatalog.freight.map(f => `
+        <tr data-uf="${escapeHtml(f.uf)}" data-praca="${escapeHtml(f.pracaType)}">
+            <td><strong>${escapeHtml(f.uf)}</strong></td>
+            <td>${escapeHtml(f.pracaType)}</td>
+            <td><input class="pricing-input pricing-input--wide" data-field="label" value="${escapeHtml(f.label)}" maxlength="200" ${dis} ${dirty}></td>
+            <td><input type="number" step="0.01" min="0" class="pricing-input" data-field="tier1" value="${priceInputValue(f.tier1)}" ${dis} ${dirty}></td>
+            <td><input type="number" step="0.01" min="0" class="pricing-input" data-field="tier2" value="${priceInputValue(f.tier2)}" ${dis} ${dirty}></td>
+            ${editable ? '<td><label class="pricing-check"><input type="checkbox" data-field="remove" onchange="markPricingDirty(this.closest(\'tr\'))"> remover</label></td>' : ''}
+        </tr>`).join('');
+
+    body.innerHTML = `
+        <p class="pricing-hint">Frete em R$ por kg, por UF e tipo de praça. O valor entra no custo do CIF (veja a fórmula em Linhas de produto).</p>
+        <div class="results-table-container">
+            <table class="pricing-table">
+                <thead><tr><th>UF</th><th>Praça</th><th>Descrição</th><th>150 a 199 kg</th><th>Acima de 200 kg</th>${editable ? '<th></th>' : ''}</tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+        ${editable ? `
+        <details class="pricing-new">
+            <summary>➕ Nova praça</summary>
+            <div class="pricing-form-grid">
+                <label>UF<input id="newFreightUf" class="pricing-input" maxlength="2" placeholder="Ex.: MG"></label>
+                <label>Praça<select id="newFreightType" class="pricing-input">${PRACA_OPTIONS.map(t => `<option value="${t}">${t}</option>`).join('')}</select></label>
+                <label>Descrição<input id="newFreightLabel" class="pricing-input pricing-input--text" maxlength="200" placeholder="Ex.: Belo Horizonte"></label>
+                <label>150 a 199 kg<input id="newFreightTier1" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <label>Acima de 200 kg<input id="newFreightTier2" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <button type="button" class="btn-modal btn-modal-ghost" onclick="createFreightRow()">Adicionar praça</button>
+            </div>
+        </details>
+        ${pricingSaveBar('saveFreightRows()')}` : ''}`;
+}
+
+async function saveFreightRows() {
+    const rows = [...document.querySelectorAll('#pricingSectionBody tr.is-dirty[data-uf]')].map(row => ({
+        uf: row.dataset.uf,
+        pracaType: row.dataset.praca,
+        label: row.querySelector('[data-field="label"]').value.trim(),
+        tier1: readPricingNumber(row, 'tier1'),
+        tier2: readPricingNumber(row, 'tier2'),
+        remove: Boolean(row.querySelector('[data-field="remove"]')?.checked)
+    }));
+    if (!rows.length) return;
+    const removed = rows.filter(r => r.remove).map(r => `${r.uf} · ${r.pracaType}`);
+    let message = `Salvar ${rows.length} praça(s) de frete? Os novos valores valem imediatamente para todos os representantes.`;
+    if (removed.length) message += `\n\nSerão REMOVIDAS: ${removed.join(', ')}.`;
+    if (!confirm(message)) return;
+    await sendPricingChange('pricing.updateFreight', { rows, note: getPricingNote() });
+}
+
+async function createFreightRow() {
+    const uf = (document.getElementById('newFreightUf')?.value || '').trim().toUpperCase();
+    const pracaType = document.getElementById('newFreightType')?.value || '';
+    if (!/^[A-Z]{2}$/.test(uf)) {
+        setPricingMessage('Informe a UF com duas letras (ex.: MG).', 'error');
+        return;
+    }
+    if (freightData[uf] && freightData[uf][pracaType]) {
+        setPricingMessage(`${uf} · ${pracaType} já existe: edite a linha na tabela.`, 'error');
+        return;
+    }
+    const num = id => parseFloat(document.getElementById(id)?.value) || 0;
+    await sendPricingChange('pricing.updateFreight', {
+        rows: [{ uf, pracaType, label: document.getElementById('newFreightLabel')?.value.trim() || '', tier1: num('newFreightTier1'), tier2: num('newFreightTier2') }],
+        note: 'Nova praça de frete'
+    });
+}
+
+// ----- Produtos -----
+
+function renderPricingProducts(body) {
+    const editable = pricingCanEdit();
+    const lineOptions = pricingCatalog.costLines.map(l => `<option value="${escapeHtml(l.key)}">${escapeHtml(l.name)}</option>`).join('');
+    body.innerHTML = `
+        <div class="pricing-filterbar">
+            <input id="pricingProductSearch" class="pricing-input pricing-input--wide" placeholder="Buscar por código ou descrição" value="${escapeHtml(pricingProductFilter)}" oninput="pricingProductFilter = this.value; renderPricingProductRows()">
+            <label class="pricing-check"><input type="checkbox" ${pricingShowInactive ? 'checked' : ''} onchange="pricingShowInactive = this.checked; renderPricingProductRows()"> Mostrar inativos</label>
+        </div>
+        <p class="pricing-hint">O FOB usa o preço 100% NF da linha escolhida. Desativar um produto o tira da busca dos representantes; pedidos já feitos não mudam.</p>
+        <div class="results-table-container">
+            <table class="pricing-table">
+                <thead><tr><th>Código</th><th>Descrição</th><th>Linha de produto</th><th>Peso (kg)</th><th>FOB (R$)</th><th>Ativo</th>${editable ? '<th></th>' : ''}</tr></thead>
+                <tbody id="pricingProductRows"></tbody>
+            </table>
+        </div>
+        ${editable ? `
+        <details class="pricing-new">
+            <summary>➕ Novo produto</summary>
+            <div class="pricing-form-grid">
+                <label>Código<input id="newProductCodigo" class="pricing-input" maxlength="40" placeholder="Ex.: P-09999"></label>
+                <label>Descrição<input id="newProductDescricao" class="pricing-input pricing-input--text" maxlength="200"></label>
+                <label>Categoria<input id="newProductCategoria" class="pricing-input pricing-input--text" maxlength="80" placeholder="Ex.: Bobina Fundo Estrela"></label>
+                <label>Subcategoria<input id="newProductSubcat" class="pricing-input pricing-input--text" maxlength="80"></label>
+                <label>Linha de produto<select id="newProductLine" class="pricing-input">${lineOptions}</select></label>
+                <label>Peso (kg)<input id="newProductWeight" type="number" step="0.001" min="0" class="pricing-input"></label>
+                <label>NCM<input id="newProductNcm" class="pricing-input" maxlength="20"></label>
+                <button type="button" class="btn-modal btn-modal-ghost" onclick="createPricingProduct()">Cadastrar produto</button>
+            </div>
+        </details>` : ''}`;
+    renderPricingProductRows();
+}
+
+function renderPricingProductRows() {
+    const tbody = document.getElementById('pricingProductRows');
+    if (!tbody) return;
+    const editable = pricingCanEdit();
+    const dis = editable ? '' : 'disabled';
+    const terms = pricingProductFilter.toLowerCase().split(' ').filter(Boolean);
+    const list = pricingCatalog.products.filter(p =>
+        (pricingShowInactive || p.active) &&
+        terms.every(t => `${p.codigo} ${p.descricao} ${p.categoria}`.toLowerCase().includes(t)));
+
+    tbody.innerHTML = list.map(p => {
+        const line = costsData[p.costLineKey];
+        const options = pricingCatalog.costLines.map(l => `<option value="${escapeHtml(l.key)}"${l.key === p.costLineKey ? ' selected' : ''}>${escapeHtml(l.name)}</option>`).join('');
+        return `
+        <tr data-codigo="${escapeHtml(p.codigo)}" class="${p.active ? '' : 'is-inactive'}">
+            <td><strong>${escapeHtml(p.codigo)}</strong></td>
+            <td><input class="pricing-input pricing-input--wide" data-field="descricao" value="${escapeHtml(p.descricao)}" maxlength="200" ${dis} oninput="onPricingProductInput(this)"></td>
+            <td><select class="pricing-input" data-field="costLineKey" ${dis} onchange="onPricingProductInput(this)">${options}</select></td>
+            <td><input type="number" step="0.001" min="0" class="pricing-input" data-field="weight" value="${p.weight}" ${dis} oninput="onPricingProductInput(this)"></td>
+            <td class="pricing-computed" data-computed="fob">${formatBRL(line ? line.price100 * p.weight : 0)}</td>
+            <td><input type="checkbox" data-field="active" ${p.active ? 'checked' : ''} ${dis} onchange="onPricingProductInput(this)"></td>
+            ${editable ? '<td><button type="button" class="pricing-row-btn" onclick="savePricingProduct(this)" disabled>Salvar</button></td>' : ''}
+        </tr>`;
+    }).join('') || `<tr><td colspan="7"><div class="empty-state">Nenhum produto encontrado.</div></td></tr>`;
+}
+
+function onPricingProductInput(el) {
+    const row = el.closest('tr');
+    const line = costsData[row.querySelector('[data-field="costLineKey"]').value];
+    row.querySelector('[data-computed="fob"]').textContent = formatBRL(line ? line.price100 * readPricingNumber(row, 'weight') : 0);
+    row.classList.add('is-dirty');
+    const btn = row.querySelector('.pricing-row-btn');
+    if (btn) btn.disabled = false;
+}
+
+async function savePricingProduct(button) {
+    const row = button.closest('tr');
+    const current = pricingCatalog.products.find(p => p.codigo === row.dataset.codigo);
+    if (!current) return;
+    const product = {
+        ...current,
+        descricao: row.querySelector('[data-field="descricao"]').value.trim(),
+        costLineKey: row.querySelector('[data-field="costLineKey"]').value,
+        weight: readPricingNumber(row, 'weight'),
+        active: row.querySelector('[data-field="active"]').checked
+    };
+    if (current.active && !product.active && !confirm(`Desativar ${product.codigo}? Ele deixa de aparecer para os representantes.`)) return;
+    button.disabled = true;
+    await sendPricingChange('pricing.saveProduct', { product, note: '' });
+}
+
+async function createPricingProduct() {
+    const value = id => document.getElementById(id)?.value.trim() || '';
+    await sendPricingChange('pricing.saveProduct', {
+        product: {
+            isNew: true,
+            codigo: value('newProductCodigo'),
+            descricao: value('newProductDescricao'),
+            categoria: value('newProductCategoria'),
+            subcat: value('newProductSubcat'),
+            costLineKey: value('newProductLine'),
+            weight: parseFloat(value('newProductWeight')) || 0,
+            ncm: value('newProductNcm'),
+            active: true
+        },
+        note: 'Novo produto'
+    });
+}
+
+// ----- Reajuste em lote -----
+
+function renderPricingBulk(body) {
+    if (!pricingCanEdit()) {
+        body.innerHTML = '<div class="empty-state">O reajuste em lote é feito pelo gestor.</div>';
+        return;
+    }
+    body.innerHTML = `
+        <div class="pricing-bulk">
+            <p class="pricing-hint">Aplica um percentual de uma vez. Primeiro pré-visualize: nada é gravado até você clicar em “Aplicar reajuste”. Os valores novos são arredondados para centavos.</p>
+            <div class="pricing-form-grid">
+                <label>Aplicar em
+                    <select id="bulkTarget" class="pricing-input" onchange="onBulkParamsChange(true)">
+                        <option value="costLines">Linhas de produto</option>
+                        <option value="freight">Frete</option>
+                    </select>
+                </label>
+                <label>Percentual (%)<input id="bulkPercent" type="number" step="0.1" class="pricing-input" placeholder="Ex.: 5 ou -3" oninput="onBulkParamsChange()"></label>
+                <label id="bulkModeLabel" class="pricing-form-wide">O que reajustar
+                    <select id="bulkMode" class="pricing-input" onchange="onBulkParamsChange()">
+                        <option value="priceAndCosts">Preço e custos juntos (mantém o markup) — recomendado</option>
+                        <option value="price">Só o preço 100% NF (aumenta o markup)</option>
+                        <option value="costs">Só os custos (reduz o markup)</option>
+                    </select>
+                </label>
+            </div>
+            <div class="pricing-bulk-select">
+                <div><strong id="bulkSelectTitle">Linhas incluídas</strong>
+                    <button type="button" class="pricing-link-btn" onclick="toggleBulkSelection(true)">marcar todas</button> ·
+                    <button type="button" class="pricing-link-btn" onclick="toggleBulkSelection(false)">desmarcar todas</button>
+                </div>
+                <div id="bulkSelectList" class="pricing-chip-list"></div>
+            </div>
+            <input id="bulkNote" class="pricing-input pricing-input--text" maxlength="300" placeholder="Motivo (ex.: reajuste da resina de outubro)">
+            <div class="pricing-savebar">
+                <button type="button" class="btn-modal btn-modal-ghost" onclick="previewBulkAdjust()">👁️ Pré-visualizar</button>
+                <button type="button" id="bulkApplyBtn" class="btn-modal btn-modal-primary" onclick="applyBulkAdjust()" disabled>Aplicar reajuste</button>
+            </div>
+            <div id="bulkPreview"></div>
+        </div>`;
+    renderBulkSelectList();
+}
+
+function renderBulkSelectList() {
+    const target = document.getElementById('bulkTarget')?.value || 'costLines';
+    const items = target === 'freight'
+        ? [...new Set(pricingCatalog.freight.map(f => f.uf))].sort().map(uf => ({ value: uf, label: uf }))
+        : pricingCatalog.costLines.map(l => ({ value: l.key, label: l.name }));
+    document.getElementById('bulkSelectTitle').textContent = target === 'freight' ? 'UFs incluídas' : 'Linhas incluídas';
+    document.getElementById('bulkModeLabel').hidden = target === 'freight';
+    document.getElementById('bulkSelectList').innerHTML = items.map(i => `
+        <label class="pricing-chip"><input type="checkbox" class="bulk-item" value="${escapeHtml(i.value)}" checked onchange="onBulkParamsChange()"> ${escapeHtml(i.label)}</label>`).join('');
+}
+
+function onBulkParamsChange(targetChanged = false) {
+    if (targetChanged) renderBulkSelectList();
+    pricingBulkPreview = null;
+    const applyBtn = document.getElementById('bulkApplyBtn');
+    if (applyBtn) applyBtn.disabled = true;
+    const preview = document.getElementById('bulkPreview');
+    if (preview) preview.innerHTML = '';
+}
+
+function toggleBulkSelection(checked) {
+    document.querySelectorAll('#bulkSelectList .bulk-item').forEach(cb => { cb.checked = checked; });
+    onBulkParamsChange();
+}
+
+function getBulkParams() {
+    const percent = parseFloat(document.getElementById('bulkPercent')?.value);
+    if (!Number.isFinite(percent) || percent === 0) {
+        setPricingMessage('Informe o percentual do reajuste (ex.: 5 para +5%, -3 para −3%).', 'error');
+        return null;
+    }
+    const keys = [...document.querySelectorAll('#bulkSelectList .bulk-item:checked')].map(cb => cb.value);
+    if (!keys.length) {
+        setPricingMessage('Marque ao menos um item para reajustar.', 'error');
+        return null;
+    }
+    const target = document.getElementById('bulkTarget').value;
+    return { target, percent, mode: target === 'costLines' ? document.getElementById('bulkMode').value : '', keys };
+}
+
+function formatPricingValue(field, value) {
+    if (value === null || value === undefined || value === '') return '—';
+    if (field === 'weight') return formatBRL(parseFloat(value), 3);
+    if (field === 'active') return String(value) === '1' ? 'Sim' : 'Não';
+    if (field === 'cost_line_key') return costsData[value] ? costsData[value].name : String(value);
+    if (PRICING_MONEY_FIELDS.includes(field)) return `R$ ${formatBRL(parseFloat(value))}`;
+    return String(value);
+}
+
+async function previewBulkAdjust() {
+    const params = getBulkParams();
+    if (!params) return;
+    setPricingMessage('');
+    try {
+        const data = await apiRequest('pricing.bulkAdjust', { method: 'POST', body: { ...params, preview: true } });
+        pricingBulkPreview = { signature: JSON.stringify(params), count: data.changes.length };
+        const rows = data.changes.map(c => {
+            const variation = c.oldValue ? ((c.newValue / c.oldValue - 1) * 100) : 0;
+            return `<tr><td>${escapeHtml(c.label)}</td><td>${escapeHtml(PRICING_FIELD_LABELS[c.field] || c.field)}</td>
+                <td>${formatPricingValue(c.field, c.oldValue)}</td><td><strong>${formatPricingValue(c.field, c.newValue)}</strong></td>
+                <td>${variation >= 0 ? '+' : ''}${formatBRL(variation, 2)}%</td></tr>`;
+        }).join('');
+        document.getElementById('bulkPreview').innerHTML = `
+            <h4 class="pricing-preview-title">Pré-visualização: ${data.changes.length} valor(es) mudam</h4>
+            <div class="results-table-container"><table class="pricing-table">
+                <thead><tr><th>Item</th><th>Campo</th><th>Atual</th><th>Novo</th><th>Variação</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table></div>`;
+        document.getElementById('bulkApplyBtn').disabled = false;
+    } catch (e) {
+        setPricingMessage(e.message, 'error');
+    }
+}
+
+async function applyBulkAdjust() {
+    const params = getBulkParams();
+    if (!params) return;
+    if (!pricingBulkPreview || pricingBulkPreview.signature !== JSON.stringify(params)) {
+        setPricingMessage('Os parâmetros mudaram: pré-visualize de novo antes de aplicar.', 'error');
+        return;
+    }
+    if (!confirm(`Aplicar reajuste de ${params.percent}% em ${pricingBulkPreview.count} valor(es)? Vale imediatamente para todos os representantes.`)) return;
+    const note = document.getElementById('bulkNote')?.value.trim() || '';
+    pricingBulkPreview = null;
+    await sendPricingChange('pricing.bulkAdjust', { ...params, note });
+}
+
+// ----- Histórico -----
+
+function describePricingEntity(entry) {
+    if (entry.entity === 'cost_line') return costsData[entry.entityKey] ? costsData[entry.entityKey].name : entry.entityKey;
+    if (entry.entity === 'freight') return `Frete ${entry.entityKey.replace('/', ' · ')}`;
+    if (entry.entity === 'product') return `Produto ${entry.entityKey}`;
+    return 'Tabela inteira';
+}
+
+async function renderPricingHistory(body) {
+    body.innerHTML = '<div class="empty-state">Carregando histórico…</div>';
+    try {
+        const data = await apiRequest('pricing.history');
+        if (pricingTabSection !== 'history' || !body.isConnected) return;
+        if (!data.history.length) {
+            body.innerHTML = '<div class="empty-state">Nenhuma alteração registrada.</div>';
+            return;
+        }
+        const rows = data.history.map(h => `
+            <tr>
+                <td>${new Date(h.createdAt).toLocaleString('pt-BR')}</td>
+                <td>${escapeHtml(h.username || '')}</td>
+                <td>${escapeHtml(describePricingEntity(h))}</td>
+                <td>${escapeHtml(PRICING_FIELD_LABELS[h.field] || h.field)}</td>
+                <td>${escapeHtml(formatPricingValue(h.field, h.oldValue))}</td>
+                <td><strong>${escapeHtml(formatPricingValue(h.field, h.newValue))}</strong></td>
+                <td>${escapeHtml(h.note || '')}</td>
+            </tr>`).join('');
+        body.innerHTML = `
+            <p class="pricing-hint">Últimas 300 alterações, da mais recente para a mais antiga.</p>
+            <div class="results-table-container"><table class="pricing-table">
+                <thead><tr><th>Quando</th><th>Quem</th><th>Item</th><th>Campo</th><th>De</th><th>Para</th><th>Motivo</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table></div>`;
+    } catch (e) {
+        body.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
     }
 }

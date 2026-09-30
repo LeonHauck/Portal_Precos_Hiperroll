@@ -1,0 +1,35 @@
+#!/bin/sh
+# Bloqueia commits que contenham senhas ou arquivos sensíveis.
+# Ativar uma vez em cada clone do repositório:  git config core.hooksPath .githooks
+# (Funciona também pelo GitHub Desktop.)
+
+blocked_paths='(^|/)\.env($|\.)|\.sqlite3?(-journal|-wal|-shm)?$|(^|/)api/config\.local\.php$|(^|/)users\.json$|\.bundle$'
+
+# Palavras como PASSWORD/SENHA/TOKEN seguidas de um valor literal entre aspas.
+# (Nunca liste senhas reais aqui: este arquivo também vai para o repositório público.)
+secret_pattern="(pass|password|senha|secret|token|api_?key)[a-z_]*[\"']?[[:space:]]*(=|:|=>)[[:space:]]*[\"'][^\"'[:space:]]{4,}[\"']"
+
+bad_files=$(git diff --cached --name-only --diff-filter=ACMR | grep -E -i "$blocked_paths")
+# A pasta .githooks é ignorada na busca de conteúdo porque a própria regra acima parece uma senha.
+leaks=$(git diff --cached -U0 --diff-filter=ACMR -- . ':(exclude).githooks' | grep -E '^\+' | grep -v '^+++' | grep -E -i "$secret_pattern")
+
+if [ -n "$bad_files" ] || [ -n "$leaks" ]; then
+    echo ""
+    echo "COMMIT BLOQUEADO: possível senha ou arquivo sensível."
+    if [ -n "$bad_files" ]; then
+        echo ""
+        echo "Arquivos que nunca devem ir para o repositório:"
+        echo "$bad_files" | sed 's/^/  - /'
+    fi
+    if [ -n "$leaks" ]; then
+        echo ""
+        echo "Linhas que parecem conter senha/token:"
+        echo "$leaks" | cut -c1-160 | sed 's/^/  /'
+    fi
+    echo ""
+    echo "Remova o conteúdo (ou tire o arquivo do commit) e tente de novo."
+    echo "Senhas e chaves ficam em api/config.local.php ou no servidor, nunca no código."
+    exit 1
+fi
+
+exit 0
