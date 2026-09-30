@@ -436,6 +436,18 @@ header::after {
     box-shadow: 0 8px 18px rgba(227, 30, 36, 0.4);
 }
 
+.header-btn-ghost {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    border: 1.5px solid rgba(255, 255, 255, 0.3);
+}
+
+.header-btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.45);
+    transform: translateY(-2px);
+}
+
 #userControls button:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0,0,0,0.2);
@@ -2330,6 +2342,443 @@ body.login-locked .container {
     color: #991b1b;
     font-size: 0.75rem;
     font-weight: 800;
+}
+
+/* ========== USUÁRIOS ========== */
+.new-user-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px;
+    align-items: end;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-1);
+}
+
+.new-user-form label {
+    margin-bottom: 4px;
+    font-size: 0.82rem;
+}
+
+.new-user-form input,
+.new-user-form select {
+    padding: 9px 12px;
+}
+
+.users-table-container {
+    margin-top: 16px;
+    overflow-x: auto;
+}
+
+.users-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+
+.users-table th {
+    position: static;
+    padding: 10px;
+    font-size: 0.72rem;
+}
+
+.users-table td {
+    padding: 10px;
+    vertical-align: middle;
+}
+
+.users-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.btn-sm {
+    padding: 6px 10px;
+    font-size: 0.78rem;
+}
+
+.user-status {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.user-status--active {
+    background: rgba(22, 163, 74, 0.12);
+    color: #15803d;
+}
+
+.user-status--pending {
+    background: rgba(234, 88, 12, 0.12);
+    color: #c2410c;
+}
+
+.user-status--inactive {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+}
+
+.user-row--inactive td {
+    opacity: 0.6;
+}
+
+.user-self-note {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+}
+
+.user-role-select {
+    width: auto;
+    padding: 6px 30px 6px 10px;
+    font-size: 0.82rem;
+}
+
+/* ========== TABELA DE PREÇOS (aba do gestor) ========== */
+.pricing-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.pricing-sections {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.pricing-section-btn {
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--card-bg);
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.pricing-section-btn:hover {
+    border-color: var(--secondary);
+    color: var(--secondary);
+}
+
+.pricing-section-btn.active {
+    background: var(--secondary);
+    border-color: var(--secondary);
+    color: #fff;
+}
+
+.pricing-meta {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.pricing-readonly {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+.pricing-hint {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin: 0 0 12px;
+}
+
+.pricing-message:empty {
+    display: none;
+}
+
+.pricing-message {
+    margin: 0 0 12px;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    font-size: 0.88rem;
+    font-weight: 600;
+    background: var(--secondary-light);
+    color: var(--secondary);
+}
+
+.pricing-message.is-success {
+    background: rgba(22, 163, 74, 0.12);
+    color: var(--success);
+}
+
+.pricing-message.is-error {
+    background: var(--primary-light);
+    color: var(--error);
+}
+
+.pricing-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.86rem;
+}
+
+.pricing-table th {
+    position: static;
+    padding: 9px 8px;
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
+.pricing-table td {
+    padding: 6px 8px;
+    vertical-align: middle;
+}
+
+.pricing-table tr.is-dirty td {
+    background: var(--secondary-light);
+}
+
+.pricing-table tr.is-inactive td {
+    opacity: 0.55;
+}
+
+.pricing-input {
+    width: 100%;
+    min-width: 90px;
+    padding: 7px 9px;
+    font-size: 0.86rem;
+}
+
+.pricing-input--text {
+    min-width: 160px;
+}
+
+.pricing-input--wide {
+    min-width: 260px;
+}
+
+.pricing-input--strong {
+    font-weight: 700;
+}
+
+select.pricing-input {
+    min-width: 170px;
+    padding-right: 32px;
+}
+
+.pricing-computed {
+    white-space: nowrap;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.pricing-check,
+.pricing-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.pricing-check input,
+.pricing-chip input,
+.pricing-table input[type="checkbox"] {
+    width: auto;
+    min-width: 0;
+}
+
+.pricing-savebar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    justify-content: flex-end;
+    margin-top: 14px;
+}
+
+.pricing-savebar .pricing-input {
+    flex: 1 1 260px;
+}
+
+.pricing-new {
+    margin-top: 14px;
+    padding: 12px 14px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+}
+
+.pricing-new summary {
+    cursor: pointer;
+    font-weight: 700;
+    color: var(--secondary);
+}
+
+.pricing-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px 14px;
+    align-items: end;
+    margin-top: 12px;
+}
+
+.pricing-form-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.pricing-form-wide {
+    grid-column: span 2;
+}
+
+.pricing-filterbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.pricing-filterbar .pricing-input {
+    flex: 1 1 280px;
+}
+
+.pricing-row-btn {
+    padding: 6px 12px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--secondary);
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.pricing-row-btn:disabled {
+    background: var(--bg-hover);
+    color: var(--text-tertiary);
+    cursor: default;
+}
+
+.pricing-bulk-select {
+    margin: 14px 0;
+    font-size: 0.88rem;
+}
+
+.pricing-link-btn {
+    border: none;
+    background: none;
+    padding: 0 2px;
+    color: var(--secondary);
+    font-size: 0.82rem;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.pricing-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.pricing-chip {
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-1);
+}
+
+.pricing-preview-title {
+    margin: 16px 0 8px;
+    font-size: 0.95rem;
+}
+
+.pricing-import {
+    max-width: 760px;
+}
+
+.pricing-import h3 {
+    margin: 0 0 8px;
+}
+
+.pricing-import p {
+    line-height: 1.55;
+    color: var(--text-secondary);
+}
+
+.pricing-import-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 0;
+    margin: 14px 0;
+    list-style: none;
+}
+
+.pricing-import-counts li {
+    padding: 8px 14px;
+    border-radius: var(--radius);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+}
+
+.pricing-import .btn-modal {
+    margin: 6px 0 12px;
+}
+
+.pricing-warning {
+    margin: 12px 0;
+    padding: 10px 14px;
+    border: 1px solid var(--margin-warning-border);
+    border-radius: var(--radius);
+    background: var(--margin-warning-bg);
+    font-size: 0.86rem;
+    line-height: 1.5;
+}
+
+.pricing-warning ul {
+    margin: 6px 0 0 18px;
+}
+
+.nowrap {
+    white-space: nowrap;
+}
+
+.reprice-old {
+    color: var(--text-tertiary);
+    text-decoration: line-through;
+}
+
+.reprice-desc {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.reprice-footer .btn-modal {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.25;
+}
+
+.reprice-footer .btn-modal small {
+    font-weight: 500;
+    font-size: 0.75rem;
+    opacity: 0.85;
+}
+
+@media (max-width: 640px) {
+    .pricing-form-wide {
+        grid-column: auto;
+    }
 }
 
 /* ========== FOOTER ========== */
