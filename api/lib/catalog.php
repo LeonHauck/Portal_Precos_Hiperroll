@@ -28,7 +28,9 @@ const PRODUCT_FIELDS = [
     'weight' => 'num',
     'ncm' => 'text',
     'active' => 'num',
+    'price_override' => 'numnull',
 ];
+const PRODUCT_BULK_ACTIONS = ['percent', 'setLine', 'clearPrice'];
 
 // Editing prices is a commercial decision (gestor). The admin can import and look, not change.
 function can_edit_pricing(array $user): bool
@@ -121,6 +123,8 @@ function product_to_client(array $row): array
         'weight' => (float) $row['weight'],
         'ncm' => $row['ncm'],
         'active' => (bool) (int) $row['active'],
+        // Individual FOB price (R$ per unit) set by the gestor; null = price of the product line.
+        'priceOverride' => $row['price_override'] === null ? null : (float) $row['price_override'],
         'updatedAt' => $row['updated_at'],
     ];
 }
@@ -291,7 +295,17 @@ function clean_product(array $input): array
         'weight' => price_value($input['weight'] ?? null, "peso do produto {$codigo}", false, MAX_PRODUCT_WEIGHT),
         'ncm' => str_field($input['ncm'] ?? '', 20),
         'active' => array_key_exists('active', $input) && !$input['active'] ? 0 : 1,
+        'price_override' => clean_price_override($input['priceOverride'] ?? null, $codigo),
     ];
+}
+
+// Empty means "use the product line price"; otherwise a positive FOB price in R$ per unit.
+function clean_price_override($value, string $codigo): ?float
+{
+    if ($value === null || $value === '') {
+        return null;
+    }
+    return round(price_value($value, "preço do produto {$codigo}", false), 2);
 }
 
 function input_rows($rows, string $emptyMessage): array
@@ -338,7 +352,15 @@ function diff_fields(array $old, array $new, array $fields): array
     foreach ($fields as $field => $type) {
         $before = $old[$field] ?? null;
         $after = $new[$field];
-        if ($type === 'num') {
+        if ($type === 'numnull') {
+            if ($before === null && $after === null) {
+                continue;
+            }
+            if ($before !== null && $after !== null && abs((float) $before - (float) $after) < 0.00005) {
+                continue;
+            }
+            $changes[$field] = [$before === null ? null : (float) $before, $after === null ? null : (float) $after];
+        } elseif ($type === 'num') {
             if ($before !== null && abs((float) $before - (float) $after) < 0.00005) {
                 continue;
             }
@@ -401,10 +423,9 @@ function import_catalog(array $user, $input): array
         foreach ($freight as $f) {
             $insertFreight->execute([$f['uf'], $f['praca_type'], $f['label'], $f['tier1'], $f['tier2'], $now]);
         }
-        $insertProduct = $pdo->prepare('INSERT INTO products (codigo, descricao, categoria, subcat, cost_line_key, weight, ncm, active, sort_order, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
         $order = 0;
         foreach ($products as $p) {
-            $insertProduct->execute([$p['codigo'], $p['descricao'], $p['categoria'], $p['subcat'], $p['cost_line_key'], $p['weight'], $p['ncm'], $p['active'], ++$order, $now]);
+            insert_product($pdo, $p, ++$order, $now);
         }
 
         $counts = ['costLines' => count($lines), 'freight' => count($freight), 'products' => count($products)];
@@ -525,8 +546,7 @@ function save_product(array $user, $input, string $note): bool
                 fail(409, "Já existe um produto com o código {$product['codigo']}.");
             }
             $order = (int) $pdo->query('SELECT COALESCE(MAX(sort_order), 0) FROM products')->fetchColumn() + 1;
-            $pdo->prepare('INSERT INTO products (codigo, descricao, categoria, subcat, cost_line_key, weight, ncm, active, sort_order, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-                ->execute([$product['codigo'], $product['descricao'], $product['categoria'], $product['subcat'], $product['cost_line_key'], $product['weight'], $product['ncm'], $product['active'], $order, $now]);
+            insert_product($pdo, $product, $order, $now);
             log_diff($batch, 'product', $product['codigo'], diff_fields([], $product, PRODUCT_FIELDS), $user, $note);
         } else {
             if (!$old) {
@@ -536,13 +556,110 @@ function save_product(array $user, $input, string $note): bool
             if (!$diff) {
                 return false;
             }
-            $pdo->prepare('UPDATE products SET descricao = ?, categoria = ?, subcat = ?, cost_line_key = ?, weight = ?, ncm = ?, active = ?, updated_at = ? WHERE codigo = ?')
-                ->execute([$product['descricao'], $product['categoria'], $product['subcat'], $product['cost_line_key'], $product['weight'], $product['ncm'], $product['active'], $now, $product['codigo']]);
+            update_product($pdo, $product, $now);
             log_diff($batch, 'product', $product['codigo'], $diff, $user, $note);
         }
         bump_pricing_version();
         audit('pricing.product', $product['codigo']);
         return true;
+    });
+}
+
+function insert_product(PDO $pdo, array $p, int $sortOrder, string $now): void
+{
+    $pdo->prepare('INSERT INTO products (codigo, descricao, categoria, subcat, cost_line_key, weight, ncm, active, sort_order, price_override, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        ->execute([$p['codigo'], $p['descricao'], $p['categoria'], $p['subcat'], $p['cost_line_key'], $p['weight'], $p['ncm'], $p['active'], $sortOrder, $p['price_override'], $now]);
+}
+
+function update_product(PDO $pdo, array $p, string $now): void
+{
+    $pdo->prepare('UPDATE products SET descricao = ?, categoria = ?, subcat = ?, cost_line_key = ?, weight = ?, ncm = ?, active = ?, price_override = ?, updated_at = ? WHERE codigo = ?')
+        ->execute([$p['descricao'], $p['categoria'], $p['subcat'], $p['cost_line_key'], $p['weight'], $p['ncm'], $p['active'], $p['price_override'], $now, $p['codigo']]);
+}
+
+// FOB of one product today: its individual price, or line price 100% NF × weight.
+function product_fob(array $product, array $line): float
+{
+    return $product['price_override'] !== null
+        ? (float) $product['price_override']
+        : (float) $line['price100'] * (float) $product['weight'];
+}
+
+// Same change for many products at once — typically everything in one category, filtered on screen.
+// percent    = individual price = today's FOB × (1 + %), rounded to cents;
+// setLine    = move the products to another product line (their price follows that line);
+// clearPrice = drop the individual price, back to the line price.
+function bulk_update_products(array $user, $input): int
+{
+    require_catalog_imported();
+    $data = is_array($input) ? $input : [];
+    $action = (string) ($data['action'] ?? '');
+    if (!in_array($action, PRODUCT_BULK_ACTIONS, true)) {
+        fail(422, 'Ação em lote inválida.');
+    }
+    $codes = array_values(array_unique(array_filter(array_map(fn($v) => is_string($v) ? $v : '', is_array($data['codigos'] ?? null) ? $data['codigos'] : []))));
+    if (!$codes) {
+        fail(422, 'Nenhum produto selecionado.');
+    }
+    if (count($codes) > MAX_CATALOG_ROWS) {
+        fail(422, 'Produtos demais em uma única alteração.');
+    }
+    $note = str_field($data['note'] ?? '', 300);
+
+    $factor = 1.0;
+    if ($action === 'percent') {
+        if (!is_numeric($data['percent'] ?? null)) {
+            fail(422, 'Informe o percentual do reajuste.');
+        }
+        $percent = round((float) $data['percent'], 4);
+        if ($percent == 0 || $percent < BULK_MIN_PERCENT || $percent > BULK_MAX_PERCENT) {
+            fail(422, sprintf('O reajuste precisa estar entre %d%% e %d%% e ser diferente de zero.', BULK_MIN_PERCENT, BULK_MAX_PERCENT));
+        }
+        $factor = 1 + $percent / 100;
+        $note = trim(sprintf('Reajuste de %s%% nos produtos selecionados. %s', history_value($percent), $note));
+    }
+    $targetLine = null;
+    if ($action === 'setLine') {
+        $targetLine = find_cost_line(normalize_cost_line_key($data['costLineKey'] ?? ''));
+        if (!$targetLine) {
+            fail(422, 'Escolha uma linha de produto válida.');
+        }
+    }
+
+    return catalog_transaction(function (PDO $pdo) use ($user, $codes, $action, $factor, $targetLine, $note) {
+        $batch = new_price_batch();
+        $now = now_iso();
+        $lines = [];
+        foreach (all_cost_lines() as $line) {
+            $lines[$line['key']] = $line;
+        }
+        $changed = 0;
+        foreach ($codes as $codigo) {
+            $old = find_product($codigo);
+            if (!$old) {
+                continue;
+            }
+            $new = $old;
+            if ($action === 'percent') {
+                $new['price_override'] = round(product_fob($old, $lines[$old['cost_line_key']]) * $factor, 2);
+            } elseif ($action === 'setLine') {
+                $new['cost_line_key'] = $targetLine['key'];
+            } else {
+                $new['price_override'] = null;
+            }
+            $diff = diff_fields($old, $new, PRODUCT_FIELDS);
+            if (!$diff) {
+                continue;
+            }
+            update_product($pdo, $new, $now);
+            log_diff($batch, 'product', $codigo, $diff, $user, $note);
+            $changed++;
+        }
+        if ($changed) {
+            bump_pricing_version();
+            audit('pricing.products_bulk', null, ['action' => $action, 'changed' => $changed]);
+        }
+        return $changed;
     });
 }
 
@@ -642,12 +759,16 @@ function bulk_adjust(array $user, $input): array
 
 // ---------- Preços calculados no servidor para os pedidos ----------
 
-// Same formulas as computeFob/computeCif in script_v5.js:
+// Same formulas as computeItemPrices() in script_v5.js:
 // FOB = preço 100% NF × peso; CIF = (custos + frete) ÷ (custos ÷ preço 100% NF) × peso.
+// A product with an individual price uses price ÷ weight as its "preço 100% NF", so its CIF
+// keeps the line's proportion between freight and cost.
 function server_item_prices(array $product, ?array $freightRate, string $weightTier): array
 {
     $weight = (float) $product['weight'];
-    $price100 = (float) $product['price100'];
+    $price100 = $product['price_override'] !== null && $weight > 0
+        ? (float) $product['price_override'] / $weight
+        : (float) $product['price100'];
     $costs = (float) $product['custo_base'] + (float) $product['desp_com'] + (float) $product['desp_adm'];
     $prices = ['weight' => $weight, 'fob' => $price100 * $weight, 'cif' => null];
     if ($freightRate && $costs > 0 && in_array($weightTier, FREIGHT_TIERS, true)) {
@@ -666,7 +787,7 @@ function apply_catalog_prices(array $cart, bool $submit): array
     }
     $codes = array_values(array_unique(array_column($cart, 'codigo')));
     $stmt = db()->prepare('
-        SELECT p.codigo, p.active, p.weight, c.custo_base, c.desp_com, c.desp_adm, c.price100
+        SELECT p.codigo, p.active, p.weight, p.price_override, c.custo_base, c.desp_com, c.desp_adm, c.price100
         FROM products p JOIN cost_lines c ON c.key = p.cost_line_key
         WHERE p.codigo IN (' . implode(',', array_fill(0, count($codes), '?')) . ')
     ');
