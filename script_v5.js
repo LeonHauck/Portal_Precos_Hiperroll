@@ -783,6 +783,7 @@ async function init() {
     closeLoginModal();
     authManager.updateUI();
     updateTrashBadge();
+    startPricingWatcher();
 }
 
 // ========== TABELA DE PREÇOS (catálogo) ==========
@@ -822,11 +823,10 @@ function buildLegacyCatalog() {
         if (row.length < 13) return;
         const name = row[1]?.trim() || '';
         const key = name.toLowerCase();
-        let price100 = parseFloat(row[12]?.replace(',', '.')) || parseFloat(row[12]?.replace('R$', '').replace('.', '').replace(',', '.')) || 0;
+        const price100 = parseFloat(row[12]?.replace(',', '.')) || parseFloat(row[12]?.replace('R$', '').replace('.', '').replace(',', '.')) || 0;
         const costs = parseDecimal(row[2]) + parseDecimal(row[3]) + parseDecimal(row[4]);
         // costs > 0 skips the header row, whose "100% NF" label would otherwise parse as 100.
         if (!key || price100 <= 0 || costs <= 0) return;
-        price100 += 0.02; // Ajuste solicitado de R$ 0,02 no valor base (na importação passa a fazer parte do preço gravado)
         if (!costLines[key] || price100 > costLines[key].price100) {
             costLines[key] = {
                 key,
@@ -909,6 +909,7 @@ function applyCatalog(catalog) {
             peso: p.weight,
             weightRaw: p.weight,
             costLineKey: p.costLineKey,
+            priceOverride: p.priceOverride ?? null,
             active: p.active !== false
         });
     });
@@ -944,20 +945,26 @@ function getCurrentRegionFilters() {
 // FOB = preço 100% NF × peso. CIF = (custos + frete da região) ÷ (custos ÷ preço 100% NF) × peso,
 // i.e. the freight is added to the cost and gets the same markup. Same formulas as
 // server_item_prices() in api/lib/catalog.php, which recalculates them when an order is saved.
+// A product with an individual price (set by the gestor) uses price ÷ weight as its 100% NF price.
 function computeItemPrices(product, { uf, cityType, weightTier } = {}) {
     const line = costsData[product.costLineKey];
     if (!line) return { fob: 0, cif: 0, rate: 0 };
-    const fob = line.price100 * product.weightRaw;
+    const hasOwnPrice = product.priceOverride != null && product.weightRaw > 0;
+    const price100 = hasOwnPrice ? product.priceOverride / product.weightRaw : line.price100;
+    const divisor = price100 > 0 ? line.costs / price100 : 0;
+    const fob = price100 * product.weightRaw;
     const fData = freightData[uf] ? freightData[uf][cityType] : null;
     const rate = fData ? (fData[weightTier] || 0) : 0;
-    const cif = line.divisor > 0 ? (line.costs + rate) / line.divisor * product.weightRaw : 0;
+    const cif = divisor > 0 ? (line.costs + rate) / divisor * product.weightRaw : 0;
     return { fob, cif, rate };
 }
 
-// Refreshes whatever shows prices after the table changed.
+// Refreshes whatever shows prices after the table changed. The price tab is not redrawn while
+// the gestor has unsaved edits there, so an automatic refresh never wipes what they typed.
 function afterCatalogChanged() {
     if (document.getElementById('stateSelect')?.value) updateResults();
-    if (document.getElementById('tab-pricing')?.classList.contains('active')) renderPricingTab();
+    const pricingTab = document.getElementById('tab-pricing');
+    if (pricingTab?.classList.contains('active') && !pricingTab.querySelector('.is-dirty')) renderPricingTab();
 }
 
 // Swaps the table in use; if its version changed, the order being built is reviewed.
@@ -972,6 +979,42 @@ async function applyServerCatalog(serverCatalog, reason) {
 
 async function refreshPricingCatalog(reason = 'A tabela de preços foi atualizada pelo gestor.') {
     await applyServerCatalog(await fetchPricingCatalog(), reason);
+}
+
+// ----- Atualização automática -----
+// Every open portal asks the server for the table version (a tiny answer) once a minute and
+// when the browser tab comes back into view; the full table is only downloaded when it changed.
+const PRICING_WATCH_INTERVAL_MS = 60 * 1000;
+let pricingWatchTimer = null;
+let pricingWatchBusy = false;
+
+async function checkPricingVersion() {
+    // Skip while a check is running, while the representative is answering the review modal,
+    // or when nobody is logged in (the session may have expired).
+    if (pricingWatchBusy || repriceModalResolver || !authManager.getCurrentUser()) return false;
+    pricingWatchBusy = true;
+    try {
+        const data = await apiRequest('pricing.version');
+        const source = data.imported ? 'server' : 'legacy';
+        if (source === pricingCatalog.source && data.version === pricingCatalog.version) return false;
+        await refreshPricingCatalog('A tabela de preços foi atualizada pelo gestor.');
+        return true;
+    } catch (e) {
+        console.warn('Não foi possível verificar a versão da tabela de preços:', e);
+        return false;
+    } finally {
+        pricingWatchBusy = false;
+    }
+}
+
+function startPricingWatcher() {
+    if (pricingWatchTimer) return;
+    pricingWatchTimer = setInterval(() => {
+        if (document.visibilityState === 'visible') checkPricingVersion();
+    }, PRICING_WATCH_INTERVAL_MS);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') checkPricingVersion();
+    });
 }
 
 // ----- "Avisar e atualizar": revisão de preços do pedido aberto -----
@@ -3826,10 +3869,11 @@ const PRICING_FIELD_LABELS = Object.freeze({
     weight: 'Peso (kg)',
     ncm: 'NCM',
     active: 'Ativo',
+    price_override: 'Preço FOB próprio (R$)',
     import: 'Importação',
     removido: 'Praça removida'
 });
-const PRICING_MONEY_FIELDS = ['custo_base', 'desp_com', 'desp_adm', 'price100', 'tier1', 'tier2'];
+const PRICING_MONEY_FIELDS = ['custo_base', 'desp_com', 'desp_adm', 'price100', 'tier1', 'tier2', 'price_override'];
 const PRACA_OPTIONS = ['Capital', 'Interior', 'Fluvial'];
 
 let pricingTabSection = 'lines';
@@ -3960,7 +4004,6 @@ function renderPricingImportPanel() {
                 <li><strong>${legacy.freight.length}</strong> praças de frete</li>
                 <li><strong>${legacy.products.length}</strong> produtos</li>
             </ul>
-            <p class="pricing-hint">O preço 100% NF de cada linha já entra com o ajuste de R$ 0,02 que hoje é somado no código.</p>
             ${warnings}
             <button type="button" class="btn-modal btn-modal-primary" onclick="importPricingCatalog()">⬆️ Importar tabela atual</button>
             <div id="pricingMessage" class="pricing-message"></div>
@@ -3993,6 +4036,13 @@ function formatMarkup(line) {
     return `${pct >= 0 ? '+' : ''}${formatBRL(pct, 1)}%`;
 }
 
+// "42" or "42 (3 com preço próprio)": products with their own price don't follow this line's price.
+function describeLineProducts(key) {
+    const products = productsData.filter(p => p.costLineKey === key && p.active);
+    const own = products.filter(p => p.priceOverride != null).length;
+    return own ? `${products.length} <span class="reprice-desc">(${own} com preço próprio)</span>` : String(products.length);
+}
+
 function renderPricingLines(body) {
     const editable = pricingCanEdit();
     const dis = editable ? '' : 'disabled';
@@ -4006,11 +4056,11 @@ function renderPricingLines(body) {
             <td class="pricing-computed" data-computed="costs">${formatBRL(line.custoBase + line.despCom + line.despAdm)}</td>
             <td>${money('price100', line.price100, ' pricing-input--strong')}</td>
             <td class="pricing-computed" data-computed="markup">${formatMarkup(line)}</td>
-            <td class="pricing-computed">${productsData.filter(p => p.costLineKey === line.key && p.active).length}</td>
+            <td class="pricing-computed">${describeLineProducts(line.key)}</td>
         </tr>`).join('');
 
     body.innerHTML = `
-        <p class="pricing-hint">Valores em R$ por kg. <strong>FOB</strong> de um produto = preço 100% NF × peso. <strong>CIF</strong> = (custos + frete da região) com o mesmo markup (preço 100% NF ÷ custos).</p>
+        <p class="pricing-hint">Valores em R$ por kg. <strong>FOB</strong> de um produto = preço 100% NF × peso. <strong>CIF</strong> = (custos + frete da região) com o mesmo markup (preço 100% NF ÷ custos). Produtos com <strong>preço próprio</strong> (aba Produtos) não mudam quando a linha muda.</p>
         <div class="results-table-container">
             <table class="pricing-table">
                 <thead><tr><th>Linha de produto</th><th>Custo produto</th><th>Desp. comercial</th><th>Desp. adm.</th><th>Total custos</th><th>Preço 100% NF</th><th>Markup s/ custos</th><th>Produtos</th></tr></thead>
@@ -4151,19 +4201,63 @@ async function createFreightRow() {
 }
 
 // ----- Produtos -----
+// Each product's FOB comes from its product line (preço 100% NF × peso) unless the gestor typed an
+// individual price for it. The list can be narrowed by category/search, and the bulk actions
+// apply to exactly the products listed on screen.
+
+let pricingProductCategory = '';
+
+function lineFobFor(product, costLineKey = product.costLineKey, weight = product.weight) {
+    const line = costsData[costLineKey];
+    return line ? line.price100 * weight : 0;
+}
+
+function currentFobFor(product) {
+    return product.priceOverride != null ? product.priceOverride : lineFobFor(product);
+}
+
+function getFilteredPricingProducts() {
+    const terms = pricingProductFilter.toLowerCase().split(' ').filter(Boolean);
+    return pricingCatalog.products.filter(p =>
+        (pricingShowInactive || p.active) &&
+        (!pricingProductCategory || p.categoria === pricingProductCategory) &&
+        terms.every(t => `${p.codigo} ${p.descricao} ${p.categoria} ${p.subcat}`.toLowerCase().includes(t)));
+}
 
 function renderPricingProducts(body) {
     const editable = pricingCanEdit();
     const lineOptions = pricingCatalog.costLines.map(l => `<option value="${escapeHtml(l.key)}">${escapeHtml(l.name)}</option>`).join('');
+    const categories = {};
+    pricingCatalog.products.forEach(p => { categories[p.categoria] = (categories[p.categoria] || 0) + 1; });
+    const categoryOptions = Object.keys(categories).sort((a, b) => a.localeCompare(b, 'pt-BR'))
+        .map(c => `<option value="${escapeHtml(c)}"${c === pricingProductCategory ? ' selected' : ''}>${escapeHtml(c || '(sem categoria)')} (${categories[c]})</option>`).join('');
+
     body.innerHTML = `
         <div class="pricing-filterbar">
+            <select id="pricingProductCategory" class="pricing-input" onchange="pricingProductCategory = this.value; renderPricingProductRows()">
+                <option value="">Todas as categorias (${pricingCatalog.products.length})</option>
+                ${categoryOptions}
+            </select>
             <input id="pricingProductSearch" class="pricing-input pricing-input--wide" placeholder="Buscar por código ou descrição" value="${escapeHtml(pricingProductFilter)}" oninput="pricingProductFilter = this.value; renderPricingProductRows()">
             <label class="pricing-check"><input type="checkbox" ${pricingShowInactive ? 'checked' : ''} onchange="pricingShowInactive = this.checked; renderPricingProductRows()"> Mostrar inativos</label>
         </div>
-        <p class="pricing-hint">O FOB usa o preço 100% NF da linha escolhida. Desativar um produto o tira da busca dos representantes; pedidos já feitos não mudam.</p>
+        <p class="pricing-hint"><strong>Preço FOB (R$)</strong>: digite o valor e aperte <strong>Enter</strong> (ou clique em Salvar) para dar a um produto um <strong>preço próprio</strong>. Sem preço próprio, o produto segue a linha: preço 100% NF × peso. O CIF de cada região é calculado a partir desse FOB.</p>
+        ${editable ? `
+        <div class="pricing-bulkbar">
+            <span>Com os <strong id="pricingFilteredCount">0</strong> produtos listados:</span>
+            <span class="pricing-bulkbar-group">
+                <input id="bulkProductPercent" type="number" step="0.1" class="pricing-input pricing-input--narrow" placeholder="%">
+                <button type="button" class="pricing-row-btn" onclick="bulkUpdateFilteredProducts('percent')">Reajustar preço</button>
+            </span>
+            <span class="pricing-bulkbar-group">
+                <select id="bulkProductLine" class="pricing-input">${lineOptions}</select>
+                <button type="button" class="pricing-row-btn" onclick="bulkUpdateFilteredProducts('setLine')">Mover para a linha</button>
+            </span>
+            <button type="button" class="pricing-row-btn pricing-row-btn--ghost" onclick="bulkUpdateFilteredProducts('clearPrice')">Voltar ao preço da linha</button>
+        </div>` : ''}
         <div class="results-table-container">
             <table class="pricing-table">
-                <thead><tr><th>Código</th><th>Descrição</th><th>Linha de produto</th><th>Peso (kg)</th><th>FOB (R$)</th><th>Ativo</th>${editable ? '<th></th>' : ''}</tr></thead>
+                <thead><tr><th>Código</th><th>Descrição</th><th>Linha de produto</th><th>Peso (kg)</th><th>Preço FOB (R$)</th><th>Ativo</th>${editable ? '<th></th>' : ''}</tr></thead>
                 <tbody id="pricingProductRows"></tbody>
             </table>
         </div>
@@ -4177,6 +4271,7 @@ function renderPricingProducts(body) {
                 <label>Subcategoria<input id="newProductSubcat" class="pricing-input pricing-input--text" maxlength="80"></label>
                 <label>Linha de produto<select id="newProductLine" class="pricing-input">${lineOptions}</select></label>
                 <label>Peso (kg)<input id="newProductWeight" type="number" step="0.001" min="0" class="pricing-input"></label>
+                <label>Preço FOB próprio (opcional)<input id="newProductPrice" type="number" step="0.01" min="0" class="pricing-input" placeholder="vazio = preço da linha"></label>
                 <label>NCM<input id="newProductNcm" class="pricing-input" maxlength="20"></label>
                 <button type="button" class="btn-modal btn-modal-ghost" onclick="createPricingProduct()">Cadastrar produto</button>
             </div>
@@ -4189,40 +4284,48 @@ function renderPricingProductRows() {
     if (!tbody) return;
     const editable = pricingCanEdit();
     const dis = editable ? '' : 'disabled';
-    const terms = pricingProductFilter.toLowerCase().split(' ').filter(Boolean);
-    const list = pricingCatalog.products.filter(p =>
-        (pricingShowInactive || p.active) &&
-        terms.every(t => `${p.codigo} ${p.descricao} ${p.categoria}`.toLowerCase().includes(t)));
+    const list = getFilteredPricingProducts();
+    const countEl = document.getElementById('pricingFilteredCount');
+    if (countEl) countEl.textContent = list.length;
 
     tbody.innerHTML = list.map(p => {
-        const line = costsData[p.costLineKey];
         const options = pricingCatalog.costLines.map(l => `<option value="${escapeHtml(l.key)}"${l.key === p.costLineKey ? ' selected' : ''}>${escapeHtml(l.name)}</option>`).join('');
+        const own = p.priceOverride != null;
+        const priceNote = own
+            ? `<span class="price-badge">preço próprio</span>${editable ? ` <button type="button" class="pricing-link-btn" onclick="resetPricingProductPrice(this)" title="Voltar a seguir a linha (R$ ${formatBRL(lineFobFor(p))})">↺ usar linha</button>` : ''}`
+            : '<span class="price-badge price-badge--line">da linha</span>';
         return `
         <tr data-codigo="${escapeHtml(p.codigo)}" class="${p.active ? '' : 'is-inactive'}">
-            <td><strong>${escapeHtml(p.codigo)}</strong></td>
+            <td><strong>${escapeHtml(p.codigo)}</strong><div class="reprice-desc">${escapeHtml(p.categoria)}</div></td>
             <td><input class="pricing-input pricing-input--wide" data-field="descricao" value="${escapeHtml(p.descricao)}" maxlength="200" ${dis} oninput="onPricingProductInput(this)"></td>
             <td><select class="pricing-input" data-field="costLineKey" ${dis} onchange="onPricingProductInput(this)">${options}</select></td>
-            <td><input type="number" step="0.001" min="0" class="pricing-input" data-field="weight" value="${p.weight}" ${dis} oninput="onPricingProductInput(this)"></td>
-            <td class="pricing-computed" data-computed="fob">${formatBRL(line ? line.price100 * p.weight : 0)}</td>
+            <td><input type="number" step="0.001" min="0" class="pricing-input pricing-input--narrow" data-field="weight" value="${p.weight}" ${dis} oninput="onPricingProductInput(this)"></td>
+            <td class="pricing-price-cell">
+                <input type="number" step="0.01" min="0" class="pricing-input pricing-input--strong pricing-input--narrow" data-field="price" value="${priceInputValue(Math.round(currentFobFor(p) * 100) / 100)}" ${dis}
+                    oninput="this.closest('tr').dataset.priceEdited = '1'; onPricingProductInput(this)"
+                    onkeydown="if (event.key === 'Enter') { event.preventDefault(); savePricingProduct(this); }">
+                <div class="price-note">${priceNote}</div>
+            </td>
             <td><input type="checkbox" data-field="active" ${p.active ? 'checked' : ''} ${dis} onchange="onPricingProductInput(this)"></td>
             ${editable ? '<td><button type="button" class="pricing-row-btn" onclick="savePricingProduct(this)" disabled>Salvar</button></td>' : ''}
         </tr>`;
     }).join('') || `<tr><td colspan="7"><div class="empty-state">Nenhum produto encontrado.</div></td></tr>`;
 }
 
+// Without its own price, the FOB shown follows the line/weight the gestor is choosing.
 function onPricingProductInput(el) {
     const row = el.closest('tr');
-    const line = costsData[row.querySelector('[data-field="costLineKey"]').value];
-    row.querySelector('[data-computed="fob"]').textContent = formatBRL(line ? line.price100 * readPricingNumber(row, 'weight') : 0);
+    const product = pricingCatalog.products.find(p => p.codigo === row.dataset.codigo);
+    if (product && product.priceOverride == null && row.dataset.priceEdited !== '1') {
+        const fob = lineFobFor(product, row.querySelector('[data-field="costLineKey"]').value, readPricingNumber(row, 'weight'));
+        row.querySelector('[data-field="price"]').value = priceInputValue(Math.round(fob * 100) / 100);
+    }
     row.classList.add('is-dirty');
     const btn = row.querySelector('.pricing-row-btn');
     if (btn) btn.disabled = false;
 }
 
-async function savePricingProduct(button) {
-    const row = button.closest('tr');
-    const current = pricingCatalog.products.find(p => p.codigo === row.dataset.codigo);
-    if (!current) return;
+function readPricingProductRow(row, current) {
     const product = {
         ...current,
         descricao: row.querySelector('[data-field="descricao"]').value.trim(),
@@ -4230,13 +4333,77 @@ async function savePricingProduct(button) {
         weight: readPricingNumber(row, 'weight'),
         active: row.querySelector('[data-field="active"]').checked
     };
+    if (row.dataset.priceEdited === '1') {
+        const typed = readPricingNumber(row, 'price');
+        const lineFob = lineFobFor(product);
+        // Typing exactly the line price on a product without its own price keeps it following the line.
+        product.priceOverride = current.priceOverride == null && Math.abs(typed - lineFob) < 0.005 ? null : typed;
+    }
+    return product;
+}
+
+async function savePricingProduct(el) {
+    const row = el.closest('tr');
+    const current = pricingCatalog.products.find(p => p.codigo === row.dataset.codigo);
+    if (!current || !row.classList.contains('is-dirty')) return;
+    const product = readPricingProductRow(row, current);
+    if (product.priceOverride != null && !(product.priceOverride > 0)) {
+        setPricingMessage(`Informe um preço maior que zero para ${product.codigo}.`, 'error');
+        return;
+    }
     if (current.active && !product.active && !confirm(`Desativar ${product.codigo}? Ele deixa de aparecer para os representantes.`)) return;
-    button.disabled = true;
+    const btn = row.querySelector('.pricing-row-btn');
+    if (btn) btn.disabled = true;
     await sendPricingChange('pricing.saveProduct', { product, note: '' });
+}
+
+async function resetPricingProductPrice(el) {
+    const row = el.closest('tr');
+    const current = pricingCatalog.products.find(p => p.codigo === row.dataset.codigo);
+    if (!current) return;
+    if (!confirm(`${current.codigo} volta a seguir o preço da linha: R$ ${formatBRL(lineFobFor(current))} (hoje R$ ${formatBRL(current.priceOverride)}). Confirmar?`)) return;
+    await sendPricingChange('pricing.saveProduct', { product: { ...current, priceOverride: null }, note: 'Voltou ao preço da linha' });
+}
+
+async function bulkUpdateFilteredProducts(action) {
+    const list = getFilteredPricingProducts();
+    if (!list.length) {
+        setPricingMessage('Nenhum produto listado para alterar.', 'error');
+        return;
+    }
+    const scope = pricingProductCategory ? ` da categoria "${pricingProductCategory}"` : '';
+    const body = { action, codigos: list.map(p => p.codigo), note: '' };
+
+    if (action === 'percent') {
+        const percent = parseFloat(document.getElementById('bulkProductPercent')?.value);
+        if (!Number.isFinite(percent) || percent === 0) {
+            setPricingMessage('Informe o percentual (ex.: 5 para +5%, -3 para −3%).', 'error');
+            return;
+        }
+        const sample = list[0];
+        const before = currentFobFor(sample);
+        const after = Math.round(before * (1 + percent / 100) * 100) / 100;
+        if (!confirm(`Reajustar em ${percent}% o preço de ${list.length} produto(s)${scope}?\n\nExemplo: ${sample.codigo}: R$ ${formatBRL(before)} → R$ ${formatBRL(after)}\n\nEles passam a ter preço próprio e deixam de acompanhar os reajustes da linha (até você usar "Voltar ao preço da linha").`)) return;
+        body.percent = percent;
+    } else if (action === 'setLine') {
+        const select = document.getElementById('bulkProductLine');
+        const lineName = select?.selectedOptions[0]?.textContent || '';
+        if (!confirm(`Mover ${list.length} produto(s)${scope} para a linha "${lineName}"?\n\nQuem não tem preço próprio passa a usar o preço 100% NF dessa linha.`)) return;
+        body.costLineKey = select.value;
+    } else {
+        const withOwn = list.filter(p => p.priceOverride != null).length;
+        if (!withOwn) {
+            setPricingMessage('Nenhum dos produtos listados tem preço próprio.', 'info');
+            return;
+        }
+        if (!confirm(`${withOwn} produto(s)${scope} voltam a seguir o preço da linha. Confirmar?`)) return;
+    }
+    await sendPricingChange('pricing.bulkProducts', body);
 }
 
 async function createPricingProduct() {
     const value = id => document.getElementById(id)?.value.trim() || '';
+    const price = parseFloat(value('newProductPrice'));
     await sendPricingChange('pricing.saveProduct', {
         product: {
             isNew: true,
@@ -4246,6 +4413,7 @@ async function createPricingProduct() {
             subcat: value('newProductSubcat'),
             costLineKey: value('newProductLine'),
             weight: parseFloat(value('newProductWeight')) || 0,
+            priceOverride: Number.isFinite(price) && price > 0 ? price : null,
             ncm: value('newProductNcm'),
             active: true
         },
@@ -4262,7 +4430,7 @@ function renderPricingBulk(body) {
     }
     body.innerHTML = `
         <div class="pricing-bulk">
-            <p class="pricing-hint">Aplica um percentual de uma vez. Primeiro pré-visualize: nada é gravado até você clicar em “Aplicar reajuste”. Os valores novos são arredondados para centavos.</p>
+            <p class="pricing-hint">Aplica um percentual de uma vez. Primeiro pré-visualize: nada é gravado até você clicar em “Aplicar reajuste”. Os valores novos são arredondados para centavos. Para reajustar uma categoria de produtos, use a seção Produtos.</p>
             <div class="pricing-form-grid">
                 <label>Aplicar em
                     <select id="bulkTarget" class="pricing-input" onchange="onBulkParamsChange(true)">
@@ -4337,6 +4505,7 @@ function getBulkParams() {
 }
 
 function formatPricingValue(field, value) {
+    if (field === 'price_override' && (value === null || value === undefined || value === '')) return 'preço da linha';
     if (value === null || value === undefined || value === '') return '—';
     if (field === 'weight') return formatBRL(parseFloat(value), 3);
     if (field === 'active') return String(value) === '1' ? 'Sim' : 'Não';
