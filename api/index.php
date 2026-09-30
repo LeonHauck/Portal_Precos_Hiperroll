@@ -5,9 +5,9 @@
 require_once __DIR__ . '/bootstrap.php';
 
 register_error_handlers();
-start_session();
 
 $action = (string) ($_GET['action'] ?? '');
+start_session($action !== 'pricing.version');
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 function expect_method(string $expected): void
@@ -200,6 +200,20 @@ switch ($action) {
         expect_method('GET');
         $actor = require_login();
         json_response(200, ['success' => true, 'catalog' => get_catalog($actor)]);
+        break;
+
+    // Polled by every open portal about once a minute: tiny answer, no session "activity".
+    case 'pricing.version':
+        expect_method('GET');
+        require_login();
+        json_response(200, ['success' => true, 'imported' => catalog_is_imported(), 'version' => pricing_version()]);
+        break;
+
+    case 'pricing.bulkProducts':
+        expect_method('POST');
+        $actor = require_role(ROLE_GESTOR);
+        $changed = bulk_update_products($actor, $body);
+        json_response(200, ['success' => true, 'changed' => $changed, 'catalog' => get_catalog($actor)]);
         break;
 
     case 'pricing.import':

@@ -2,7 +2,8 @@
 
 // v1: usuários, pedidos, contadores, tentativas de login, auditoria.
 // v2: tabela de preços editável (linhas de produto, frete, produtos, histórico de preços).
-const SCHEMA_VERSION = 2;
+// v3: preço individual por produto (products.price_override).
+const SCHEMA_VERSION = 3;
 
 const DENY_ALL_HTACCESS = "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order allow,deny\n    Deny from all\n</IfModule>\n";
 
@@ -149,9 +150,12 @@ function migrate(PDO $pdo): void
                 ncm TEXT NOT NULL DEFAULT '',
                 active INTEGER NOT NULL DEFAULT 1,
                 sort_order INTEGER NOT NULL DEFAULT 0,
+                price_override REAL,
                 updated_at TEXT NOT NULL
             )
         ");
+        // A v2 database already has the table without the column; SQLite has no "ADD COLUMN IF NOT EXISTS".
+        ensure_column($pdo, 'products', 'price_override', 'REAL');
 
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS price_history (
@@ -175,6 +179,16 @@ function migrate(PDO $pdo): void
         $pdo->rollBack();
         throw $e;
     }
+}
+
+function ensure_column(PDO $pdo, string $table, string $column, string $definition): void
+{
+    foreach ($pdo->query("PRAGMA table_info({$table})")->fetchAll() as $info) {
+        if ($info['name'] === $column) {
+            return;
+        }
+    }
+    $pdo->exec("ALTER TABLE {$table} ADD COLUMN {$column} {$definition}");
 }
 
 function audit(string $action, ?string $target = null, array $details = []): void

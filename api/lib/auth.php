@@ -5,7 +5,9 @@ const ROLE_ADMIN = 'admin';
 const ROLE_REP = 'representante';
 const ALL_ROLES = [ROLE_GESTOR, ROLE_ADMIN, ROLE_REP];
 
-function start_session(): void
+// $touchActivity = false is for background checks (the price-table watcher): they must not
+// count as activity, or a forgotten open tab would never hit the idle timeout.
+function start_session(bool $touchActivity = true): void
 {
     if (session_status() === PHP_SESSION_ACTIVE) {
         return;
@@ -28,7 +30,9 @@ function start_session(): void
         $_SESSION = [];
         session_regenerate_id(true);
     }
-    $_SESSION['last_activity'] = $now;
+    if ($touchActivity || !isset($_SESSION['last_activity'])) {
+        $_SESSION['last_activity'] = $now;
+    }
 }
 
 // The user is re-read from the database on every request, so deactivating an account
