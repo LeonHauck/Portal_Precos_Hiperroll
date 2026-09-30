@@ -1,5 +1,7 @@
 <?php
 // Entrega as tabelas de produtos, custos e fretes (data.js) somente para usuários logados.
+// Usado só até a tabela ser importada para o banco (aba "Tabela de Preços"); depois disso
+// o front lê tudo de api/index.php?action=pricing.get.
 // O arquivo data.js em si fica bloqueado para download direto pelo .htaccess da raiz.
 
 require_once __DIR__ . '/bootstrap.php';
@@ -14,5 +16,9 @@ if (!$user || (int) $user['must_change_password'] === 1) {
     exit;
 }
 
-readfile(dirname(__DIR__) . '/data.js');
+// After the price table is imported into the database, data.js is no longer needed and may be deleted.
+$dataFile = dirname(__DIR__) . '/data.js';
+if (is_file($dataFile)) {
+    readfile($dataFile);
+}
 echo "\nwindow.PORTAL_DATA_LOCKED = false;\n";

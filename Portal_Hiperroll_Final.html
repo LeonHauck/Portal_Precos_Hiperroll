@@ -19,7 +19,7 @@
             } catch (e) { /* localStorage indisponível: mantém tema claro padrão */ }
         }());
     </script>
-    <link rel="stylesheet" href="style.css?v=3">
+    <link rel="stylesheet" href="style.css?v=4">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -77,6 +77,7 @@
         <nav class="app-tabs">
             <button class="tab-btn active" onclick="switchTab('tab-order')" id="btn-tab-order">📦 Novo Pedido</button>
             <button class="tab-btn" onclick="switchTab('tab-history')" id="btn-tab-history">📋 Histórico e Entregas</button>
+            <button class="tab-btn" onclick="switchTab('tab-pricing')" id="btn-tab-pricing" style="display:none;">💲 Tabela de Preços</button>
         </nav>
 
         <div id="tab-order" class="tab-content active">
@@ -209,7 +210,7 @@
                             <input type="number" id="orderDiscount" value="0" min="0" max="100" style="width: 80px;" oninput="updateOrderTable()">
                         </div>
                         <div style="display: flex; align-items: center; gap: 10px;">
-                            <label for="orderContract" style="margin-bottom: 0; min-width: 100px;">Contrato (%):</label>
+                            <label for="orderContract" style="margin-bottom: 0; min-width: 100px;" title="Acréscimo no pedido para cobrir um custo pago pela Hiperroll (ex.: percentual logístico). Aumenta o valor da nota e reduz a margem %.">Contrato (%):</label>
                             <input type="number" id="orderContract" value="0" min="0" max="100" style="width: 80px;" oninput="updateOrderTable()">
                         </div>
                         <label class="order-condition-toggle" for="orderEarlyPayment">
@@ -268,6 +269,16 @@
                 </div>
 
                 <div id="historyTabContent" style="display: flex; flex-direction: column; gap: 15px;">
+                    <!-- Preenchido via JavaScript -->
+                </div>
+            </section>
+        </div>
+
+        <!-- Tab: Tabela de Preços (gestor edita; administrador importa e consulta) -->
+        <div id="tab-pricing" class="tab-content" style="display: none;">
+            <section class="card" style="margin-top: 20px;">
+                <h2><span class="card-icon">💲</span> Tabela de Preços</h2>
+                <div id="pricingTabContent">
                     <!-- Preenchido via JavaScript -->
                 </div>
             </section>
@@ -436,6 +447,29 @@
         </div>
     </div>
 
+    <!-- Revisão de preços: aparece quando o pedido aberto foi montado com uma versão anterior da tabela -->
+    <div id="repriceModal" class="modal-backdrop" style="display:none; position:fixed; z-index:1005;">
+        <div class="modal-panel modal-panel--lg">
+            <div class="modal-header">
+                <div class="modal-header-title">
+                    <div class="modal-icon-badge">💲</div>
+                    <div>
+                        <h3 class="modal-title">Preços atualizados</h3>
+                        <p id="repriceReason" class="modal-subtitle">A tabela de preços mudou.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-body">
+                <p style="color:var(--text-secondary); margin-bottom:14px; font-size:0.92rem; line-height:1.5;">Estes itens do pedido mudaram de preço. Escolha como seguir: manter os preços que você negociou (a margem é recalculada com o novo FOB) ou aplicar a nova tabela mantendo o mesmo desconto em R$ que cada item tinha.</p>
+                <div id="repriceModalBody"></div>
+            </div>
+            <div class="modal-footer reprice-footer">
+                <button onclick="resolveRepriceModal('keep')" class="btn-modal btn-modal-ghost">Manter meus preços negociados <small>margem: <span id="repriceKeepMargin">—</span></small></button>
+                <button onclick="resolveRepriceModal('table')" class="btn-modal btn-modal-primary">Usar os novos preços de tabela <small>margem: <span id="repriceTableMargin">—</span></small></button>
+            </div>
+        </div>
+    </div>
+
     <!-- Alterar senha (fica acima da tela de login para o primeiro acesso) -->
     <div id="changePasswordModal" class="modal-backdrop" style="display:none; position:fixed; z-index:10001;">
         <div class="modal-panel modal-panel--sm">
@@ -469,7 +503,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js"></script>
     <!-- Tabelas de preço/custo: entregues pelo servidor somente para usuários logados -->
     <script src="api/data.php"></script>
-    <script src="script_v5.js?v=20260929"></script>
+    <script src="script_v5.js?v=20260930"></script>
     <script>
         window.addEventListener('load', function () {
             if (typeof window.loginUser !== 'function') {

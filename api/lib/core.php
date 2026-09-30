@@ -3,11 +3,14 @@
 final class ApiError extends Exception
 {
     public int $status;
+    // Machine-readable reason the front can react to (e.g. 'pricing_outdated'); null for plain errors.
+    public ?string $errorCode;
 
-    public function __construct(int $status, string $message)
+    public function __construct(int $status, string $message, ?string $errorCode = null)
     {
         parent::__construct($message);
         $this->status = $status;
+        $this->errorCode = $errorCode;
     }
 }
 
@@ -29,9 +32,9 @@ function json_response(int $status, array $payload): void
     exit;
 }
 
-function fail(int $status, string $message): void
+function fail(int $status, string $message, ?string $errorCode = null): void
 {
-    throw new ApiError($status, $message);
+    throw new ApiError($status, $message, $errorCode);
 }
 
 function read_json_body(): array
@@ -82,7 +85,11 @@ function register_error_handlers(): void
 {
     set_exception_handler(function (Throwable $e) {
         if ($e instanceof ApiError) {
-            json_response($e->status, ['success' => false, 'message' => $e->getMessage()]);
+            $payload = ['success' => false, 'message' => $e->getMessage()];
+            if ($e->errorCode !== null) {
+                $payload['code'] = $e->errorCode;
+            }
+            json_response($e->status, $payload);
         }
         error_log('[portal-api] ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         $message = app_config()['debug'] ? $e->getMessage() : 'Erro interno no servidor. Tente novamente em instantes.';

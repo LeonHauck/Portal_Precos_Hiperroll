@@ -85,6 +85,8 @@ function export_backup(): void
         'hiperrollOrderCounter' => (int) $counter,
         'users' => list_users(),
         'orders' => $orders,
+        'pricing' => get_catalog(current_user()),
+        'priceHistory' => list_price_history(5000),
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
@@ -192,6 +194,53 @@ switch ($action) {
         require_role(ROLE_GESTOR);
         $order = register_billing((string) ($body['id'] ?? ''), $body['billed'] ?? [], $body['invoice'] ?? null);
         json_response(200, ['success' => true, 'order' => $order]);
+        break;
+
+    case 'pricing.get':
+        expect_method('GET');
+        $actor = require_login();
+        json_response(200, ['success' => true, 'catalog' => get_catalog($actor)]);
+        break;
+
+    case 'pricing.import':
+        expect_method('POST');
+        $actor = require_role(ROLE_GESTOR, ROLE_ADMIN);
+        $counts = import_catalog($actor, $body);
+        json_response(200, ['success' => true, 'imported' => $counts, 'catalog' => get_catalog($actor)]);
+        break;
+
+    case 'pricing.updateCostLines':
+        expect_method('POST');
+        $actor = require_role(ROLE_GESTOR);
+        $changed = update_cost_lines($actor, $body['lines'] ?? [], str_field($body['note'] ?? '', 300));
+        json_response(200, ['success' => true, 'changed' => $changed, 'catalog' => get_catalog($actor)]);
+        break;
+
+    case 'pricing.updateFreight':
+        expect_method('POST');
+        $actor = require_role(ROLE_GESTOR);
+        $changed = update_freight($actor, $body['rows'] ?? [], str_field($body['note'] ?? '', 300));
+        json_response(200, ['success' => true, 'changed' => $changed, 'catalog' => get_catalog($actor)]);
+        break;
+
+    case 'pricing.saveProduct':
+        expect_method('POST');
+        $actor = require_role(ROLE_GESTOR);
+        $changed = save_product($actor, $body['product'] ?? [], str_field($body['note'] ?? '', 300));
+        json_response(200, ['success' => true, 'changed' => $changed ? 1 : 0, 'catalog' => get_catalog($actor)]);
+        break;
+
+    case 'pricing.bulkAdjust':
+        expect_method('POST');
+        $actor = require_role(ROLE_GESTOR);
+        $result = bulk_adjust($actor, $body);
+        json_response(200, ['success' => true] + $result + ($result['applied'] ? ['catalog' => get_catalog($actor)] : []));
+        break;
+
+    case 'pricing.history':
+        expect_method('GET');
+        require_role(ROLE_GESTOR, ROLE_ADMIN);
+        json_response(200, ['success' => true, 'history' => list_price_history()]);
         break;
 
     case 'users.list':

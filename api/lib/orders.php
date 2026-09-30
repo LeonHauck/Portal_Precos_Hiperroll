@@ -21,6 +21,9 @@ function sanitize_cart($cart): array
         if ($codigo === '') {
             continue;
         }
+        $uf = strtoupper(str_field($item['uf'] ?? '', 2));
+        $cityType = (string) ($item['cityType'] ?? '');
+        $weightTier = (string) ($item['weightTier'] ?? '');
         $clean[] = [
             'codigo' => $codigo,
             'descricao' => str_field($item['descricao'] ?? '', 200),
@@ -30,6 +33,10 @@ function sanitize_cart($cart): array
             'unitDiscount' => num_field($item['unitDiscount'] ?? 0),
             'weight' => num_field($item['weight'] ?? 0),
             'qty' => max((int) ($item['qty'] ?? 0), 1),
+            // Region the CIF was quoted for, so the price can be recalculated when the table changes.
+            'uf' => preg_match('/^[A-Z]{2}$/', $uf) ? $uf : '',
+            'cityType' => in_array($cityType, PRACA_TYPES, true) ? $cityType : '',
+            'weightTier' => in_array($weightTier, FREIGHT_TIERS, true) ? $weightTier : '',
         ];
     }
     return $clean;
@@ -45,6 +52,7 @@ function sanitize_order_input($order): array
         'proposalValidity' => str_field($o['proposalValidity'] ?? '', 40),
         'cart' => sanitize_cart($o['cart'] ?? []),
         'conditions' => normalize_order_conditions($o['conditions'] ?? []),
+        'pricingVersion' => max((int) ($o['pricingVersion'] ?? 0), 0),
     ];
 }
 
@@ -147,6 +155,14 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
         fail(422, $submit ? 'Adicione itens ao pedido antes de enviar.' : 'Adicione itens antes de salvar o rascunho.');
     }
 
+    // The representative must see the new prices before sending: the front reloads the
+    // table, shows what changed and lets them choose, then submits again.
+    $currentPricingVersion = pricing_version();
+    if ($submit && catalog_is_imported() && $input['pricingVersion'] !== $currentPricingVersion) {
+        fail(409, 'A tabela de preços foi atualizada pelo gestor. Confira os novos valores antes de enviar.', 'pricing_outdated');
+    }
+    $input['cart'] = apply_catalog_prices($input['cart'], $submit);
+
     $pdo = db();
     $pdo->beginTransaction();
     try {
@@ -179,6 +195,7 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
             'representativeName' => $input['representativeName'],
             'proposalValidity' => $input['proposalValidity'],
             'cart' => $input['cart'],
+            'pricingVersion' => $currentPricingVersion,
             'savedAt' => $now,
             'savedBy' => $user['username'],
         ]);

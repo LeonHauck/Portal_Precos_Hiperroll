@@ -5,9 +5,14 @@ function parseCSV(csv, delimiter = ';') {
     return lines.map(line => line.split(delimiter).map(cell => cell.trim().replace(/"/g, '')));
 }
 
+// Filled by applyCatalog() from the price table in use (see pricingCatalog below).
 const productsData = [];
 const freightData = {};
 const costsData = {};
+// Price table in use. source 'server' = database (editable by the gestor in the "Tabela de Preços" tab);
+// 'legacy' = data.js, used only until the table is imported into the database.
+let pricingCatalog = { source: 'none', imported: false, version: 0, canEdit: false, costLines: [], freight: [], products: [], warnings: [] };
+let legacyCatalog = null;
 const cart = []; // Store order items
 let currentOrderMargin = 0;
 let activeDraftId = null;
@@ -60,8 +65,9 @@ function getOrderDiscountPercent(conditions) {
         + (c.fobFreight ? c.fobFreightPercent : 0);
 }
 
-// Margin is value-weighted on the net price (after discounts). The contract %
-// grosses up the invoice but is passed back to the client, so it doesn't count as margin.
+// Margin is value-weighted. The contract % raises the invoice, but Hiperroll pays that same
+// amount out (logistics/contract cost), so profit stays net − FOB while the margin % is
+// measured against the full invoice: a contract lowers the margin percentage.
 function calculateOrderTotals(items, conditions) {
     const c = normalizeOrderConditions(conditions);
     const discountPercent = getOrderDiscountPercent(c);
@@ -75,7 +81,7 @@ function calculateOrderTotals(items, conditions) {
         const negotiatedUnit = Math.max(parseFloat(item.negotiatedPrice || item.cif) || 0, 0);
         const netUnit = negotiatedUnit * discountFactor;
         const invoiceUnit = netUnit * contractFactor;
-        const marginPercent = netUnit > 0 ? ((netUnit - fobUnit) / netUnit) * 100 : 0;
+        const marginPercent = invoiceUnit > 0 ? ((netUnit - fobUnit) / invoiceUnit) * 100 : 0;
 
         totals.totalQty += qty;
         totals.totalWeight += (parseFloat(item.weight) || 0) * qty;
@@ -87,7 +93,7 @@ function calculateOrderTotals(items, conditions) {
         return { item, qty, fobUnit, negotiatedUnit, netUnit, invoiceUnit, marginPercent, subtotal: invoiceUnit * qty };
     });
 
-    const margin = totals.totalNet > 0 ? ((totals.totalNet - totals.totalFob) / totals.totalNet) * 100 : 0;
+    const margin = totals.totalInvoice > 0 ? ((totals.totalNet - totals.totalFob) / totals.totalInvoice) * 100 : 0;
     return {
         ...totals,
         conditions: c,
@@ -343,6 +349,7 @@ async function apiRequest(action, { method = 'GET', body = null, retryOnCsrf = t
     if (!response.ok || !data || data.success === false) {
         const error = new Error((data && data.message) || `Erro ${response.status} ao comunicar com o servidor.`);
         error.status = response.status;
+        error.code = (data && data.code) || null;
         throw error;
     }
     if (data.csrfToken) apiCsrfToken = data.csrfToken;
@@ -432,6 +439,11 @@ const authManager = {
         return [ROLES.GESTOR, ROLES.ADMIN].includes(this.getCurrentUserRole());
     },
 
+    // Gestor edits the price table; admin can import it and look, read-only.
+    canViewPricingAdmin() {
+        return [ROLES.GESTOR, ROLES.ADMIN].includes(this.getCurrentUserRole());
+    },
+
     mustChangePassword() {
         return Boolean(this.profile && this.profile.mustChangePassword);
     },
@@ -442,6 +454,8 @@ const authManager = {
         const currentUserName = document.getElementById('currentUserName');
         const supervisorBtn = document.getElementById('supervisorBtn');
         const usersBtn = document.getElementById('usersBtn');
+        const pricingTabBtn = document.getElementById('btn-tab-pricing');
+        if (pricingTabBtn) pricingTabBtn.style.display = this.currentUser && this.canViewPricingAdmin() ? '' : 'none';
 
         if (!loginBtn || !currentUserDiv || !currentUserName || !supervisorBtn) return;
 
@@ -686,9 +700,14 @@ function buildCurrentOrderInput(extraConditions = {}) {
             negotiatedPrice: item.negotiatedPrice,
             unitDiscount: item.unitDiscount,
             weight: item.weight,
-            qty: item.qty
+            qty: item.qty,
+            uf: item.uf || '',
+            cityType: item.cityType || '',
+            weightTier: item.weightTier || ''
         })),
-        conditions: { ...getCurrentOrderConditions(), ...extraConditions }
+        conditions: { ...getCurrentOrderConditions(), ...extraConditions },
+        // The server refuses a submit priced on an older table version (see reviewCartPrices).
+        pricingVersion: pricingCatalog.version
     };
 }
 
@@ -719,9 +738,18 @@ async function init() {
         return;
     }
 
-    // api/data.php only delivers the price tables to a logged-in session, so a session
-    // created after the page loaded needs one reload. The flag prevents a reload loop.
-    if (window.PORTAL_DATA_LOCKED !== false || typeof PRODUTOS_CSV === 'undefined') {
+    // Once the table is imported, prices come from the database; before that, from data.js.
+    let serverCatalog = null;
+    try {
+        serverCatalog = await fetchPricingCatalog();
+    } catch (e) {
+        console.warn('Tabela de preços do servidor indisponível; usando data.js.', e);
+    }
+
+    // api/data.php only delivers data.js to a logged-in session, so a session created after the
+    // page loaded needs one reload. The flag prevents a reload loop. Not needed after the import.
+    const needsDataJs = !(serverCatalog && serverCatalog.imported);
+    if (needsDataJs && (window.PORTAL_DATA_LOCKED !== false || typeof PRODUTOS_CSV === 'undefined')) {
         if (!sessionStorage.getItem('hr_data_reload')) {
             sessionStorage.setItem('hr_data_reload', '1');
             location.reload();
@@ -732,120 +760,7 @@ async function init() {
         return;
     }
     sessionStorage.removeItem('hr_data_reload');
-
-    // 1. Parse Products
-    const prodRows = parseCSV(PRODUTOS_CSV);
-    prodRows.forEach((row, index) => {
-        if (index === 0) return; // Skip headers
-        if (row.length < 10) return;
-        
-        const codigo = row[4]?.trim() || "";
-        const descricao = row[5]?.trim() || "";
-
-        // Filter out header-like rows from the CSV
-        if (!codigo || !descricao ||
-            codigo.toLowerCase().includes("cd") || 
-            codigo.toLowerCase().includes("cod") ||
-            descricao.toLowerCase().includes("descrio") ||
-            descricao.toLowerCase().includes("descricao") ||
-            descricao.toLowerCase() === "produto") {
-            return;
-        }
-
-        const rawWeight = parseFloat(row[18]?.replace(',', '.')) || 0;
-        
-        // Skip zeroed products
-        if (rawWeight === 0) return;
-
-        productsData.push({
-            categoria: row[0],
-            subcat: row[1],
-            codigo: codigo,
-            descricao: descricao,
-            peso: rawWeight,
-            weightRaw: rawWeight, // Guardando valor bruto para cálculos
-            ncm: row[20],
-            originalRow: row
-        });
-    });
-
-    // 2. Parse Costs (Blendas)
-    const costRows = parseCSV(BLENDAS_CSV);
-    costRows.forEach(row => {
-        if (row.length < 13) return;
-        const category = row[1]?.toLowerCase().trim();
-        
-        // Colunas: C(2)=Custo Prod, D(3)=Desp Com, E(4)=Desp Adm, M(12)=100% NF
-        const custoBase = parseFloat(row[2]?.replace(',', '.')) || 0;
-        const despCom = parseFloat(row[3]?.replace(',', '.')) || 0;
-        const despAdm = parseFloat(row[4]?.replace(',', '.')) || 0;
-        let price100 = parseFloat(row[12]?.replace(',', '.')) || parseFloat(row[12]?.replace('R$', '').replace('.', '').replace(',', '.')) || 0;
-        
-        if (category && price100 > 0) {
-            price100 += 0.02; // Ajuste solicitado de R$ 0,02 no valor base
-            
-            const totalCostsWithoutFreight = custoBase + despCom + despAdm;
-            const divisor = totalCostsWithoutFreight / price100;
-
-            if (!costsData[category] || price100 > costsData[category].price100) {
-                costsData[category] = {
-                    price100: price100,
-                    custoBase: custoBase,
-                    despCom: despCom,
-                    despAdm: despAdm,
-                    divisor: divisor
-                };
-            }
-        }
-    });
-
-    // 3. Parse Freight
-    const freightRows = parseCSV(FRETE_CSV);
-    let currentUF = '';
-    let ufEntryCount = 0; // Para identificar a primeira entrada de cada UF
-
-    freightRows.forEach(row => {
-        if (row[0]?.includes('UF')) return;
-        if (row[0]?.length === 2) {
-            if (currentUF !== row[0]) {
-                currentUF = row[0];
-                ufEntryCount = 0; // Reset para novo UF
-            }
-            
-            if (!freightData[currentUF]) freightData[currentUF] = {};
-            
-            const city = (row[1] || '').toLowerCase();
-            const isInterior = city.includes('interior');
-            const isFluvial = city.includes('fluvial');
-            
-            // Lógica: Se for a primeira entrada do UF E não for interior/fluvial, tratamos como CAPITAL
-            // Ou se o nome contiver explicitamente a capital
-            let type = 'Interior';
-            if (isFluvial) {
-                type = 'Fluvial';
-            } else if (isInterior) {
-                type = 'Interior';
-            } else if (ufEntryCount === 0 || city.includes('capital') || city.includes('metropolitana')) {
-                type = 'Capital';
-            }
-            
-            freightData[currentUF][type] = {
-                tier1: parseFloat(row[2]?.replace(',', '.')) || 0,
-                tier2: parseFloat(row[3]?.replace(',', '.')) || 0
-            };
-
-            ufEntryCount++;
-        }
-    });
-
-    // Populate UF select
-    const stateSelect = document.getElementById('stateSelect');
-    Object.keys(freightData).sort().forEach(uf => {
-        const opt = document.createElement('option');
-        opt.value = uf;
-        opt.textContent = uf;
-        stateSelect.appendChild(opt);
-    });
+    useCatalog(serverCatalog);
 
     // Event Listeners
     document.getElementById('productSearch').addEventListener('input', updateResults);
@@ -868,6 +783,304 @@ async function init() {
     closeLoginModal();
     authManager.updateUI();
     updateTrashBadge();
+}
+
+// ========== TABELA DE PREÇOS (catálogo) ==========
+
+function parseDecimal(value) {
+    return parseFloat(String(value ?? '').replace(',', '.')) || 0;
+}
+
+// Reads data.js exactly as the portal always did and returns it in the same shape as the
+// server's pricing.get, so the rest of the code never needs to know where prices came from.
+function buildLegacyCatalog() {
+    const products = [];
+    parseCSV(PRODUTOS_CSV).forEach((row, index) => {
+        if (index === 0 || row.length < 10) return;
+        const codigo = row[4]?.trim() || '';
+        const descricao = row[5]?.trim() || '';
+        // Filter out header-like rows from the CSV
+        if (!codigo || !descricao ||
+            codigo.toLowerCase().includes('cd') ||
+            codigo.toLowerCase().includes('cod') ||
+            descricao.toLowerCase().includes('descrio') ||
+            descricao.toLowerCase().includes('descricao') ||
+            descricao.toLowerCase() === 'produto') {
+            return;
+        }
+        const weight = parseDecimal(row[18]);
+        if (weight === 0) return; // Skip zeroed products
+        const product = { codigo, descricao, categoria: row[0] || '', subcat: row[1] || '', weight, ncm: row[20] || '', active: true };
+        product.costLineKey = getCategoryMatch(product);
+        products.push(product);
+    });
+
+    // Colunas: B(1)=Linha, C(2)=Custo Prod, D(3)=Desp Com, E(4)=Desp Adm, M(12)=100% NF.
+    // A line may appear twice in the spreadsheet; the row with the highest 100% NF wins.
+    const costLines = {};
+    parseCSV(BLENDAS_CSV).forEach(row => {
+        if (row.length < 13) return;
+        const name = row[1]?.trim() || '';
+        const key = name.toLowerCase();
+        let price100 = parseFloat(row[12]?.replace(',', '.')) || parseFloat(row[12]?.replace('R$', '').replace('.', '').replace(',', '.')) || 0;
+        const costs = parseDecimal(row[2]) + parseDecimal(row[3]) + parseDecimal(row[4]);
+        // costs > 0 skips the header row, whose "100% NF" label would otherwise parse as 100.
+        if (!key || price100 <= 0 || costs <= 0) return;
+        price100 += 0.02; // Ajuste solicitado de R$ 0,02 no valor base (na importação passa a fazer parte do preço gravado)
+        if (!costLines[key] || price100 > costLines[key].price100) {
+            costLines[key] = {
+                key,
+                name,
+                custoBase: parseDecimal(row[2]),
+                despCom: parseDecimal(row[3]),
+                despAdm: parseDecimal(row[4]),
+                price100: Math.round(price100 * 10000) / 10000
+            };
+        }
+    });
+
+    // The first row of each UF is its capital; "interior"/"fluvial" rows are named. Any other
+    // named city is treated as Interior and replaces it — reported in `warnings` for the gestor.
+    const freight = {};
+    const warnings = [];
+    let currentUF = '';
+    let ufEntryCount = 0;
+    parseCSV(FRETE_CSV).forEach(row => {
+        if (row[0]?.includes('UF') || row[0]?.length !== 2) return;
+        if (currentUF !== row[0]) {
+            currentUF = row[0];
+            ufEntryCount = 0;
+        }
+        const label = row[1] || '';
+        const city = label.toLowerCase();
+        let type = 'Interior';
+        if (city.includes('fluvial')) {
+            type = 'Fluvial';
+        } else if (city.includes('interior')) {
+            type = 'Interior';
+        } else if (ufEntryCount === 0 || city.includes('capital') || city.includes('metropolitana')) {
+            type = 'Capital';
+        }
+        const key = `${currentUF}/${type}`;
+        if (freight[key]) {
+            warnings.push(`${currentUF} · ${type}: a planilha tem duas linhas ("${freight[key].label}" e "${label}") e o portal usa a última, ${label} (R$ ${row[2]} / R$ ${row[3]} por kg). Confira na aba Frete depois de importar.`);
+        }
+        freight[key] = { uf: currentUF, pracaType: type, label, tier1: parseDecimal(row[2]), tier2: parseDecimal(row[3]) };
+        ufEntryCount++;
+    });
+
+    return { costLines: Object.values(costLines), freight: Object.values(freight), products, warnings };
+}
+
+function getLegacyCatalog() {
+    if (!legacyCatalog && typeof PRODUTOS_CSV !== 'undefined' && typeof BLENDAS_CSV !== 'undefined' && typeof FRETE_CSV !== 'undefined') {
+        legacyCatalog = buildLegacyCatalog();
+    }
+    return legacyCatalog;
+}
+
+async function fetchPricingCatalog() {
+    const data = await apiRequest('pricing.get');
+    return data.catalog;
+}
+
+// Rebuilds the in-memory lookups the screens use (productsData, costsData, freightData).
+function applyCatalog(catalog) {
+    pricingCatalog = catalog;
+    productsData.length = 0;
+    Object.keys(costsData).forEach(key => delete costsData[key]);
+    Object.keys(freightData).forEach(uf => delete freightData[uf]);
+
+    catalog.costLines.forEach(line => {
+        const costs = line.custoBase + line.despCom + line.despAdm;
+        costsData[line.key] = { ...line, costs, divisor: line.price100 > 0 ? costs / line.price100 : 0 };
+    });
+    catalog.freight.forEach(row => {
+        if (!freightData[row.uf]) freightData[row.uf] = {};
+        freightData[row.uf][row.pracaType] = { tier1: row.tier1, tier2: row.tier2, label: row.label };
+    });
+    catalog.products.forEach(p => {
+        productsData.push({
+            codigo: p.codigo,
+            descricao: p.descricao,
+            categoria: p.categoria,
+            subcat: p.subcat,
+            ncm: p.ncm,
+            peso: p.weight,
+            weightRaw: p.weight,
+            costLineKey: p.costLineKey,
+            active: p.active !== false
+        });
+    });
+    populateStateSelect();
+}
+
+function useCatalog(serverCatalog) {
+    if (serverCatalog && serverCatalog.imported) {
+        applyCatalog({ ...serverCatalog, source: 'server', warnings: [] });
+        return;
+    }
+    const legacy = getLegacyCatalog() || { costLines: [], freight: [], products: [], warnings: [] };
+    applyCatalog({ ...legacy, source: 'legacy', imported: false, version: 0, canEdit: Boolean(serverCatalog && serverCatalog.canEdit) });
+}
+
+function populateStateSelect() {
+    const select = document.getElementById('stateSelect');
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = '<option value="">Selecione um Estado</option>' + Object.keys(freightData).sort()
+        .map(uf => `<option value="${escapeHtml(uf)}">${escapeHtml(uf)}</option>`).join('');
+    if (current && freightData[current]) select.value = current;
+}
+
+function getCurrentRegionFilters() {
+    return {
+        uf: document.getElementById('stateSelect')?.value || '',
+        cityType: document.getElementById('cityType')?.value || '',
+        weightTier: document.getElementById('weightTier')?.value || ''
+    };
+}
+
+// FOB = preço 100% NF × peso. CIF = (custos + frete da região) ÷ (custos ÷ preço 100% NF) × peso,
+// i.e. the freight is added to the cost and gets the same markup. Same formulas as
+// server_item_prices() in api/lib/catalog.php, which recalculates them when an order is saved.
+function computeItemPrices(product, { uf, cityType, weightTier } = {}) {
+    const line = costsData[product.costLineKey];
+    if (!line) return { fob: 0, cif: 0, rate: 0 };
+    const fob = line.price100 * product.weightRaw;
+    const fData = freightData[uf] ? freightData[uf][cityType] : null;
+    const rate = fData ? (fData[weightTier] || 0) : 0;
+    const cif = line.divisor > 0 ? (line.costs + rate) / line.divisor * product.weightRaw : 0;
+    return { fob, cif, rate };
+}
+
+// Refreshes whatever shows prices after the table changed.
+function afterCatalogChanged() {
+    if (document.getElementById('stateSelect')?.value) updateResults();
+    if (document.getElementById('tab-pricing')?.classList.contains('active')) renderPricingTab();
+}
+
+// Swaps the table in use; if its version changed, the order being built is reviewed.
+async function applyServerCatalog(serverCatalog, reason) {
+    const before = `${pricingCatalog.source}:${pricingCatalog.version}`;
+    useCatalog(serverCatalog);
+    afterCatalogChanged();
+    if (`${pricingCatalog.source}:${pricingCatalog.version}` !== before) {
+        await reviewCartPrices(reason);
+    }
+}
+
+async function refreshPricingCatalog(reason = 'A tabela de preços foi atualizada pelo gestor.') {
+    await applyServerCatalog(await fetchPricingCatalog(), reason);
+}
+
+// ----- "Avisar e atualizar": revisão de preços do pedido aberto -----
+
+// Compares each cart item with the table in use. Items without a region (older drafts) only get
+// their FOB updated, since their CIF depends on a region the portal didn't record.
+function planCartRepricing(items) {
+    const changes = [];
+    const missing = [];
+    items.forEach(item => {
+        const product = productsData.find(p => p.codigo === item.codigo);
+        if (!product || !product.active) {
+            missing.push(item);
+            return;
+        }
+        const prices = computeItemPrices(product, item);
+        const newCif = item.uf ? prices.cif : item.cif;
+        const changed = Math.abs(prices.fob - item.fob) >= 0.005 || Math.abs(newCif - item.cif) >= 0.005;
+        changes.push({ item, newFob: prices.fob, newCif, newWeight: product.weightRaw, changed });
+    });
+    return { changes, missing, hasDifferences: missing.length > 0 || changes.some(c => c.changed) };
+}
+
+// 'keep'  = the negotiated price stays; the discount against the new table is recalculated.
+// 'table' = the same R$ discount as before is applied on top of the new table price.
+function applyCartRepricing(plan, choice) {
+    plan.changes.forEach(({ item, newFob, newCif, newWeight }) => {
+        const previousDiscount = item.unitDiscount || 0;
+        item.fob = newFob;
+        item.cif = newCif;
+        item.weight = newWeight;
+        if (choice === 'table') {
+            item.negotiatedPrice = Math.max(newCif - previousDiscount, 0);
+        }
+        item.unitDiscount = Math.max(newCif - item.negotiatedPrice, 0);
+    });
+    plan.missing.forEach(item => {
+        const idx = cart.indexOf(item);
+        if (idx >= 0) cart.splice(idx, 1);
+    });
+}
+
+function previewRepricingMargin(plan, choice) {
+    const clones = plan.changes.map(c => ({ ...c.item }));
+    applyCartRepricing({ changes: plan.changes.map((c, i) => ({ ...c, item: clones[i] })), missing: [] }, choice);
+    return calculateOrderTotals(clones, getCurrentOrderConditions()).margin;
+}
+
+async function reviewCartPrices(reason) {
+    if (!cart.length) return 'none';
+    const plan = planCartRepricing(cart);
+    if (!plan.hasDifferences) {
+        applyCartRepricing(plan, 'keep'); // only aligns sub-cent differences and weights
+        updateOrderTable();
+        return 'none';
+    }
+    const choice = await showRepriceModal(reason, plan);
+    applyCartRepricing(plan, choice);
+    updateOrderTable();
+    return choice;
+}
+
+let repriceModalResolver = null;
+
+function showRepriceModal(reason, plan) {
+    const modal = document.getElementById('repriceModal');
+    const body = document.getElementById('repriceModalBody');
+    if (!modal || !body) {
+        return Promise.resolve(confirm(`${reason}\n\nOK = usar os novos preços de tabela\nCancelar = manter os preços negociados`) ? 'table' : 'keep');
+    }
+    const money = value => `<span class="nowrap">R$ ${formatBRL(value)}</span>`;
+    const arrow = (before, after) => Math.abs(before - after) < 0.005
+        ? money(after)
+        : `<span class="reprice-old">${money(before)}</span> → <strong>${money(after)}</strong>`;
+    const rows = plan.changes.filter(c => c.changed).map(({ item, newFob, newCif }) => `
+        <tr>
+            <td><strong>${escapeHtml(item.codigo)}</strong><div class="reprice-desc">${escapeHtml(item.descricao || '')}</div></td>
+            <td>${arrow(item.fob, newFob)}</td>
+            <td>${arrow(item.cif, newCif)}</td>
+            <td>${money(item.negotiatedPrice)}</td>
+            <td>${money(Math.max(newCif - (item.unitDiscount || 0), 0))}</td>
+        </tr>`).join('');
+    const missing = plan.missing.length
+        ? `<div class="pricing-warning"><strong>Saíram da tabela e serão retirados do pedido:</strong> ${plan.missing.map(i => escapeHtml(`${i.codigo} (${i.descricao || ''})`)).join(', ')}</div>`
+        : '';
+
+    document.getElementById('repriceReason').textContent = reason;
+    document.getElementById('repriceKeepMargin').textContent = `${previewRepricingMargin(plan, 'keep').toFixed(2)}%`;
+    document.getElementById('repriceTableMargin').textContent = `${previewRepricingMargin(plan, 'table').toFixed(2)}%`;
+    body.innerHTML = `
+        ${rows ? `<div class="results-table-container"><table class="pricing-table">
+            <thead><tr><th>Produto</th><th>FOB</th><th>CIF de tabela</th><th>Seu preço hoje</th><th>Com a nova tabela</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>` : ''}
+        ${missing}`;
+    modal.style.display = 'flex';
+    return new Promise(resolve => { repriceModalResolver = resolve; });
+}
+
+function resolveRepriceModal(choice) {
+    const modal = document.getElementById('repriceModal');
+    if (modal) modal.style.display = 'none';
+    const resolve = repriceModalResolver;
+    repriceModalResolver = null;
+    if (resolve) resolve(choice);
+}
+
+function formatBRL(value, decimals = 2) {
+    return Number(value || 0).toLocaleString('pt-BR', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
 function getCategoryMatch(product) {
@@ -955,8 +1168,9 @@ function updateResults() {
     });
 
     const filtered = productsData.filter(p => {
+        if (!p.active) return false; // inactive products only show up in the gestor's price tab
         if (keywords.length === 0) return true; // MOSTRAR TODOS se a busca estiver vazia
-        
+
         const fullText = `${p.descricao} ${p.codigo} ${p.categoria} ${p.subcat}`.toLowerCase();
         return keywords.every(key => fullText.includes(key));
     }); // Limite removido para mostrar todos os itens
@@ -980,38 +1194,20 @@ function updateResults() {
             <tbody>
     `;
 
-    filtered.forEach((p, idx) => {
-        const catKey = getCategoryMatch(p);
-        const costInfo = costsData[catKey] || { price100: 0, divisor: 0.625 };
-        
-        const basePricePerKg = costInfo.price100;
-        const fobPrice = basePricePerKg * p.weightRaw;
-        
-        const fData = freightData[uf] ? freightData[uf][cityType] : null;
-        const rate = fData ? fData[weightTier] : 0;
-        
-        // CÁLCULO CIF DE ALTA PRECISÃO (Summing freight to base cost first)
-        const divisor = costInfo.divisor || 0.625;
-        const totalCostPerKg = costInfo.custoBase + costInfo.despCom + costInfo.despAdm + rate;
-        const cifPricePerKg = totalCostPerKg / divisor;
-        const cifPrice = cifPricePerKg * p.weightRaw;
-
-        const freightCost = rate * p.weightRaw;
-        
-        // Formatando para exibir na tela (o toFixed(2) já arredonda 93.778 para 93.78)
-        const cifDisplay = cifPrice.toFixed(2);
+    filtered.forEach(p => {
+        const { fob: fobPrice, cif: cifPrice } = computeItemPrices(p, { uf, cityType, weightTier });
 
                html += `
             <tr>
                 <td>
-                    <div style="font-weight:600">${p.codigo}</div>
-                    <div style="font-size:0.85rem; color:#6b7280">${p.descricao}</div>
+                    <div style="font-weight:600">${escapeHtml(p.codigo)}</div>
+                    <div style="font-size:0.85rem; color:#6b7280">${escapeHtml(p.descricao)}</div>
                 </td>
                 <td>${p.peso.toFixed(3)}</td>
                 <td class="price-tag price-fob">R$&nbsp;${fobPrice.toFixed(2)}</td>
-                <td class="price-tag price-cif">R$&nbsp;${cifDisplay}</td>
+                <td class="price-tag price-cif">R$&nbsp;${cifPrice.toFixed(2)}</td>
                 <td class="col-action">
-                    <button onclick="addToCart('${p.codigo}', ${fobPrice}, ${cifPrice}, ${p.weightRaw})">
+                    <button onclick="addToCart(this.dataset.codigo)" data-codigo="${escapeHtml(p.codigo)}">
                         ➕ Adicionar
                     </button>
                 </td>
@@ -1024,7 +1220,9 @@ function updateResults() {
     container.innerHTML = html;
 }
 
-function addToCart(codigo, fob, cif, weight) {
+// Prices are calculated here from the table in use and the region selected in the filters;
+// the region is stored with the item so the CIF can be recalculated if the table changes.
+function addToCart(codigo) {
     const p = productsData.find(item => item.codigo === codigo);
     if (!p) return;
 
@@ -1035,6 +1233,8 @@ function addToCart(codigo, fob, cif, weight) {
     if (existing) {
         existing.qty++;
     } else {
+        const region = getCurrentRegionFilters();
+        const { fob, cif } = computeItemPrices(p, region);
         cart.push({
             codigo: p.codigo,
             descricao: p.descricao,
@@ -1042,8 +1242,11 @@ function addToCart(codigo, fob, cif, weight) {
             cif: cif, // Preço CIF original (referência)
             negotiatedPrice: cif,
             unitDiscount: 0,
-            weight: weight,
-            qty: 1
+            weight: p.weightRaw,
+            qty: 1,
+            uf: region.uf,
+            cityType: region.cityType,
+            weightTier: region.weightTier
         });
     }
     updateOrderTable();
@@ -2131,8 +2334,8 @@ function populateSubmitOrderDraftSelection() {
     }
 }
 
-function prepareDraftForSubmission(submissionId) {
-    loadDraftToCurrentOrder(submissionId, true);
+async function prepareDraftForSubmission(submissionId) {
+    await loadDraftToCurrentOrder(submissionId, true);
     const select = document.getElementById('submitDraftSelect');
     if (select) {
         select.value = submissionId;
@@ -2242,6 +2445,24 @@ async function submitOrder() {
         switchTab('tab-history');
         setTimeout(() => highlightHistoryCard(order.id), 250);
     } catch (e) {
+        // The gestor changed the table while this order was being built: reload it, show what
+        // changed, then reopen this modal with the new totals so the representative sends again.
+        if (e.code === 'pricing_outdated') {
+            closeSubmitOrderModal();
+            try {
+                await refreshPricingCatalog('A tabela de preços foi atualizada pelo gestor enquanto você montava este pedido.');
+            } catch (refreshError) {
+                alert(refreshError.message);
+                return;
+            }
+            showSubmitOrderModal();
+            const refreshedMsg = document.getElementById('submitOrderMessage');
+            if (refreshedMsg) {
+                refreshedMsg.textContent = 'Os preços foram revisados com a tabela nova. Confira a margem e clique em "Enviar Pedido" novamente.';
+                refreshedMsg.style.color = '#b45309';
+            }
+            return;
+        }
         if (msg) {
             msg.textContent = e.message;
             msg.style.color = '#b91c1c';
@@ -2297,7 +2518,7 @@ async function saveDraftCurrentOrder() {
     }
 }
 
-function loadDraftToCurrentOrder(submissionId, silent = false) {
+async function loadDraftToCurrentOrder(submissionId, silent = false) {
     const submission = orderSubmissionManager.getById(submissionId);
     if (!submission) {
         alert('Rascunho não encontrado.');
@@ -2319,12 +2540,13 @@ function loadDraftToCurrentOrder(submissionId, silent = false) {
     updateHeaderInfo();
     renderDraftsPanel();
     closeOrderHistoryModal();
-    if (!silent) {
+    const repriced = await reviewCartPrices('A tabela de preços mudou desde que este rascunho foi salvo.');
+    if (!silent && repriced === 'none') {
         alert('Rascunho carregado. Edite o pedido ou envie quando estiver pronto.');
     }
 }
 
-function repeatOrder(submissionId) {
+async function repeatOrder(submissionId) {
     const submission = orderSubmissionManager.getById(submissionId);
     if (!submission) {
         alert('Pedido não encontrado.');
@@ -2345,7 +2567,10 @@ function repeatOrder(submissionId) {
     renderDraftsPanel();
     closeOrderHistoryModal();
     switchTab('tab-order');
-    alert('Pedido repetido como novo pedido. Ajuste os dados se necessário e envie novamente.');
+    const repriced = await reviewCartPrices('A tabela de preços mudou desde este pedido.');
+    if (repriced === 'none') {
+        alert('Pedido repetido como novo pedido. Ajuste os dados se necessário e envie novamente.');
+    }
 }
 
 function showOrderHistoryModal() {
@@ -2373,11 +2598,13 @@ function afterOrdersChanged() {
     updateSupervisorPanel();
 }
 
-// Other users change orders too (e.g. the gestor approving), so the list can be refreshed on demand.
+// Other users change orders and prices too (e.g. the gestor approving or adjusting the table),
+// so both can be refreshed on demand.
 async function reloadOrders() {
     try {
         await loadServerData();
         afterOrdersChanged();
+        await refreshPricingCatalog();
     } catch (e) {
         alert(e.message);
     }
@@ -3213,6 +3440,9 @@ function switchTab(tabId) {
         }
         renderHistoryTab();
     }
+    if (tabId === 'tab-pricing') {
+        renderPricingTab();
+    }
 }
 
 function renderHistoryTab() {
@@ -3571,5 +3801,623 @@ async function submitBilling(submissionId) {
         alert('Faturamento registrado com sucesso!');
     } catch (e) {
         alert(e.message);
+    }
+}
+
+// ==========================================
+// ABA "TABELA DE PREÇOS" (gestor edita; administrador importa e consulta)
+// Every save goes to the server, which validates, records "de → para" in the price history and
+// bumps the table version; the screen then reloads the table returned by the server.
+// ==========================================
+
+const PRICING_FIELD_LABELS = Object.freeze({
+    name: 'Nome',
+    custo_base: 'Custo produto (R$/kg)',
+    desp_com: 'Desp. comercial (R$/kg)',
+    desp_adm: 'Desp. administrativa (R$/kg)',
+    price100: 'Preço 100% NF (R$/kg)',
+    label: 'Descrição da praça',
+    tier1: 'Frete 150–199 kg (R$/kg)',
+    tier2: 'Frete acima de 200 kg (R$/kg)',
+    descricao: 'Descrição',
+    categoria: 'Categoria',
+    subcat: 'Subcategoria',
+    cost_line_key: 'Linha de produto',
+    weight: 'Peso (kg)',
+    ncm: 'NCM',
+    active: 'Ativo',
+    import: 'Importação',
+    removido: 'Praça removida'
+});
+const PRICING_MONEY_FIELDS = ['custo_base', 'desp_com', 'desp_adm', 'price100', 'tier1', 'tier2'];
+const PRACA_OPTIONS = ['Capital', 'Interior', 'Fluvial'];
+
+let pricingTabSection = 'lines';
+let pricingProductFilter = '';
+let pricingShowInactive = false;
+let pricingBulkPreview = null;
+
+function pricingCanEdit() {
+    return pricingCatalog.source === 'server' && Boolean(pricingCatalog.canEdit);
+}
+
+function setPricingMessage(text, type = 'info') {
+    const el = document.getElementById('pricingMessage');
+    if (!el) return;
+    el.textContent = text || '';
+    el.className = `pricing-message${text ? ` is-${type}` : ''}`;
+}
+
+function renderPricingTab() {
+    const container = document.getElementById('pricingTabContent');
+    if (!container) return;
+    if (!authManager.canViewPricingAdmin()) {
+        container.innerHTML = '';
+        return;
+    }
+    if (!pricingCatalog.imported) {
+        container.innerHTML = renderPricingImportPanel();
+        return;
+    }
+
+    const sections = [
+        ['lines', '🏷️ Linhas de produto'],
+        ['freight', '🚚 Frete'],
+        ['products', '📦 Produtos'],
+        ['bulk', '📈 Reajuste em lote'],
+        ['history', '🕘 Histórico']
+    ];
+    container.innerHTML = `
+        <div class="pricing-toolbar">
+            <div class="pricing-sections" role="tablist">
+                ${sections.map(([id, label]) => `<button type="button" role="tab" class="pricing-section-btn${id === pricingTabSection ? ' active' : ''}" onclick="switchPricingSection('${id}')">${label}</button>`).join('')}
+            </div>
+            <div class="pricing-meta">Versão da tabela: <strong>${pricingCatalog.version}</strong>${pricingCanEdit() ? '' : ' · <span class="pricing-readonly">somente leitura (a edição é do gestor)</span>'}</div>
+        </div>
+        <div id="pricingMessage" class="pricing-message"></div>
+        <div id="pricingSectionBody"></div>`;
+
+    const renderers = {
+        lines: renderPricingLines,
+        freight: renderPricingFreight,
+        products: renderPricingProducts,
+        bulk: renderPricingBulk,
+        history: renderPricingHistory
+    };
+    (renderers[pricingTabSection] || renderPricingLines)(document.getElementById('pricingSectionBody'));
+}
+
+function switchPricingSection(section) {
+    pricingTabSection = section;
+    pricingBulkPreview = null;
+    renderPricingTab();
+}
+
+function pricingSaveBar(onSave) {
+    return `
+        <div class="pricing-savebar">
+            <input id="pricingNote" class="pricing-input pricing-input--text" maxlength="300" placeholder="Motivo da alteração (opcional, fica no histórico)">
+            <button type="button" class="btn-modal btn-modal-ghost" onclick="renderPricingTab()">Descartar</button>
+            <button type="button" id="pricingSaveBtn" class="btn-modal btn-modal-primary" onclick="${onSave}" disabled>Salvar alterações</button>
+        </div>`;
+}
+
+// Value for a number input: always shows cents ("29.20"), keeps extra decimals if a value has them.
+function priceInputValue(value) {
+    const number = Number(value) || 0;
+    return Math.abs(number * 100 - Math.round(number * 100)) < 1e-9 ? number.toFixed(2) : String(number);
+}
+
+function getPricingNote() {
+    return document.getElementById('pricingNote')?.value.trim() || '';
+}
+
+function readPricingNumber(scope, field) {
+    const el = scope.querySelector(`[data-field="${field}"]`);
+    return el ? parseFloat(el.value) || 0 : 0;
+}
+
+function markPricingDirty(row) {
+    row.classList.add('is-dirty');
+    const btn = document.getElementById('pricingSaveBtn');
+    if (btn) btn.disabled = false;
+}
+
+// Sends one change, then swaps in the table the server returns (the open cart gets reviewed).
+async function sendPricingChange(action, body) {
+    try {
+        const data = await apiRequest(action, { method: 'POST', body });
+        await applyServerCatalog(data.catalog, 'Você alterou a tabela de preços. Confira o pedido que está montando.');
+        renderPricingTab();
+        const count = data.changed ?? (data.changes ? data.changes.length : 0);
+        setPricingMessage(
+            count ? `Alterações salvas (${count}). Já valem para todos. Versão da tabela: ${pricingCatalog.version}.` : 'Nada mudou: os valores já eram esses.',
+            count ? 'success' : 'info'
+        );
+        return data;
+    } catch (e) {
+        setPricingMessage(e.message, 'error');
+        return null;
+    }
+}
+
+// ----- Importação (uma única vez) -----
+
+function renderPricingImportPanel() {
+    const legacy = getLegacyCatalog();
+    if (!legacy) {
+        return '<div class="empty-state">A tabela ainda não foi importada e o arquivo data.js não está disponível no servidor.</div>';
+    }
+    const warnings = legacy.warnings.length
+        ? `<div class="pricing-warning"><strong>Conferir depois da importação:</strong><ul>${legacy.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul></div>`
+        : '';
+    return `
+        <div class="pricing-import">
+            <h3>Importar a tabela atual para o sistema</h3>
+            <p>Hoje os preços vêm do arquivo <code>data.js</code>. A importação copia para o banco exatamente os valores que o portal usa agora, então nenhum preço muda. A partir daí o gestor edita tudo por esta aba, e cada alteração vale na hora para todos os representantes.</p>
+            <ul class="pricing-import-counts">
+                <li><strong>${legacy.costLines.length}</strong> linhas de produto</li>
+                <li><strong>${legacy.freight.length}</strong> praças de frete</li>
+                <li><strong>${legacy.products.length}</strong> produtos</li>
+            </ul>
+            <p class="pricing-hint">O preço 100% NF de cada linha já entra com o ajuste de R$ 0,02 que hoje é somado no código.</p>
+            ${warnings}
+            <button type="button" class="btn-modal btn-modal-primary" onclick="importPricingCatalog()">⬆️ Importar tabela atual</button>
+            <div id="pricingMessage" class="pricing-message"></div>
+        </div>`;
+}
+
+async function importPricingCatalog() {
+    const legacy = getLegacyCatalog();
+    if (!legacy) return;
+    if (!confirm('Importar a tabela atual para o sistema? Isso é feito uma única vez; depois as alterações passam a ser feitas nesta aba.')) return;
+    try {
+        const data = await apiRequest('pricing.import', {
+            method: 'POST',
+            body: { costLines: legacy.costLines, freight: legacy.freight, products: legacy.products }
+        });
+        await applyServerCatalog(data.catalog, 'A tabela de preços passou a vir do sistema. Confira o pedido que está montando.');
+        renderPricingTab();
+        setPricingMessage(`Tabela importada: ${data.imported.costLines} linhas de produto, ${data.imported.freight} praças de frete e ${data.imported.products} produtos.`, 'success');
+    } catch (e) {
+        setPricingMessage(e.message, 'error');
+    }
+}
+
+// ----- Linhas de produto -----
+
+function formatMarkup(line) {
+    const costs = line.custoBase + line.despCom + line.despAdm;
+    if (costs <= 0) return '—';
+    const pct = (line.price100 / costs - 1) * 100;
+    return `${pct >= 0 ? '+' : ''}${formatBRL(pct, 1)}%`;
+}
+
+function renderPricingLines(body) {
+    const editable = pricingCanEdit();
+    const dis = editable ? '' : 'disabled';
+    const money = (field, value, extra = '') => `<input type="number" step="0.01" min="0" class="pricing-input${extra}" data-field="${field}" value="${priceInputValue(value)}" ${dis} oninput="onPricingLineInput(this)">`;
+    const rows = pricingCatalog.costLines.map(line => `
+        <tr data-line-key="${escapeHtml(line.key)}">
+            <td><input class="pricing-input pricing-input--text" data-field="name" value="${escapeHtml(line.name)}" maxlength="80" ${dis} oninput="onPricingLineInput(this)"></td>
+            <td>${money('custoBase', line.custoBase)}</td>
+            <td>${money('despCom', line.despCom)}</td>
+            <td>${money('despAdm', line.despAdm)}</td>
+            <td class="pricing-computed" data-computed="costs">${formatBRL(line.custoBase + line.despCom + line.despAdm)}</td>
+            <td>${money('price100', line.price100, ' pricing-input--strong')}</td>
+            <td class="pricing-computed" data-computed="markup">${formatMarkup(line)}</td>
+            <td class="pricing-computed">${productsData.filter(p => p.costLineKey === line.key && p.active).length}</td>
+        </tr>`).join('');
+
+    body.innerHTML = `
+        <p class="pricing-hint">Valores em R$ por kg. <strong>FOB</strong> de um produto = preço 100% NF × peso. <strong>CIF</strong> = (custos + frete da região) com o mesmo markup (preço 100% NF ÷ custos).</p>
+        <div class="results-table-container">
+            <table class="pricing-table">
+                <thead><tr><th>Linha de produto</th><th>Custo produto</th><th>Desp. comercial</th><th>Desp. adm.</th><th>Total custos</th><th>Preço 100% NF</th><th>Markup s/ custos</th><th>Produtos</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+        ${editable ? `
+        <details class="pricing-new">
+            <summary>➕ Nova linha de produto</summary>
+            <div class="pricing-form-grid">
+                <label>Nome<input id="newLineName" class="pricing-input pricing-input--text" maxlength="80"></label>
+                <label>Custo produto<input id="newLineCustoBase" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <label>Desp. comercial<input id="newLineDespCom" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <label>Desp. adm.<input id="newLineDespAdm" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <label>Preço 100% NF<input id="newLinePrice100" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <button type="button" class="btn-modal btn-modal-ghost" onclick="createPricingLine()">Criar linha</button>
+            </div>
+        </details>
+        ${pricingSaveBar('savePricingLines()')}` : ''}`;
+}
+
+function readPricingLineRow(row) {
+    return {
+        key: row.dataset.lineKey,
+        name: row.querySelector('[data-field="name"]').value.trim(),
+        custoBase: readPricingNumber(row, 'custoBase'),
+        despCom: readPricingNumber(row, 'despCom'),
+        despAdm: readPricingNumber(row, 'despAdm'),
+        price100: readPricingNumber(row, 'price100')
+    };
+}
+
+function onPricingLineInput(input) {
+    const row = input.closest('tr');
+    const line = readPricingLineRow(row);
+    row.querySelector('[data-computed="costs"]').textContent = formatBRL(line.custoBase + line.despCom + line.despAdm);
+    row.querySelector('[data-computed="markup"]').textContent = formatMarkup(line);
+    markPricingDirty(row);
+}
+
+async function savePricingLines() {
+    const lines = [...document.querySelectorAll('#pricingSectionBody tr.is-dirty[data-line-key]')].map(readPricingLineRow);
+    if (!lines.length) return;
+    if (!confirm(`Salvar ${lines.length} linha(s) de produto? Os novos preços valem imediatamente para todos os representantes.`)) return;
+    await sendPricingChange('pricing.updateCostLines', { lines, note: getPricingNote() });
+}
+
+async function createPricingLine() {
+    const name = document.getElementById('newLineName')?.value.trim() || '';
+    if (!name) {
+        setPricingMessage('Informe o nome da nova linha de produto.', 'error');
+        return;
+    }
+    const key = name.toLowerCase();
+    if (costsData[key]) {
+        setPricingMessage('Já existe uma linha de produto com esse nome.', 'error');
+        return;
+    }
+    const num = id => parseFloat(document.getElementById(id)?.value) || 0;
+    await sendPricingChange('pricing.updateCostLines', {
+        lines: [{ key, name, custoBase: num('newLineCustoBase'), despCom: num('newLineDespCom'), despAdm: num('newLineDespAdm'), price100: num('newLinePrice100') }],
+        note: 'Nova linha de produto'
+    });
+}
+
+// ----- Frete -----
+
+function renderPricingFreight(body) {
+    const editable = pricingCanEdit();
+    const dis = editable ? '' : 'disabled';
+    const dirty = 'oninput="markPricingDirty(this.closest(\'tr\'))"';
+    const rows = pricingCatalog.freight.map(f => `
+        <tr data-uf="${escapeHtml(f.uf)}" data-praca="${escapeHtml(f.pracaType)}">
+            <td><strong>${escapeHtml(f.uf)}</strong></td>
+            <td>${escapeHtml(f.pracaType)}</td>
+            <td><input class="pricing-input pricing-input--wide" data-field="label" value="${escapeHtml(f.label)}" maxlength="200" ${dis} ${dirty}></td>
+            <td><input type="number" step="0.01" min="0" class="pricing-input" data-field="tier1" value="${priceInputValue(f.tier1)}" ${dis} ${dirty}></td>
+            <td><input type="number" step="0.01" min="0" class="pricing-input" data-field="tier2" value="${priceInputValue(f.tier2)}" ${dis} ${dirty}></td>
+            ${editable ? '<td><label class="pricing-check"><input type="checkbox" data-field="remove" onchange="markPricingDirty(this.closest(\'tr\'))"> remover</label></td>' : ''}
+        </tr>`).join('');
+
+    body.innerHTML = `
+        <p class="pricing-hint">Frete em R$ por kg, por UF e tipo de praça. O valor entra no custo do CIF (veja a fórmula em Linhas de produto).</p>
+        <div class="results-table-container">
+            <table class="pricing-table">
+                <thead><tr><th>UF</th><th>Praça</th><th>Descrição</th><th>150 a 199 kg</th><th>Acima de 200 kg</th>${editable ? '<th></th>' : ''}</tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+        ${editable ? `
+        <details class="pricing-new">
+            <summary>➕ Nova praça</summary>
+            <div class="pricing-form-grid">
+                <label>UF<input id="newFreightUf" class="pricing-input" maxlength="2" placeholder="Ex.: MG"></label>
+                <label>Praça<select id="newFreightType" class="pricing-input">${PRACA_OPTIONS.map(t => `<option value="${t}">${t}</option>`).join('')}</select></label>
+                <label>Descrição<input id="newFreightLabel" class="pricing-input pricing-input--text" maxlength="200" placeholder="Ex.: Belo Horizonte"></label>
+                <label>150 a 199 kg<input id="newFreightTier1" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <label>Acima de 200 kg<input id="newFreightTier2" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <button type="button" class="btn-modal btn-modal-ghost" onclick="createFreightRow()">Adicionar praça</button>
+            </div>
+        </details>
+        ${pricingSaveBar('saveFreightRows()')}` : ''}`;
+}
+
+async function saveFreightRows() {
+    const rows = [...document.querySelectorAll('#pricingSectionBody tr.is-dirty[data-uf]')].map(row => ({
+        uf: row.dataset.uf,
+        pracaType: row.dataset.praca,
+        label: row.querySelector('[data-field="label"]').value.trim(),
+        tier1: readPricingNumber(row, 'tier1'),
+        tier2: readPricingNumber(row, 'tier2'),
+        remove: Boolean(row.querySelector('[data-field="remove"]')?.checked)
+    }));
+    if (!rows.length) return;
+    const removed = rows.filter(r => r.remove).map(r => `${r.uf} · ${r.pracaType}`);
+    let message = `Salvar ${rows.length} praça(s) de frete? Os novos valores valem imediatamente para todos os representantes.`;
+    if (removed.length) message += `\n\nSerão REMOVIDAS: ${removed.join(', ')}.`;
+    if (!confirm(message)) return;
+    await sendPricingChange('pricing.updateFreight', { rows, note: getPricingNote() });
+}
+
+async function createFreightRow() {
+    const uf = (document.getElementById('newFreightUf')?.value || '').trim().toUpperCase();
+    const pracaType = document.getElementById('newFreightType')?.value || '';
+    if (!/^[A-Z]{2}$/.test(uf)) {
+        setPricingMessage('Informe a UF com duas letras (ex.: MG).', 'error');
+        return;
+    }
+    if (freightData[uf] && freightData[uf][pracaType]) {
+        setPricingMessage(`${uf} · ${pracaType} já existe: edite a linha na tabela.`, 'error');
+        return;
+    }
+    const num = id => parseFloat(document.getElementById(id)?.value) || 0;
+    await sendPricingChange('pricing.updateFreight', {
+        rows: [{ uf, pracaType, label: document.getElementById('newFreightLabel')?.value.trim() || '', tier1: num('newFreightTier1'), tier2: num('newFreightTier2') }],
+        note: 'Nova praça de frete'
+    });
+}
+
+// ----- Produtos -----
+
+function renderPricingProducts(body) {
+    const editable = pricingCanEdit();
+    const lineOptions = pricingCatalog.costLines.map(l => `<option value="${escapeHtml(l.key)}">${escapeHtml(l.name)}</option>`).join('');
+    body.innerHTML = `
+        <div class="pricing-filterbar">
+            <input id="pricingProductSearch" class="pricing-input pricing-input--wide" placeholder="Buscar por código ou descrição" value="${escapeHtml(pricingProductFilter)}" oninput="pricingProductFilter = this.value; renderPricingProductRows()">
+            <label class="pricing-check"><input type="checkbox" ${pricingShowInactive ? 'checked' : ''} onchange="pricingShowInactive = this.checked; renderPricingProductRows()"> Mostrar inativos</label>
+        </div>
+        <p class="pricing-hint">O FOB usa o preço 100% NF da linha escolhida. Desativar um produto o tira da busca dos representantes; pedidos já feitos não mudam.</p>
+        <div class="results-table-container">
+            <table class="pricing-table">
+                <thead><tr><th>Código</th><th>Descrição</th><th>Linha de produto</th><th>Peso (kg)</th><th>FOB (R$)</th><th>Ativo</th>${editable ? '<th></th>' : ''}</tr></thead>
+                <tbody id="pricingProductRows"></tbody>
+            </table>
+        </div>
+        ${editable ? `
+        <details class="pricing-new">
+            <summary>➕ Novo produto</summary>
+            <div class="pricing-form-grid">
+                <label>Código<input id="newProductCodigo" class="pricing-input" maxlength="40" placeholder="Ex.: P-09999"></label>
+                <label>Descrição<input id="newProductDescricao" class="pricing-input pricing-input--text" maxlength="200"></label>
+                <label>Categoria<input id="newProductCategoria" class="pricing-input pricing-input--text" maxlength="80" placeholder="Ex.: Bobina Fundo Estrela"></label>
+                <label>Subcategoria<input id="newProductSubcat" class="pricing-input pricing-input--text" maxlength="80"></label>
+                <label>Linha de produto<select id="newProductLine" class="pricing-input">${lineOptions}</select></label>
+                <label>Peso (kg)<input id="newProductWeight" type="number" step="0.001" min="0" class="pricing-input"></label>
+                <label>NCM<input id="newProductNcm" class="pricing-input" maxlength="20"></label>
+                <button type="button" class="btn-modal btn-modal-ghost" onclick="createPricingProduct()">Cadastrar produto</button>
+            </div>
+        </details>` : ''}`;
+    renderPricingProductRows();
+}
+
+function renderPricingProductRows() {
+    const tbody = document.getElementById('pricingProductRows');
+    if (!tbody) return;
+    const editable = pricingCanEdit();
+    const dis = editable ? '' : 'disabled';
+    const terms = pricingProductFilter.toLowerCase().split(' ').filter(Boolean);
+    const list = pricingCatalog.products.filter(p =>
+        (pricingShowInactive || p.active) &&
+        terms.every(t => `${p.codigo} ${p.descricao} ${p.categoria}`.toLowerCase().includes(t)));
+
+    tbody.innerHTML = list.map(p => {
+        const line = costsData[p.costLineKey];
+        const options = pricingCatalog.costLines.map(l => `<option value="${escapeHtml(l.key)}"${l.key === p.costLineKey ? ' selected' : ''}>${escapeHtml(l.name)}</option>`).join('');
+        return `
+        <tr data-codigo="${escapeHtml(p.codigo)}" class="${p.active ? '' : 'is-inactive'}">
+            <td><strong>${escapeHtml(p.codigo)}</strong></td>
+            <td><input class="pricing-input pricing-input--wide" data-field="descricao" value="${escapeHtml(p.descricao)}" maxlength="200" ${dis} oninput="onPricingProductInput(this)"></td>
+            <td><select class="pricing-input" data-field="costLineKey" ${dis} onchange="onPricingProductInput(this)">${options}</select></td>
+            <td><input type="number" step="0.001" min="0" class="pricing-input" data-field="weight" value="${p.weight}" ${dis} oninput="onPricingProductInput(this)"></td>
+            <td class="pricing-computed" data-computed="fob">${formatBRL(line ? line.price100 * p.weight : 0)}</td>
+            <td><input type="checkbox" data-field="active" ${p.active ? 'checked' : ''} ${dis} onchange="onPricingProductInput(this)"></td>
+            ${editable ? '<td><button type="button" class="pricing-row-btn" onclick="savePricingProduct(this)" disabled>Salvar</button></td>' : ''}
+        </tr>`;
+    }).join('') || `<tr><td colspan="7"><div class="empty-state">Nenhum produto encontrado.</div></td></tr>`;
+}
+
+function onPricingProductInput(el) {
+    const row = el.closest('tr');
+    const line = costsData[row.querySelector('[data-field="costLineKey"]').value];
+    row.querySelector('[data-computed="fob"]').textContent = formatBRL(line ? line.price100 * readPricingNumber(row, 'weight') : 0);
+    row.classList.add('is-dirty');
+    const btn = row.querySelector('.pricing-row-btn');
+    if (btn) btn.disabled = false;
+}
+
+async function savePricingProduct(button) {
+    const row = button.closest('tr');
+    const current = pricingCatalog.products.find(p => p.codigo === row.dataset.codigo);
+    if (!current) return;
+    const product = {
+        ...current,
+        descricao: row.querySelector('[data-field="descricao"]').value.trim(),
+        costLineKey: row.querySelector('[data-field="costLineKey"]').value,
+        weight: readPricingNumber(row, 'weight'),
+        active: row.querySelector('[data-field="active"]').checked
+    };
+    if (current.active && !product.active && !confirm(`Desativar ${product.codigo}? Ele deixa de aparecer para os representantes.`)) return;
+    button.disabled = true;
+    await sendPricingChange('pricing.saveProduct', { product, note: '' });
+}
+
+async function createPricingProduct() {
+    const value = id => document.getElementById(id)?.value.trim() || '';
+    await sendPricingChange('pricing.saveProduct', {
+        product: {
+            isNew: true,
+            codigo: value('newProductCodigo'),
+            descricao: value('newProductDescricao'),
+            categoria: value('newProductCategoria'),
+            subcat: value('newProductSubcat'),
+            costLineKey: value('newProductLine'),
+            weight: parseFloat(value('newProductWeight')) || 0,
+            ncm: value('newProductNcm'),
+            active: true
+        },
+        note: 'Novo produto'
+    });
+}
+
+// ----- Reajuste em lote -----
+
+function renderPricingBulk(body) {
+    if (!pricingCanEdit()) {
+        body.innerHTML = '<div class="empty-state">O reajuste em lote é feito pelo gestor.</div>';
+        return;
+    }
+    body.innerHTML = `
+        <div class="pricing-bulk">
+            <p class="pricing-hint">Aplica um percentual de uma vez. Primeiro pré-visualize: nada é gravado até você clicar em “Aplicar reajuste”. Os valores novos são arredondados para centavos.</p>
+            <div class="pricing-form-grid">
+                <label>Aplicar em
+                    <select id="bulkTarget" class="pricing-input" onchange="onBulkParamsChange(true)">
+                        <option value="costLines">Linhas de produto</option>
+                        <option value="freight">Frete</option>
+                    </select>
+                </label>
+                <label>Percentual (%)<input id="bulkPercent" type="number" step="0.1" class="pricing-input" placeholder="Ex.: 5 ou -3" oninput="onBulkParamsChange()"></label>
+                <label id="bulkModeLabel" class="pricing-form-wide">O que reajustar
+                    <select id="bulkMode" class="pricing-input" onchange="onBulkParamsChange()">
+                        <option value="priceAndCosts">Preço e custos juntos (mantém o markup) — recomendado</option>
+                        <option value="price">Só o preço 100% NF (aumenta o markup)</option>
+                        <option value="costs">Só os custos (reduz o markup)</option>
+                    </select>
+                </label>
+            </div>
+            <div class="pricing-bulk-select">
+                <div><strong id="bulkSelectTitle">Linhas incluídas</strong>
+                    <button type="button" class="pricing-link-btn" onclick="toggleBulkSelection(true)">marcar todas</button> ·
+                    <button type="button" class="pricing-link-btn" onclick="toggleBulkSelection(false)">desmarcar todas</button>
+                </div>
+                <div id="bulkSelectList" class="pricing-chip-list"></div>
+            </div>
+            <input id="bulkNote" class="pricing-input pricing-input--text" maxlength="300" placeholder="Motivo (ex.: reajuste da resina de outubro)">
+            <div class="pricing-savebar">
+                <button type="button" class="btn-modal btn-modal-ghost" onclick="previewBulkAdjust()">👁️ Pré-visualizar</button>
+                <button type="button" id="bulkApplyBtn" class="btn-modal btn-modal-primary" onclick="applyBulkAdjust()" disabled>Aplicar reajuste</button>
+            </div>
+            <div id="bulkPreview"></div>
+        </div>`;
+    renderBulkSelectList();
+}
+
+function renderBulkSelectList() {
+    const target = document.getElementById('bulkTarget')?.value || 'costLines';
+    const items = target === 'freight'
+        ? [...new Set(pricingCatalog.freight.map(f => f.uf))].sort().map(uf => ({ value: uf, label: uf }))
+        : pricingCatalog.costLines.map(l => ({ value: l.key, label: l.name }));
+    document.getElementById('bulkSelectTitle').textContent = target === 'freight' ? 'UFs incluídas' : 'Linhas incluídas';
+    document.getElementById('bulkModeLabel').hidden = target === 'freight';
+    document.getElementById('bulkSelectList').innerHTML = items.map(i => `
+        <label class="pricing-chip"><input type="checkbox" class="bulk-item" value="${escapeHtml(i.value)}" checked onchange="onBulkParamsChange()"> ${escapeHtml(i.label)}</label>`).join('');
+}
+
+function onBulkParamsChange(targetChanged = false) {
+    if (targetChanged) renderBulkSelectList();
+    pricingBulkPreview = null;
+    const applyBtn = document.getElementById('bulkApplyBtn');
+    if (applyBtn) applyBtn.disabled = true;
+    const preview = document.getElementById('bulkPreview');
+    if (preview) preview.innerHTML = '';
+}
+
+function toggleBulkSelection(checked) {
+    document.querySelectorAll('#bulkSelectList .bulk-item').forEach(cb => { cb.checked = checked; });
+    onBulkParamsChange();
+}
+
+function getBulkParams() {
+    const percent = parseFloat(document.getElementById('bulkPercent')?.value);
+    if (!Number.isFinite(percent) || percent === 0) {
+        setPricingMessage('Informe o percentual do reajuste (ex.: 5 para +5%, -3 para −3%).', 'error');
+        return null;
+    }
+    const keys = [...document.querySelectorAll('#bulkSelectList .bulk-item:checked')].map(cb => cb.value);
+    if (!keys.length) {
+        setPricingMessage('Marque ao menos um item para reajustar.', 'error');
+        return null;
+    }
+    const target = document.getElementById('bulkTarget').value;
+    return { target, percent, mode: target === 'costLines' ? document.getElementById('bulkMode').value : '', keys };
+}
+
+function formatPricingValue(field, value) {
+    if (value === null || value === undefined || value === '') return '—';
+    if (field === 'weight') return formatBRL(parseFloat(value), 3);
+    if (field === 'active') return String(value) === '1' ? 'Sim' : 'Não';
+    if (field === 'cost_line_key') return costsData[value] ? costsData[value].name : String(value);
+    if (PRICING_MONEY_FIELDS.includes(field)) return `R$ ${formatBRL(parseFloat(value))}`;
+    return String(value);
+}
+
+async function previewBulkAdjust() {
+    const params = getBulkParams();
+    if (!params) return;
+    setPricingMessage('');
+    try {
+        const data = await apiRequest('pricing.bulkAdjust', { method: 'POST', body: { ...params, preview: true } });
+        pricingBulkPreview = { signature: JSON.stringify(params), count: data.changes.length };
+        const rows = data.changes.map(c => {
+            const variation = c.oldValue ? ((c.newValue / c.oldValue - 1) * 100) : 0;
+            return `<tr><td>${escapeHtml(c.label)}</td><td>${escapeHtml(PRICING_FIELD_LABELS[c.field] || c.field)}</td>
+                <td>${formatPricingValue(c.field, c.oldValue)}</td><td><strong>${formatPricingValue(c.field, c.newValue)}</strong></td>
+                <td>${variation >= 0 ? '+' : ''}${formatBRL(variation, 2)}%</td></tr>`;
+        }).join('');
+        document.getElementById('bulkPreview').innerHTML = `
+            <h4 class="pricing-preview-title">Pré-visualização: ${data.changes.length} valor(es) mudam</h4>
+            <div class="results-table-container"><table class="pricing-table">
+                <thead><tr><th>Item</th><th>Campo</th><th>Atual</th><th>Novo</th><th>Variação</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table></div>`;
+        document.getElementById('bulkApplyBtn').disabled = false;
+    } catch (e) {
+        setPricingMessage(e.message, 'error');
+    }
+}
+
+async function applyBulkAdjust() {
+    const params = getBulkParams();
+    if (!params) return;
+    if (!pricingBulkPreview || pricingBulkPreview.signature !== JSON.stringify(params)) {
+        setPricingMessage('Os parâmetros mudaram: pré-visualize de novo antes de aplicar.', 'error');
+        return;
+    }
+    if (!confirm(`Aplicar reajuste de ${params.percent}% em ${pricingBulkPreview.count} valor(es)? Vale imediatamente para todos os representantes.`)) return;
+    const note = document.getElementById('bulkNote')?.value.trim() || '';
+    pricingBulkPreview = null;
+    await sendPricingChange('pricing.bulkAdjust', { ...params, note });
+}
+
+// ----- Histórico -----
+
+function describePricingEntity(entry) {
+    if (entry.entity === 'cost_line') return costsData[entry.entityKey] ? costsData[entry.entityKey].name : entry.entityKey;
+    if (entry.entity === 'freight') return `Frete ${entry.entityKey.replace('/', ' · ')}`;
+    if (entry.entity === 'product') return `Produto ${entry.entityKey}`;
+    return 'Tabela inteira';
+}
+
+async function renderPricingHistory(body) {
+    body.innerHTML = '<div class="empty-state">Carregando histórico…</div>';
+    try {
+        const data = await apiRequest('pricing.history');
+        if (pricingTabSection !== 'history' || !body.isConnected) return;
+        if (!data.history.length) {
+            body.innerHTML = '<div class="empty-state">Nenhuma alteração registrada.</div>';
+            return;
+        }
+        const rows = data.history.map(h => `
+            <tr>
+                <td>${new Date(h.createdAt).toLocaleString('pt-BR')}</td>
+                <td>${escapeHtml(h.username || '')}</td>
+                <td>${escapeHtml(describePricingEntity(h))}</td>
+                <td>${escapeHtml(PRICING_FIELD_LABELS[h.field] || h.field)}</td>
+                <td>${escapeHtml(formatPricingValue(h.field, h.oldValue))}</td>
+                <td><strong>${escapeHtml(formatPricingValue(h.field, h.newValue))}</strong></td>
+                <td>${escapeHtml(h.note || '')}</td>
+            </tr>`).join('');
+        body.innerHTML = `
+            <p class="pricing-hint">Últimas 300 alterações, da mais recente para a mais antiga.</p>
+            <div class="results-table-container"><table class="pricing-table">
+                <thead><tr><th>Quando</th><th>Quem</th><th>Item</th><th>Campo</th><th>De</th><th>Para</th><th>Motivo</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table></div>`;
+    } catch (e) {
+        body.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
     }
 }
