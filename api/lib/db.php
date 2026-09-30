@@ -1,6 +1,8 @@
 <?php
 
-const SCHEMA_VERSION = 1;
+// v1: usuários, pedidos, contadores, tentativas de login, auditoria.
+// v2: tabela de preços editável (linhas de produto, frete, produtos, histórico de preços).
+const SCHEMA_VERSION = 2;
 
 const DENY_ALL_HTACCESS = "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order allow,deny\n    Deny from all\n</IfModule>\n";
 
@@ -110,6 +112,62 @@ function migrate(PDO $pdo): void
                 created_at TEXT NOT NULL
             )
         ");
+
+        // Every statement uses IF NOT EXISTS, so a v1 database only gains the tables below.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS cost_lines (
+                key TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                custo_base REAL NOT NULL,
+                desp_com REAL NOT NULL,
+                desp_adm REAL NOT NULL,
+                price100 REAL NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS freight_rates (
+                uf TEXT NOT NULL,
+                praca_type TEXT NOT NULL CHECK (praca_type IN ('Capital', 'Interior', 'Fluvial')),
+                label TEXT NOT NULL DEFAULT '',
+                tier1 REAL NOT NULL,
+                tier2 REAL NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (uf, praca_type)
+            )
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS products (
+                codigo TEXT PRIMARY KEY,
+                descricao TEXT NOT NULL,
+                categoria TEXT NOT NULL DEFAULT '',
+                subcat TEXT NOT NULL DEFAULT '',
+                cost_line_key TEXT NOT NULL REFERENCES cost_lines(key),
+                weight REAL NOT NULL,
+                ncm TEXT NOT NULL DEFAULT '',
+                active INTEGER NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS price_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                batch_id TEXT NOT NULL,
+                entity TEXT NOT NULL,
+                entity_key TEXT NOT NULL,
+                field TEXT NOT NULL,
+                old_value TEXT,
+                new_value TEXT,
+                username TEXT,
+                note TEXT,
+                created_at TEXT NOT NULL
+            )
+        ");
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_price_history_created ON price_history(created_at)');
 
         $pdo->exec('PRAGMA user_version = ' . SCHEMA_VERSION);
         $pdo->commit();

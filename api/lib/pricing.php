@@ -51,7 +51,9 @@ function calculate_order_totals(array $cart, array $conditions): array
         $totalInvoice += $netUnit * $contractFactor * $qty;
     }
 
-    $margin = $totalNet > 0 ? (($totalNet - $totalFob) / $totalNet) * 100 : 0.0;
+    // Contract raises the invoice but is paid out by Hiperroll: profit is net − FOB,
+    // measured against the full invoice (same rule as calculateOrderTotals in script_v5.js).
+    $margin = $totalInvoice > 0 ? (($totalNet - $totalFob) / $totalInvoice) * 100 : 0.0;
     return [
         'margin' => $margin,
         'discountPercent' => $discountPercent,
