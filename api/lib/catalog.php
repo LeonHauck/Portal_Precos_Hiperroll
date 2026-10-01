@@ -530,38 +530,55 @@ function update_freight(array $user, $rows, string $note): int
 // The code is the product's identity (orders reference it), so it can be created but never renamed.
 function save_product(array $user, $input, string $note): bool
 {
+    return save_products($user, [$input], $note) > 0;
+}
+
+// Saves one or many edited products in a single transaction: either every row is valid and
+// saved, or nothing is. One history batch and one version bump for the whole set.
+function save_products(array $user, $inputs, string $note): int
+{
     require_catalog_imported();
-    $raw = is_array($input) ? $input : [];
-    $product = clean_product($raw);
-    if (!find_cost_line($product['cost_line_key'])) {
-        fail(422, 'Escolha uma linha de produto válida.');
+    $rows = [];
+    foreach (input_rows($inputs, 'Nenhum produto enviado.') as $raw) {
+        $product = clean_product($raw);
+        if (!find_cost_line($product['cost_line_key'])) {
+            fail(422, "Escolha uma linha de produto válida para {$product['codigo']}.");
+        }
+        $rows[] = ['product' => $product, 'isNew' => !empty($raw['isNew'])];
     }
 
-    return catalog_transaction(function (PDO $pdo) use ($user, $raw, $product, $note) {
+    return catalog_transaction(function (PDO $pdo) use ($user, $rows, $note) {
         $batch = new_price_batch();
         $now = now_iso();
-        $old = find_product($product['codigo']);
-        if (!empty($raw['isNew'])) {
-            if ($old) {
-                fail(409, "Já existe um produto com o código {$product['codigo']}.");
+        $changed = 0;
+        foreach ($rows as $row) {
+            $product = $row['product'];
+            $old = find_product($product['codigo']);
+            if ($row['isNew']) {
+                if ($old) {
+                    fail(409, "Já existe um produto com o código {$product['codigo']}.");
+                }
+                $order = (int) $pdo->query('SELECT COALESCE(MAX(sort_order), 0) FROM products')->fetchColumn() + 1;
+                insert_product($pdo, $product, $order, $now);
+                log_diff($batch, 'product', $product['codigo'], diff_fields([], $product, PRODUCT_FIELDS), $user, $note);
+            } else {
+                if (!$old) {
+                    fail(404, "Produto {$product['codigo']} não encontrado.");
+                }
+                $diff = diff_fields($old, $product, PRODUCT_FIELDS);
+                if (!$diff) {
+                    continue;
+                }
+                update_product($pdo, $product, $now);
+                log_diff($batch, 'product', $product['codigo'], $diff, $user, $note);
             }
-            $order = (int) $pdo->query('SELECT COALESCE(MAX(sort_order), 0) FROM products')->fetchColumn() + 1;
-            insert_product($pdo, $product, $order, $now);
-            log_diff($batch, 'product', $product['codigo'], diff_fields([], $product, PRODUCT_FIELDS), $user, $note);
-        } else {
-            if (!$old) {
-                fail(404, 'Produto não encontrado.');
-            }
-            $diff = diff_fields($old, $product, PRODUCT_FIELDS);
-            if (!$diff) {
-                return false;
-            }
-            update_product($pdo, $product, $now);
-            log_diff($batch, 'product', $product['codigo'], $diff, $user, $note);
+            $changed++;
         }
-        bump_pricing_version();
-        audit('pricing.product', $product['codigo']);
-        return true;
+        if ($changed) {
+            bump_pricing_version();
+            audit('pricing.products', null, ['changed' => $changed]);
+        }
+        return $changed;
     });
 }
 

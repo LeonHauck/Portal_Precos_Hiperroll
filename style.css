@@ -2677,6 +2677,66 @@ select.pricing-input {
     cursor: default;
 }
 
+/* Produtos: categorias como botões de marcar/desmarcar e barra de alterações pendentes */
+.pricing-categories {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.pricing-categories-label {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    margin-right: 2px;
+}
+
+.pricing-chip-btn {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--card-bg);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.pricing-chip-btn:hover {
+    border-color: var(--secondary);
+    color: var(--secondary);
+}
+
+.pricing-chip-btn.active {
+    background: var(--secondary);
+    border-color: var(--secondary);
+    color: #fff;
+}
+
+.pricing-pending {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 10px 14px;
+    border: 1px solid var(--margin-warning-border);
+    border-radius: var(--radius);
+    background: var(--margin-warning-bg);
+    font-size: 0.88rem;
+}
+
+.pricing-pending[hidden] {
+    display: none;
+}
+
+.pricing-pending span {
+    margin-right: auto;
+}
+
 .pricing-input--narrow {
     min-width: 0;
     width: 110px;

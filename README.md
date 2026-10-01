@@ -144,7 +144,7 @@ O gestor entra na aba **💲 Tabela de Preços** e altera direto na tela (digita
 
 - **Linhas de produto:** preço por kg de cada linha; "Mostrar custos" revela custo, despesas, total e markup.
 - **Frete:** valores por UF/praça e faixa de peso; é possível adicionar ou remover praças.
-- **Produtos:** descrição, linha de produto, peso, ativo/inativo e **preço FOB próprio** (digitar o valor e Enter; "↺ usar linha" desfaz). Filtro por categoria com ações para todos os produtos listados: reajuste %, mover para outra linha e voltar ao preço da linha. Produtos com preço próprio não acompanham os reajustes da linha. Cadastro de produtos novos.
+- **Produtos:** descrição, linha de produto, peso, ativo/inativo e **preço FOB próprio** ("↺ usar linha" desfaz). Dá para alterar vários produtos e gravar todos de uma vez em **Salvar alterações** (ou Enter); as alterações pendentes continuam guardadas ao trocar de filtro. Filtro por **uma ou mais categorias**, com ações para todos os produtos listados: reajuste %, mover para outra linha e voltar ao preço da linha. Produtos com preço próprio não acompanham os reajustes da linha. Cadastro de produtos novos.
 - **Reajuste em lote:** um percentual sobre as linhas escolhidas (preço e custos juntos, só preço ou só custos) ou sobre o frete das UFs escolhidas. Sempre com pré-visualização antes de aplicar.
 - **Histórico:** quem mudou, quando, o valor anterior, o novo e o motivo.
 

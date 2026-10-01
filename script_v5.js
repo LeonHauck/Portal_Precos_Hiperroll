@@ -3981,7 +3981,7 @@ function bindPricingEnterKey(container) {
             saveFreightRows();
         } else if (row.dataset.codigo) {
             event.preventDefault();
-            savePricingProduct(event.target);
+            savePricingProducts();
         }
     });
 }
@@ -4272,11 +4272,14 @@ async function createFreightRow() {
 }
 
 // ----- Produtos -----
-// Each product's FOB comes from its product line (preço 100% NF × peso) unless the gestor typed an
-// individual price for it. The list can be narrowed by category/search, and the bulk actions
-// apply to exactly the products listed on screen.
+// Each product's FOB comes from its product line (preço por kg × peso) unless the gestor typed an
+// individual price for it. The list can be narrowed by any number of categories and by search;
+// the bulk actions apply to exactly the products listed on screen.
+// Edits are kept in pricingProductEdits until "Salvar alterações", so several products (even
+// from different categories) can be changed and saved together.
 
-let pricingProductCategory = '';
+let pricingProductCategories = []; // empty = every category
+let pricingProductEdits = {};      // codigo → { descricao, costLineKey, weight, active, priceEdited, price }
 
 function lineFobFor(product, costLineKey = product.costLineKey, weight = product.weight) {
     const line = costsData[costLineKey];
@@ -4291,7 +4294,7 @@ function getFilteredPricingProducts() {
     const terms = pricingProductFilter.toLowerCase().split(' ').filter(Boolean);
     return pricingCatalog.products.filter(p =>
         (pricingShowInactive || p.active) &&
-        (!pricingProductCategory || p.categoria === pricingProductCategory) &&
+        (!pricingProductCategories.length || pricingProductCategories.includes(p.categoria)) &&
         terms.every(t => `${p.codigo} ${p.descricao} ${p.categoria} ${p.subcat}`.toLowerCase().includes(t)));
 }
 
@@ -4300,35 +4303,43 @@ function renderPricingProducts(body) {
     const lineOptions = pricingCatalog.costLines.map(l => `<option value="${escapeHtml(l.key)}">${escapeHtml(l.name)}</option>`).join('');
     const categories = {};
     pricingCatalog.products.forEach(p => { categories[p.categoria] = (categories[p.categoria] || 0) + 1; });
-    const categoryOptions = Object.keys(categories).sort((a, b) => a.localeCompare(b, 'pt-BR'))
-        .map(c => `<option value="${escapeHtml(c)}"${c === pricingProductCategory ? ' selected' : ''}>${escapeHtml(c || '(sem categoria)')} (${categories[c]})</option>`).join('');
+    // A category that no longer exists (after an edit) must not keep filtering the list.
+    pricingProductCategories = pricingProductCategories.filter(c => c in categories);
+    const categoryChips = Object.keys(categories).sort((a, b) => a.localeCompare(b, 'pt-BR'))
+        .map(c => `<button type="button" class="pricing-chip-btn" data-category="${escapeHtml(c)}" onclick="togglePricingCategory(this.dataset.category)">${escapeHtml(c || '(sem categoria)')} (${categories[c]})</button>`).join('');
 
     body.innerHTML = `
+        <div class="pricing-categories" id="pricingCategoryChips">
+            <span class="pricing-categories-label">Categorias:</span>
+            <button type="button" class="pricing-chip-btn" data-all="1" onclick="setPricingCategories([])">Todas (${pricingCatalog.products.length})</button>
+            ${categoryChips}
+        </div>
         <div class="pricing-filterbar">
-            <select id="pricingProductCategory" class="pricing-input" onchange="pricingProductCategory = this.value; renderPricingProductRows()">
-                <option value="">Todas as categorias (${pricingCatalog.products.length})</option>
-                ${categoryOptions}
-            </select>
             <input id="pricingProductSearch" class="pricing-input pricing-input--wide" placeholder="Buscar por código ou descrição" value="${escapeHtml(pricingProductFilter)}" oninput="pricingProductFilter = this.value; renderPricingProductRows()">
             <label class="pricing-check"><input type="checkbox" ${pricingShowInactive ? 'checked' : ''} onchange="pricingShowInactive = this.checked; renderPricingProductRows()"> Mostrar inativos</label>
         </div>
-        <p class="pricing-hint"><strong>Preço FOB (R$)</strong>: digite o valor e aperte <strong>Enter</strong> (ou clique em Salvar) para dar a um produto um <strong>preço próprio</strong>. Sem preço próprio, o produto segue a linha: preço 100% NF × peso. O CIF de cada região é calculado a partir desse FOB.</p>
+        <p class="pricing-hint">Clique em uma ou mais categorias para filtrar. ${editable ? 'Altere quantos produtos quiser e clique em <strong>Salvar alterações</strong> (ou aperte Enter). ' : ''}Um produto <strong>sem preço próprio</strong> segue a linha de produto: preço por kg × peso. O CIF de cada região é calculado a partir do preço FOB.</p>
         ${editable ? `
         <div class="pricing-bulkbar">
             <span>Com os <strong id="pricingFilteredCount">0</strong> produtos listados:</span>
             <span class="pricing-bulkbar-group">
                 <input id="bulkProductPercent" type="number" step="0.1" class="pricing-input pricing-input--narrow" placeholder="%">
-                <button type="button" class="pricing-row-btn" onclick="bulkUpdateFilteredProducts('percent')">Reajustar preço</button>
+                <button type="button" class="pricing-row-btn" onclick="bulkUpdateFilteredProducts('percent')" title="Aumenta (ou reduz, com número negativo) o preço FOB de cada produto listado. Eles passam a ter preço próprio.">Reajustar preço</button>
             </span>
             <span class="pricing-bulkbar-group">
                 <select id="bulkProductLine" class="pricing-input">${lineOptions}</select>
-                <button type="button" class="pricing-row-btn" onclick="bulkUpdateFilteredProducts('setLine')">Mover para a linha</button>
+                <button type="button" class="pricing-row-btn" onclick="bulkUpdateFilteredProducts('setLine')" title="Os produtos listados passam a pertencer a esta linha de produto e a usar o preço por kg dela.">Mover para a linha</button>
             </span>
-            <button type="button" class="pricing-row-btn pricing-row-btn--ghost" onclick="bulkUpdateFilteredProducts('clearPrice')">Voltar ao preço da linha</button>
+            <button type="button" class="pricing-row-btn pricing-row-btn--ghost" onclick="bulkUpdateFilteredProducts('clearPrice')" title="Apaga o preço próprio dos produtos listados: eles voltam a custar preço por kg da linha × peso.">Voltar ao preço da linha</button>
+        </div>
+        <div class="pricing-pending" id="pricingProductPending" hidden>
+            <span>✏️ <strong id="pricingPendingCount">0</strong> produto(s) com alteração ainda não salva</span>
+            <button type="button" class="btn-modal btn-modal-ghost" onclick="discardPricingProductEdits()">Descartar</button>
+            <button type="button" class="btn-modal btn-modal-primary" onclick="savePricingProducts()">Salvar alterações</button>
         </div>` : ''}
         <div class="results-table-container">
             <table class="pricing-table">
-                <thead><tr><th>Código</th><th>Descrição</th><th>Linha de produto</th><th>Peso (kg)</th><th>Preço FOB (R$)</th><th>Ativo</th>${editable ? '<th></th>' : ''}</tr></thead>
+                <thead><tr><th>Código</th><th>Descrição</th><th>Linha de produto</th><th>Peso (kg)</th><th>Preço FOB (R$)</th><th>Ativo</th></tr></thead>
                 <tbody id="pricingProductRows"></tbody>
             </table>
         </div>
@@ -4350,6 +4361,17 @@ function renderPricingProducts(body) {
     renderPricingProductRows();
 }
 
+function setPricingCategories(categories) {
+    pricingProductCategories = categories;
+    renderPricingProductRows();
+}
+
+function togglePricingCategory(category) {
+    setPricingCategories(pricingProductCategories.includes(category)
+        ? pricingProductCategories.filter(c => c !== category)
+        : [...pricingProductCategories, category]);
+}
+
 function renderPricingProductRows() {
     const tbody = document.getElementById('pricingProductRows');
     if (!tbody) return;
@@ -4358,73 +4380,107 @@ function renderPricingProductRows() {
     const list = getFilteredPricingProducts();
     const countEl = document.getElementById('pricingFilteredCount');
     if (countEl) countEl.textContent = list.length;
+    document.querySelectorAll('#pricingCategoryChips .pricing-chip-btn').forEach(chip => {
+        const active = chip.dataset.all ? !pricingProductCategories.length : pricingProductCategories.includes(chip.dataset.category);
+        chip.classList.toggle('active', active);
+        chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
 
     tbody.innerHTML = list.map(p => {
-        const options = pricingCatalog.costLines.map(l => `<option value="${escapeHtml(l.key)}"${l.key === p.costLineKey ? ' selected' : ''}>${escapeHtml(l.name)}</option>`).join('');
+        // Values typed but not saved yet take the place of the stored ones.
+        const edit = pricingProductEdits[p.codigo];
+        const shown = edit ? { ...p, ...edit } : p;
+        const options = pricingCatalog.costLines.map(l => `<option value="${escapeHtml(l.key)}"${l.key === shown.costLineKey ? ' selected' : ''}>${escapeHtml(l.name)}</option>`).join('');
+        const price = edit && edit.priceEdited ? edit.price : (p.priceOverride != null ? p.priceOverride : lineFobFor(p, shown.costLineKey, shown.weight));
         const own = p.priceOverride != null;
         const priceNote = own
             ? `<span class="price-badge">preço próprio</span>${editable ? ` <button type="button" class="pricing-link-btn" onclick="resetPricingProductPrice(this)" title="Voltar a seguir a linha (R$ ${formatBRL(lineFobFor(p))})">↺ usar linha</button>` : ''}`
             : '<span class="price-badge price-badge--line">da linha</span>';
         return `
-        <tr data-codigo="${escapeHtml(p.codigo)}" class="${p.active ? '' : 'is-inactive'}">
+        <tr data-codigo="${escapeHtml(p.codigo)}" class="${shown.active ? '' : 'is-inactive'}${edit ? ' is-dirty' : ''}"${edit && edit.priceEdited ? ' data-price-edited="1"' : ''}>
             <td><strong>${escapeHtml(p.codigo)}</strong><div class="reprice-desc">${escapeHtml(p.categoria)}</div></td>
-            <td><input class="pricing-input pricing-input--wide" data-field="descricao" value="${escapeHtml(p.descricao)}" maxlength="200" ${dis} oninput="onPricingProductInput(this)"></td>
+            <td><input class="pricing-input pricing-input--wide" data-field="descricao" value="${escapeHtml(shown.descricao)}" maxlength="200" ${dis} oninput="onPricingProductInput(this)"></td>
             <td><select class="pricing-input" data-field="costLineKey" ${dis} onchange="onPricingProductInput(this)">${options}</select></td>
-            <td><input type="number" step="0.001" min="0" class="pricing-input pricing-input--narrow" data-field="weight" value="${p.weight}" ${dis} oninput="onPricingProductInput(this)"></td>
+            <td><input type="number" step="0.001" min="0" class="pricing-input pricing-input--narrow" data-field="weight" value="${shown.weight}" ${dis} oninput="onPricingProductInput(this)"></td>
             <td class="pricing-price-cell">
-                <input type="number" step="0.01" min="0" class="pricing-input pricing-input--strong pricing-input--narrow" data-field="price" value="${priceInputValue(Math.round(currentFobFor(p) * 100) / 100)}" ${dis}
+                <input type="number" step="0.01" min="0" class="pricing-input pricing-input--strong pricing-input--narrow" data-field="price" value="${priceInputValue(Math.round(price * 100) / 100)}" ${dis}
                     oninput="this.closest('tr').dataset.priceEdited = '1'; onPricingProductInput(this)">
                 <div class="price-note">${priceNote}</div>
             </td>
-            <td><input type="checkbox" data-field="active" ${p.active ? 'checked' : ''} ${dis} onchange="onPricingProductInput(this)"></td>
-            ${editable ? '<td><button type="button" class="pricing-row-btn" onclick="savePricingProduct(this)" disabled>Salvar</button></td>' : ''}
+            <td><input type="checkbox" data-field="active" ${shown.active ? 'checked' : ''} ${dis} onchange="onPricingProductInput(this)"></td>
         </tr>`;
-    }).join('') || `<tr><td colspan="7"><div class="empty-state">Nenhum produto encontrado.</div></td></tr>`;
+    }).join('') || `<tr><td colspan="6"><div class="empty-state">Nenhum produto encontrado.</div></td></tr>`;
+    updatePricingProductPending();
 }
 
-// Without its own price, the FOB shown follows the line/weight the gestor is choosing.
+function updatePricingProductPending() {
+    const bar = document.getElementById('pricingProductPending');
+    if (!bar) return;
+    const count = Object.keys(pricingProductEdits).length;
+    bar.hidden = count === 0;
+    document.getElementById('pricingPendingCount').textContent = count;
+}
+
+// Records what was typed in the row. Without its own price, the FOB shown follows the
+// line/weight the gestor is choosing.
 function onPricingProductInput(el) {
     const row = el.closest('tr');
     const product = pricingCatalog.products.find(p => p.codigo === row.dataset.codigo);
-    if (product && product.priceOverride == null && row.dataset.priceEdited !== '1') {
-        const fob = lineFobFor(product, row.querySelector('[data-field="costLineKey"]').value, readPricingNumber(row, 'weight'));
-        row.querySelector('[data-field="price"]').value = priceInputValue(Math.round(fob * 100) / 100);
-    }
-    row.classList.add('is-dirty');
-    const btn = row.querySelector('.pricing-row-btn');
-    if (btn) btn.disabled = false;
-}
-
-function readPricingProductRow(row, current) {
-    const product = {
-        ...current,
-        descricao: row.querySelector('[data-field="descricao"]').value.trim(),
+    if (!product) return;
+    const edit = {
+        descricao: row.querySelector('[data-field="descricao"]').value,
         costLineKey: row.querySelector('[data-field="costLineKey"]').value,
         weight: readPricingNumber(row, 'weight'),
-        active: row.querySelector('[data-field="active"]').checked
+        active: row.querySelector('[data-field="active"]').checked,
+        priceEdited: row.dataset.priceEdited === '1'
     };
-    if (row.dataset.priceEdited === '1') {
-        const typed = readPricingNumber(row, 'price');
-        const lineFob = lineFobFor(product);
+    if (edit.priceEdited) {
+        edit.price = readPricingNumber(row, 'price');
+    } else if (product.priceOverride == null) {
+        row.querySelector('[data-field="price"]').value = priceInputValue(Math.round(lineFobFor(product, edit.costLineKey, edit.weight) * 100) / 100);
+    }
+    pricingProductEdits[product.codigo] = edit;
+    row.classList.add('is-dirty');
+    row.classList.toggle('is-inactive', !edit.active);
+    updatePricingProductPending();
+}
+
+function buildEditedProduct(current, edit) {
+    const product = { ...current, descricao: edit.descricao.trim(), costLineKey: edit.costLineKey, weight: edit.weight, active: edit.active };
+    if (edit.priceEdited) {
         // Typing exactly the line price on a product without its own price keeps it following the line.
-        product.priceOverride = current.priceOverride == null && Math.abs(typed - lineFob) < 0.005 ? null : typed;
+        product.priceOverride = current.priceOverride == null && Math.abs(edit.price - lineFobFor(product)) < 0.005 ? null : edit.price;
     }
     return product;
 }
 
-async function savePricingProduct(el) {
-    const row = el.closest('tr');
-    const current = pricingCatalog.products.find(p => p.codigo === row.dataset.codigo);
-    if (!current || !row.classList.contains('is-dirty')) return;
-    const product = readPricingProductRow(row, current);
-    if (product.priceOverride != null && !(product.priceOverride > 0)) {
-        setPricingMessage(`Informe um preço maior que zero para ${product.codigo}.`, 'error');
+async function savePricingProducts() {
+    const pending = pricingProductEdits;
+    const pairs = Object.keys(pending)
+        .map(code => ({ current: pricingCatalog.products.find(p => p.codigo === code), edit: pending[code] }))
+        .filter(pair => pair.current);
+    if (!pairs.length) return;
+    const products = pairs.map(pair => buildEditedProduct(pair.current, pair.edit));
+    const badPrice = products.find(p => p.priceOverride != null && !(p.priceOverride > 0));
+    if (badPrice) {
+        setPricingMessage(`Informe um preço maior que zero para ${badPrice.codigo}.`, 'error');
         return;
     }
-    if (current.active && !product.active && !confirm(`Desativar ${product.codigo}? Ele deixa de aparecer para os representantes.`)) return;
-    const btn = row.querySelector('.pricing-row-btn');
-    if (btn) btn.disabled = true;
-    await sendPricingChange('pricing.saveProduct', { product, note: '' });
+    const deactivated = pairs.filter((pair, i) => pair.current.active && !products[i].active).map(pair => pair.current.codigo);
+    if (deactivated.length && !confirm(`Desativar ${deactivated.join(', ')}? ${deactivated.length > 1 ? 'Eles deixam' : 'Ele deixa'} de aparecer para os representantes.`)) return;
+
+    // Cleared before sending because a successful save redraws the tab; restored if it fails.
+    pricingProductEdits = {};
+    const data = await sendPricingChange('pricing.saveProducts', { products, note: '' });
+    if (!data) {
+        pricingProductEdits = pending;
+        updatePricingProductPending();
+    }
+}
+
+function discardPricingProductEdits() {
+    pricingProductEdits = {};
+    renderPricingProductRows();
 }
 
 async function resetPricingProductPrice(el) {
@@ -4432,16 +4488,21 @@ async function resetPricingProductPrice(el) {
     const current = pricingCatalog.products.find(p => p.codigo === row.dataset.codigo);
     if (!current) return;
     if (!confirm(`${current.codigo} volta a seguir o preço da linha: R$ ${formatBRL(lineFobFor(current))} (hoje R$ ${formatBRL(current.priceOverride)}). Confirmar?`)) return;
+    delete pricingProductEdits[current.codigo];
     await sendPricingChange('pricing.saveProduct', { product: { ...current, priceOverride: null }, note: 'Voltou ao preço da linha' });
 }
 
 async function bulkUpdateFilteredProducts(action) {
+    if (Object.keys(pricingProductEdits).length) {
+        setPricingMessage('Salve ou descarte as alterações pendentes antes de usar uma ação para todos os produtos listados.', 'error');
+        return;
+    }
     const list = getFilteredPricingProducts();
     if (!list.length) {
         setPricingMessage('Nenhum produto listado para alterar.', 'error');
         return;
     }
-    const scope = pricingProductCategory ? ` da categoria "${pricingProductCategory}"` : '';
+    const scope = pricingProductCategories.length ? ` (${pricingProductCategories.join(', ')})` : '';
     const body = { action, codigos: list.map(p => p.codigo), note: '' };
 
     if (action === 'percent') {
@@ -4458,7 +4519,7 @@ async function bulkUpdateFilteredProducts(action) {
     } else if (action === 'setLine') {
         const select = document.getElementById('bulkProductLine');
         const lineName = select?.selectedOptions[0]?.textContent || '';
-        if (!confirm(`Mover ${list.length} produto(s)${scope} para a linha "${lineName}"?\n\nQuem não tem preço próprio passa a usar o preço 100% NF dessa linha.`)) return;
+        if (!confirm(`Mover ${list.length} produto(s)${scope} para a linha "${lineName}"?\n\nQuem não tem preço próprio passa a usar o preço por kg dessa linha.`)) return;
         body.costLineKey = select.value;
     } else {
         const withOwn = list.filter(p => p.priceOverride != null).length;
