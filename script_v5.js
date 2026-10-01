@@ -792,8 +792,21 @@ function parseDecimal(value) {
     return parseFloat(String(value ?? '').replace(',', '.')) || 0;
 }
 
-// Reads data.js exactly as the portal always did and returns it in the same shape as the
-// server's pricing.get, so the rest of the code never needs to know where prices came from.
+// Product lines that are not in the cost spreadsheet (decided with Leon on 2026-10-01).
+// Each one starts as an exact copy of the line that has priced those products until now
+// (`copyFrom`), so no price changes; from then on the gestor can adjust it on its own.
+// Only products the keyword rule (getCategoryMatch) sends to `copyFrom` are moved.
+const LEGACY_CATEGORY_LINES = [
+    { category: 'Sacarias - Corte e Solda', name: 'Corte e Solda', copyFrom: 'fundo reto' },
+    { category: 'Saco para lixo - Condominio', name: 'Saco para lixo - Condomínio', copyFrom: 'fundo reto' },
+    { category: 'Saco para Lixo - Dobrado', name: 'Saco para lixo - Dobrado', copyFrom: 'fundo reto' },
+    { category: 'Saco para Lixo - Perfumado', name: 'Saco para lixo - Perfumado', copyFrom: 'fundo reto' },
+    { category: 'Saco para lixo - Rolo', name: 'Saco para lixo - Rolo', copyFrom: 'fundo reto' },
+    { category: 'Bobina Fundo Reto', name: 'Bobina Fundo Reto', copyFrom: 'bobina estrela (cx branca)' }
+];
+
+// Reads data.js and returns it in the same shape as the server's pricing.get, so the rest of
+// the code never needs to know where prices came from.
 function buildLegacyCatalog() {
     const products = [];
     parseCSV(PRODUTOS_CSV).forEach((row, index) => {
@@ -869,7 +882,26 @@ function buildLegacyCatalog() {
         ufEntryCount++;
     });
 
-    return { costLines: Object.values(costLines), freight: Object.values(freight), products, warnings };
+    LEGACY_CATEGORY_LINES.forEach(rule => {
+        const source = costLines[rule.copyFrom];
+        const category = rule.category.toLowerCase();
+        const moved = products.filter(p => p.categoria.toLowerCase() === category && p.costLineKey === rule.copyFrom);
+        if (!source || !moved.length) return;
+        const key = rule.name.toLowerCase();
+        costLines[key] = { ...source, key, name: rule.name };
+        moved.forEach(p => { p.costLineKey = key; });
+    });
+
+    // Spreadsheet lines that no product uses stay out of the portal (they remain in data.js).
+    const usedKeys = new Set(products.map(p => p.costLineKey));
+    const allLines = Object.values(costLines);
+    return {
+        costLines: allLines.filter(line => usedKeys.has(line.key)),
+        unusedLines: allLines.filter(line => !usedKeys.has(line.key)).map(line => line.name),
+        freight: Object.values(freight),
+        products,
+        warnings
+    };
 }
 
 function getLegacyCatalog() {
@@ -4004,6 +4036,7 @@ function renderPricingImportPanel() {
                 <li><strong>${legacy.freight.length}</strong> praças de frete</li>
                 <li><strong>${legacy.products.length}</strong> produtos</li>
             </ul>
+            ${legacy.unusedLines.length ? `<p class="pricing-hint">Linhas da planilha que nenhum produto usa e por isso ficam fora do portal: ${legacy.unusedLines.map(escapeHtml).join(', ')}.</p>` : ''}
             ${warnings}
             <button type="button" class="btn-modal btn-modal-primary" onclick="importPricingCatalog()">⬆️ Importar tabela atual</button>
             <div id="pricingMessage" class="pricing-message"></div>
