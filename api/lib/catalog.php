@@ -1,6 +1,6 @@
 <?php
 
-// Tabela de preços editável pelo gestor: linhas de produto (custos e preço 100% NF por kg),
+// Tabela de preços editável pelo gestor: grupos de preço — "cost lines" no código — (custos e preço 100% NF por kg),
 // frete por UF/praça e cadastro de produtos.
 // Enquanto a tabela não é importada, o portal continua usando o data.js. Depois da importação,
 // o banco vira a fonte oficial: toda alteração guarda "de → para" em price_history e incrementa
@@ -223,11 +223,11 @@ function assert_cost_line_consistent(array $line, string $label): void
 {
     $costs = (float) $line['custo_base'] + (float) $line['desp_com'] + (float) $line['desp_adm'];
     if ($costs <= 0) {
-        fail(422, "A linha \"{$label}\" precisa ter custo maior que zero.");
+        fail(422, "O grupo de preço \"{$label}\" precisa ter custo maior que zero.");
     }
     if ((float) $line['price100'] <= $costs) {
         fail(422, sprintf(
-            'Na linha "%s", o preço 100%% NF (%s/kg) precisa ser maior que custo + despesas (%s/kg).',
+            'No grupo de preço "%s", o preço por kg (%s) precisa ser maior que custo + despesas (%s/kg).',
             $label,
             money_text((float) $line['price100']),
             money_text($costs)
@@ -239,7 +239,7 @@ function clean_cost_line(array $input): array
 {
     $key = normalize_cost_line_key($input['key'] ?? '');
     if ($key === '') {
-        fail(422, 'Linha de produto sem identificação.');
+        fail(422, 'Grupo de preço sem identificação.');
     }
     $name = str_field($input['name'] ?? '', 80);
     $label = $name !== '' ? $name : $key;
@@ -391,7 +391,7 @@ function import_catalog(array $user, $input): array
     $data = is_array($input) ? $input : [];
 
     $lines = [];
-    foreach (input_rows($data['costLines'] ?? [], 'Importação sem linhas de produto.') as $raw) {
+    foreach (input_rows($data['costLines'] ?? [], 'Importação sem grupos de preço.') as $raw) {
         $line = clean_cost_line($raw);
         $line['name'] = $line['name'] !== '' ? $line['name'] : $line['key'];
         $lines[$line['key']] = $line;
@@ -405,7 +405,7 @@ function import_catalog(array $user, $input): array
     foreach (input_rows($data['products'] ?? [], 'Importação sem produtos.') as $raw) {
         $product = clean_product($raw);
         if (!isset($lines[$product['cost_line_key']])) {
-            fail(422, "O produto {$product['codigo']} aponta para uma linha de produto inexistente ({$product['cost_line_key']}).");
+            fail(422, "O produto {$product['codigo']} aponta para um grupo de preço inexistente ({$product['cost_line_key']}).");
         }
         // The portal always used the first row of a repeated code, so the import does the same.
         if (!isset($products[$product['codigo']])) {
@@ -429,7 +429,7 @@ function import_catalog(array $user, $input): array
         }
 
         $counts = ['costLines' => count($lines), 'freight' => count($freight), 'products' => count($products)];
-        $summary = sprintf('%d linhas de produto, %d fretes, %d produtos', $counts['costLines'], $counts['freight'], $counts['products']);
+        $summary = sprintf('%d grupos de preço, %d fretes, %d produtos', $counts['costLines'], $counts['freight'], $counts['products']);
         record_price_change(new_price_batch(), 'catalog', 'import', 'import', null, $summary, $user, 'Importação inicial do data.js');
         bump_pricing_version();
         audit('pricing.import', null, $counts);
@@ -442,7 +442,7 @@ function import_catalog(array $user, $input): array
 function update_cost_lines(array $user, $lines, string $note): int
 {
     require_catalog_imported();
-    $rows = input_rows($lines, 'Nenhuma linha de produto enviada.');
+    $rows = input_rows($lines, 'Nenhum grupo de preço enviado.');
 
     return catalog_transaction(function (PDO $pdo) use ($user, $rows, $note) {
         $batch = new_price_batch();
@@ -453,7 +453,7 @@ function update_cost_lines(array $user, $lines, string $note): int
             $old = find_cost_line($line['key']);
             if (!$old) {
                 if ($line['name'] === '') {
-                    fail(422, 'Informe o nome da nova linha de produto.');
+                    fail(422, 'Informe o nome do novo grupo de preço.');
                 }
                 $pdo->prepare('INSERT INTO cost_lines (key, name, custo_base, desp_com, desp_adm, price100, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
                     ->execute([$line['key'], $line['name'], $line['custo_base'], $line['desp_com'], $line['desp_adm'], $line['price100'], $now]);
@@ -485,7 +485,7 @@ function update_cost_lines(array $user, $lines, string $note): int
 function update_freight(array $user, $rows, string $note): int
 {
     require_catalog_imported();
-    $list = input_rows($rows, 'Nenhuma linha de frete enviada.');
+    $list = input_rows($rows, 'Nenhuma praça de frete enviada.');
 
     return catalog_transaction(function (PDO $pdo) use ($user, $list, $note) {
         $batch = new_price_batch();
@@ -542,7 +542,7 @@ function save_products(array $user, $inputs, string $note): int
     foreach (input_rows($inputs, 'Nenhum produto enviado.') as $raw) {
         $product = clean_product($raw);
         if (!find_cost_line($product['cost_line_key'])) {
-            fail(422, "Escolha uma linha de produto válida para {$product['codigo']}.");
+            fail(422, "Escolha um grupo de preço válido para {$product['codigo']}.");
         }
         $rows[] = ['product' => $product, 'isNew' => !empty($raw['isNew'])];
     }
@@ -639,7 +639,7 @@ function bulk_update_products(array $user, $input): int
     if ($action === 'setLine') {
         $targetLine = find_cost_line(normalize_cost_line_key($data['costLineKey'] ?? ''));
         if (!$targetLine) {
-            fail(422, 'Escolha uma linha de produto válida.');
+            fail(422, 'Escolha um grupo de preço válido.');
         }
     }
 
@@ -737,7 +737,7 @@ function bulk_adjust(array $user, $input): array
             }
         }
     } else {
-        fail(422, 'Escolha se o reajuste é nas linhas de produto ou no frete.');
+        fail(422, 'Escolha se o reajuste é nos grupos de preço ou no frete.');
     }
     if (!$updates) {
         fail(422, 'Nenhum valor mudaria com esse reajuste. Confira a seleção.');

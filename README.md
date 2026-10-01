@@ -23,10 +23,11 @@ Além da calculadora, o portal oferece um fluxo de negociação com preço unit�
 
 - Pesquisa de produtos por descrição, código e categoria.
 - Seleção de UF, tipo de praça e faixa de peso.
-- **FOB** = preço 100% NF da linha de produto (R$/kg) × peso do produto.
-- **CIF** = (custo + despesas + frete da UF/praça/faixa de peso) ÷ (custos ÷ preço 100% NF) × peso — o frete recebe o mesmo markup da linha.
+- **FOB** = preço por kg do grupo de preço do produto (o "100% NF" da planilha) × peso do produto.
+- **CIF** = (custo + despesas + frete da UF/praça/faixa de peso) ÷ (custos ÷ preço 100% NF) × peso — o frete recebe o mesmo markup do grupo.
 - Exibição de peso, preço FOB e preço CIF por item.
-- **💲 Tabela de Preços (aba do gestor):** custos e preço 100% NF por linha de produto, tabela de frete, cadastro de produtos (linha, peso, ativo/inativo), **preço próprio por produto** (ex.: produto X = R$ 50,00), ações por **categoria** (reajuste %, trocar de linha, voltar ao preço da linha), reajuste percentual em lote com pré-visualização e histórico "de → para" de cada alteração. Mudanças valem imediatamente para todos.
+- **💲 Tabela de Preços (aba do gestor):** custos e preço por kg de cada **grupo de preço** (a "linha de produto" da planilha de custos), tabela de frete, cadastro de produtos (grupo, peso, ativo/inativo), **preço próprio por produto** (ex.: produto X = R$ 50,00), ações por **categoria** (reajuste %, mover de grupo, voltar ao preço do grupo), reajuste percentual em lote com pré-visualização e histórico "de → para" de cada alteração. Mudanças valem imediatamente para todos.
+- **Vocabulário:** *categoria* é a família do produto (serve para filtrar); *grupo de preço* é o conjunto de produtos que compartilha um preço por kg. Uma categoria pode ter mais de um grupo (ex.: sacolas impressas brancas, azuis e verdes). No código, grupo de preço aparece como `costLines` / `cost_lines`.
 - **Atualização automática:** cada portal aberto confere a versão da tabela a cada minuto (e ao voltar para a aba do navegador); se o gestor mudou algo, a busca e o pedido aberto se atualizam sozinhos.
 
 ### 🤝 Negociação e margem
@@ -122,7 +123,7 @@ A pasta `demo/` fica só na máquina de desenvolvimento (está no `.gitignore`, 
 - Usuários, pedidos, lixeira, numeração Hiper Roll e o registro de auditoria ficam em um banco **SQLite** (um único arquivo, `data/portal.sqlite` por padrão), criado automaticamente pelo PHP.
 - O número Hiper Roll é gerado pelo servidor quando o pedido é salvo pela primeira vez, então dois representantes nunca recebem o mesmo número. O número exibido em um pedido ainda não salvo é uma previsão.
 - **Backup:** gestor ou administrador → **👥 Usuários → ⬇️ Baixar backup** (arquivo JSON com pedidos e usuários, sem as senhas). Para uma cópia completa, baixe o arquivo `.sqlite` pelo Gerenciador de Arquivos do cPanel; para restaurar, basta substituí-lo.
-- **Tabela de preços:** na primeira vez que o gestor (ou o administrador) abre a aba 💲 Tabela de Preços, a tabela do `data.js` é copiada para o banco automaticamente, sem mudar nenhum preço. A partir daí, linhas de produto, frete, produtos e o histórico de preços ficam no mesmo banco SQLite, com um número de versão que sobe a cada alteração e é gravado em cada pedido.
+- **Tabela de preços:** na primeira vez que o gestor (ou o administrador) abre a aba 💲 Tabela de Preços, a tabela do `data.js` é copiada para o banco automaticamente, sem mudar nenhum preço. A partir daí, grupos de preço, frete, produtos e o histórico de preços ficam no mesmo banco SQLite, com um número de versão que sobe a cada alteração e é gravado em cada pedido.
 - Até essa primeira abertura, o portal usa o `data.js`, entregue pelo `api/data.php` **somente para usuários logados**. Depois dela o `data.js` não é mais necessário no servidor.
 - Preferências de interface (tema claro/escuro) continuam salvas no navegador.
 
@@ -142,10 +143,10 @@ A pasta `demo/` fica só na máquina de desenvolvimento (está no `.gitignore`, 
 
 O gestor entra na aba **💲 Tabela de Preços** e altera direto na tela (digita o valor e aperta Enter), sem importar nem mexer em arquivos:
 
-- **Linhas de produto:** preço por kg de cada linha; "Mostrar custos" revela custo, despesas, total e markup.
+- **Grupos de preço:** preço por kg de cada grupo; "Mostrar custos" revela custo, despesas, total e markup.
 - **Frete:** valores por UF/praça e faixa de peso; é possível adicionar ou remover praças.
-- **Produtos:** descrição, linha de produto, peso, ativo/inativo e **preço FOB próprio** ("↺ usar linha" desfaz). Dá para alterar vários produtos e gravar todos de uma vez em **Salvar alterações** (ou Enter); as alterações pendentes continuam guardadas ao trocar de filtro. Filtro por **uma ou mais categorias**, com ações para todos os produtos listados: reajuste %, mover para outra linha e voltar ao preço da linha. Produtos com preço próprio não acompanham os reajustes da linha. Cadastro de produtos novos.
-- **Reajuste em lote:** um percentual sobre as linhas escolhidas (preço e custos juntos, só preço ou só custos) ou sobre o frete das UFs escolhidas. Sempre com pré-visualização antes de aplicar.
+- **Produtos:** descrição, grupo de preço, peso, ativo/inativo e **preço FOB próprio** ("↺ usar grupo" desfaz). Dá para alterar vários produtos e gravar todos de uma vez em **Salvar alterações** (ou Enter); as alterações pendentes continuam guardadas ao trocar de filtro. Filtro por **uma ou mais categorias**, com ações para todos os produtos listados: reajuste %, mover para outro grupo e voltar ao preço do grupo. Produtos com preço próprio não acompanham os reajustes do grupo. Cadastro de produtos novos.
+- **Reajuste em lote:** um percentual sobre os grupos de preço escolhidos (preço e custos juntos, só preço ou só custos) ou sobre o frete das UFs escolhidas. Sempre com pré-visualização antes de aplicar.
 - **Histórico:** quem mudou, quando, o valor anterior, o novo e o motivo.
 
 Os scripts abaixo só servem para atualizar o `data.js` **antes** de a tabela ir para o banco:
@@ -190,7 +191,7 @@ Arquivos como `index_backup.html`, `data_backup.js`, `style_backup.css` e `data.
 ## ⚠️ Limitações atuais
 
 - Enquanto a tabela ainda não está no banco, o FOB de cada item ainda vem do navegador; depois dela, o servidor recalcula tudo.
-- A ligação produto → linha de produto vem de uma regra de palavras-chave (`getCategoryMatch()`) mais a tabela `LEGACY_CATEGORY_LINES` no `script_v5.js`: sacarias, sacos de lixo (uma linha por categoria) e bobinas de fundo reto têm linhas próprias, criadas como cópia da linha que as precificava (Fundo Reto ou Bobina estrela), sem alterar nenhum preço. As linhas da planilha que nenhum produto usa (Corte solda MD/BD, Saco para lixo, Dobrado Azul/Preto, Bobina Forração) ficam fora do portal. Depois da importação, tudo isso passa a ser editado na aba Tabela de Preços.
+- A ligação produto → grupo de preço vem de uma regra de palavras-chave (`getCategoryMatch()`) mais a tabela `LEGACY_CATEGORY_LINES` no `script_v5.js`: sacarias, sacos de lixo (um grupo por categoria) e bobinas de fundo reto têm grupos próprios, criados como cópia do grupo que os precificava (Fundo Reto ou Bobina estrela), sem alterar nenhum preço. Os grupos da planilha que nenhum produto usa (Corte solda MD/BD, Saco para lixo, Dobrado Azul/Preto, Bobina Forração) ficam fora do portal. Depois da importação, tudo isso passa a ser editado na aba Tabela de Preços.
 - As notas fiscais anexadas ficam dentro do banco (em base64); com muitos anexos grandes, vale movê-las para arquivos separados.
 - O histórico de status exibido no botão "📋 Histórico" do resumo do pedido é local ao navegador.
 - Os scripts de atualização dependem de planilhas e caminhos locais que podem variar por máquina.
