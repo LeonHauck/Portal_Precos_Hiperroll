@@ -876,7 +876,7 @@ function buildLegacyCatalog() {
         }
         const key = `${currentUF}/${type}`;
         if (freight[key]) {
-            warnings.push(`${currentUF} · ${type}: a planilha tem duas linhas ("${freight[key].label}" e "${label}") e o portal usa a última, ${label} (R$ ${row[2]} / R$ ${row[3]} por kg). Confira na aba Frete depois de importar.`);
+            warnings.push(`${currentUF} · ${type}: a planilha tem duas linhas ("${freight[key].label}" e "${label}") e o portal usa a última, ${label} (R$ ${row[2]} / R$ ${row[3]} por kg). Ajuste na seção Frete se não for isso.`);
         }
         freight[key] = { uf: currentUF, pracaType: type, label, tier1: parseDecimal(row[2]), tier2: parseDecimal(row[3]) };
         ufEntryCount++;
@@ -984,7 +984,7 @@ function computeItemPrices(product, { uf, cityType, weightTier } = {}) {
     const hasOwnPrice = product.priceOverride != null && product.weightRaw > 0;
     const price100 = hasOwnPrice ? product.priceOverride / product.weightRaw : line.price100;
     const divisor = price100 > 0 ? line.costs / price100 : 0;
-    const fob = price100 * product.weightRaw;
+    const fob = hasOwnPrice ? product.priceOverride : price100 * product.weightRaw; // exact, no ÷ × rounding
     const fData = freightData[uf] ? freightData[uf][cityType] : null;
     const rate = fData ? (fData[weightTier] || 0) : 0;
     const cif = divisor > 0 ? (line.costs + rate) / divisor * product.weightRaw : 0;
@@ -3931,8 +3931,10 @@ function renderPricingTab() {
         container.innerHTML = '';
         return;
     }
+    bindPricingEnterKey(container);
     if (!pricingCatalog.imported) {
         container.innerHTML = renderPricingImportPanel();
+        if (getLegacyCatalog() && !pricingImportError && !pricingImportPromise) importPricingCatalog();
         return;
     }
 
@@ -3961,6 +3963,27 @@ function renderPricingTab() {
         history: renderPricingHistory
     };
     (renderers[pricingTabSection] || renderPricingLines)(document.getElementById('pricingSectionBody'));
+}
+
+// Enter inside an edited row (product line, freight or product) saves it right away.
+function bindPricingEnterKey(container) {
+    if (container.dataset.enterBound) return;
+    container.dataset.enterBound = '1';
+    container.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || !event.target.matches('input')) return;
+        const row = event.target.closest('tr');
+        if (!row || !row.classList.contains('is-dirty')) return;
+        if (row.dataset.lineKey) {
+            event.preventDefault();
+            savePricingLines();
+        } else if (row.dataset.uf) {
+            event.preventDefault();
+            saveFreightRows();
+        } else if (row.dataset.codigo) {
+            event.preventDefault();
+            savePricingProduct(event.target);
+        }
+    });
 }
 
 function switchPricingSection(section) {
@@ -4017,36 +4040,39 @@ async function sendPricingChange(action, body) {
     }
 }
 
-// ----- Importação (uma única vez) -----
+// ----- Carga inicial (automática, uma única vez) -----
+// The first time the gestor (or the admin) opens this tab, the table the portal already uses
+// (data.js) is copied into the database as it is, so they can start editing right away.
+let pricingImportPromise = null;
+let pricingImportError = '';
 
 function renderPricingImportPanel() {
-    const legacy = getLegacyCatalog();
-    if (!legacy) {
-        return '<div class="empty-state">A tabela ainda não foi importada e o arquivo data.js não está disponível no servidor.</div>';
+    if (!getLegacyCatalog()) {
+        return '<div class="empty-state">A tabela de preços ainda não está no sistema e o arquivo data.js não está disponível no servidor.</div>';
     }
-    const warnings = legacy.warnings.length
-        ? `<div class="pricing-warning"><strong>Conferir depois da importação:</strong><ul>${legacy.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul></div>`
-        : '';
-    return `
-        <div class="pricing-import">
-            <h3>Importar a tabela atual para o sistema</h3>
-            <p>Hoje os preços vêm do arquivo <code>data.js</code>. A importação copia para o banco exatamente os valores que o portal usa agora, então nenhum preço muda. A partir daí o gestor edita tudo por esta aba, e cada alteração vale na hora para todos os representantes.</p>
-            <ul class="pricing-import-counts">
-                <li><strong>${legacy.costLines.length}</strong> linhas de produto</li>
-                <li><strong>${legacy.freight.length}</strong> praças de frete</li>
-                <li><strong>${legacy.products.length}</strong> produtos</li>
-            </ul>
-            ${legacy.unusedLines.length ? `<p class="pricing-hint">Linhas da planilha que nenhum produto usa e por isso ficam fora do portal: ${legacy.unusedLines.map(escapeHtml).join(', ')}.</p>` : ''}
-            ${warnings}
-            <button type="button" class="btn-modal btn-modal-primary" onclick="importPricingCatalog()">⬆️ Importar tabela atual</button>
-            <div id="pricingMessage" class="pricing-message"></div>
-        </div>`;
+    if (pricingImportError) {
+        return `
+            <div class="pricing-import">
+                <div class="pricing-message is-error">Não foi possível preparar a tabela de preços: ${escapeHtml(pricingImportError)}</div>
+                <button type="button" class="btn-modal btn-modal-primary" onclick="importPricingCatalog()">Tentar de novo</button>
+            </div>`;
+    }
+    return '<div class="empty-state">Preparando a tabela de preços…</div>';
 }
 
-async function importPricingCatalog() {
+// Safe to call more than once: a second call while one is running gets the same promise.
+function importPricingCatalog() {
+    if (pricingCatalog.imported) return Promise.resolve();
+    if (!pricingImportPromise) {
+        pricingImportPromise = runPricingImport().finally(() => { pricingImportPromise = null; });
+    }
+    return pricingImportPromise;
+}
+
+async function runPricingImport() {
     const legacy = getLegacyCatalog();
     if (!legacy) return;
-    if (!confirm('Importar a tabela atual para o sistema? Isso é feito uma única vez; depois as alterações passam a ser feitas nesta aba.')) return;
+    pricingImportError = '';
     try {
         const data = await apiRequest('pricing.import', {
             method: 'POST',
@@ -4054,13 +4080,22 @@ async function importPricingCatalog() {
         });
         await applyServerCatalog(data.catalog, 'A tabela de preços passou a vir do sistema. Confira o pedido que está montando.');
         renderPricingTab();
-        setPricingMessage(`Tabela importada: ${data.imported.costLines} linhas de produto, ${data.imported.freight} praças de frete e ${data.imported.products} produtos.`, 'success');
+        const notes = legacy.warnings.length ? ` Confira: ${legacy.warnings.join(' ')}` : '';
+        setPricingMessage(`Tabela pronta para edição: ${data.imported.costLines} linhas de produto, ${data.imported.freight} praças de frete e ${data.imported.products} produtos, com os preços que o portal já usava.${notes}`, 'success');
     } catch (e) {
-        setPricingMessage(e.message, 'error');
+        // 409 = someone else (another tab, the admin) did the same a moment ago: just load it.
+        if (e.status === 409) {
+            await refreshPricingCatalog();
+        } else {
+            pricingImportError = e.message;
+        }
+        renderPricingTab();
     }
 }
 
 // ----- Linhas de produto -----
+
+let pricingShowCosts = false;
 
 function formatMarkup(line) {
     const costs = line.custoBase + line.despCom + line.despAdm;
@@ -4076,6 +4111,8 @@ function describeLineProducts(key) {
     return own ? `${products.length} <span class="reprice-desc">(${own} com preço próprio)</span>` : String(products.length);
 }
 
+// Default view is just "line → price per kg". The cost columns stay in the page (hidden by CSS)
+// so every save still sends the whole line; "Mostrar custos" reveals them.
 function renderPricingLines(body) {
     const editable = pricingCanEdit();
     const dis = editable ? '' : 'disabled';
@@ -4083,20 +4120,23 @@ function renderPricingLines(body) {
     const rows = pricingCatalog.costLines.map(line => `
         <tr data-line-key="${escapeHtml(line.key)}">
             <td><input class="pricing-input pricing-input--text" data-field="name" value="${escapeHtml(line.name)}" maxlength="80" ${dis} oninput="onPricingLineInput(this)"></td>
-            <td>${money('custoBase', line.custoBase)}</td>
-            <td>${money('despCom', line.despCom)}</td>
-            <td>${money('despAdm', line.despAdm)}</td>
-            <td class="pricing-computed" data-computed="costs">${formatBRL(line.custoBase + line.despCom + line.despAdm)}</td>
+            <td class="col-cost">${money('custoBase', line.custoBase)}</td>
+            <td class="col-cost">${money('despCom', line.despCom)}</td>
+            <td class="col-cost">${money('despAdm', line.despAdm)}</td>
+            <td class="col-cost pricing-computed" data-computed="costs">${formatBRL(line.custoBase + line.despCom + line.despAdm)}</td>
             <td>${money('price100', line.price100, ' pricing-input--strong')}</td>
-            <td class="pricing-computed" data-computed="markup">${formatMarkup(line)}</td>
+            <td class="col-cost pricing-computed" data-computed="markup">${formatMarkup(line)}</td>
             <td class="pricing-computed">${describeLineProducts(line.key)}</td>
         </tr>`).join('');
 
     body.innerHTML = `
-        <p class="pricing-hint">Valores em R$ por kg. <strong>FOB</strong> de um produto = preço 100% NF × peso. <strong>CIF</strong> = (custos + frete da região) com o mesmo markup (preço 100% NF ÷ custos). Produtos com <strong>preço próprio</strong> (aba Produtos) não mudam quando a linha muda.</p>
+        <div class="pricing-filterbar">
+            <p class="pricing-hint">${editable ? 'Altere o <strong>preço por kg</strong> da linha e aperte <strong>Enter</strong>. ' : ''}O preço FOB de cada produto da linha = preço por kg × peso do produto. Produtos com <strong>preço próprio</strong> (seção Produtos) não mudam quando a linha muda.</p>
+            <label class="pricing-check"><input type="checkbox" ${pricingShowCosts ? 'checked' : ''} onchange="pricingShowCosts = this.checked; this.closest('#pricingSectionBody').querySelector('.pricing-table').classList.toggle('pricing-table--simple', !this.checked)"> Mostrar custos</label>
+        </div>
         <div class="results-table-container">
-            <table class="pricing-table">
-                <thead><tr><th>Linha de produto</th><th>Custo produto</th><th>Desp. comercial</th><th>Desp. adm.</th><th>Total custos</th><th>Preço 100% NF</th><th>Markup s/ custos</th><th>Produtos</th></tr></thead>
+            <table class="pricing-table${pricingShowCosts ? '' : ' pricing-table--simple'}">
+                <thead><tr><th>Linha de produto</th><th class="col-cost">Custo produto</th><th class="col-cost">Desp. comercial</th><th class="col-cost">Desp. adm.</th><th class="col-cost">Total custos</th><th title="Preço 100% NF">Preço por kg (R$)</th><th class="col-cost">Markup s/ custos</th><th>Produtos</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -4108,7 +4148,7 @@ function renderPricingLines(body) {
                 <label>Custo produto<input id="newLineCustoBase" type="number" step="0.01" min="0" class="pricing-input"></label>
                 <label>Desp. comercial<input id="newLineDespCom" type="number" step="0.01" min="0" class="pricing-input"></label>
                 <label>Desp. adm.<input id="newLineDespAdm" type="number" step="0.01" min="0" class="pricing-input"></label>
-                <label>Preço 100% NF<input id="newLinePrice100" type="number" step="0.01" min="0" class="pricing-input"></label>
+                <label>Preço por kg<input id="newLinePrice100" type="number" step="0.01" min="0" class="pricing-input"></label>
                 <button type="button" class="btn-modal btn-modal-ghost" onclick="createPricingLine()">Criar linha</button>
             </div>
         </details>
@@ -4137,7 +4177,6 @@ function onPricingLineInput(input) {
 async function savePricingLines() {
     const lines = [...document.querySelectorAll('#pricingSectionBody tr.is-dirty[data-line-key]')].map(readPricingLineRow);
     if (!lines.length) return;
-    if (!confirm(`Salvar ${lines.length} linha(s) de produto? Os novos preços valem imediatamente para todos os representantes.`)) return;
     await sendPricingChange('pricing.updateCostLines', { lines, note: getPricingNote() });
 }
 
@@ -4176,7 +4215,7 @@ function renderPricingFreight(body) {
         </tr>`).join('');
 
     body.innerHTML = `
-        <p class="pricing-hint">Frete em R$ por kg, por UF e tipo de praça. O valor entra no custo do CIF (veja a fórmula em Linhas de produto).</p>
+        <p class="pricing-hint">Frete em R$ por kg, por UF e tipo de praça.${editable ? ' Altere o valor e aperte <strong>Enter</strong>.' : ''} O frete entra no preço CIF dos produtos daquela região.</p>
         <div class="results-table-container">
             <table class="pricing-table">
                 <thead><tr><th>UF</th><th>Praça</th><th>Descrição</th><th>150 a 199 kg</th><th>Acima de 200 kg</th>${editable ? '<th></th>' : ''}</tr></thead>
@@ -4208,10 +4247,9 @@ async function saveFreightRows() {
         remove: Boolean(row.querySelector('[data-field="remove"]')?.checked)
     }));
     if (!rows.length) return;
+    // Plain value changes save straight away; only removing a praça asks first.
     const removed = rows.filter(r => r.remove).map(r => `${r.uf} · ${r.pracaType}`);
-    let message = `Salvar ${rows.length} praça(s) de frete? Os novos valores valem imediatamente para todos os representantes.`;
-    if (removed.length) message += `\n\nSerão REMOVIDAS: ${removed.join(', ')}.`;
-    if (!confirm(message)) return;
+    if (removed.length && !confirm(`Remover do frete: ${removed.join(', ')}? Os representantes deixam de ter preço CIF para essas praças.`)) return;
     await sendPricingChange('pricing.updateFreight', { rows, note: getPricingNote() });
 }
 
@@ -4335,8 +4373,7 @@ function renderPricingProductRows() {
             <td><input type="number" step="0.001" min="0" class="pricing-input pricing-input--narrow" data-field="weight" value="${p.weight}" ${dis} oninput="onPricingProductInput(this)"></td>
             <td class="pricing-price-cell">
                 <input type="number" step="0.01" min="0" class="pricing-input pricing-input--strong pricing-input--narrow" data-field="price" value="${priceInputValue(Math.round(currentFobFor(p) * 100) / 100)}" ${dis}
-                    oninput="this.closest('tr').dataset.priceEdited = '1'; onPricingProductInput(this)"
-                    onkeydown="if (event.key === 'Enter') { event.preventDefault(); savePricingProduct(this); }">
+                    oninput="this.closest('tr').dataset.priceEdited = '1'; onPricingProductInput(this)">
                 <div class="price-note">${priceNote}</div>
             </td>
             <td><input type="checkbox" data-field="active" ${p.active ? 'checked' : ''} ${dis} onchange="onPricingProductInput(this)"></td>

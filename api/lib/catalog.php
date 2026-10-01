@@ -770,7 +770,9 @@ function server_item_prices(array $product, ?array $freightRate, string $weightT
         ? (float) $product['price_override'] / $weight
         : (float) $product['price100'];
     $costs = (float) $product['custo_base'] + (float) $product['desp_com'] + (float) $product['desp_adm'];
-    $prices = ['weight' => $weight, 'fob' => $price100 * $weight, 'cif' => null];
+    // An individual price is used exactly as typed (no ÷ × rounding noise).
+    $fob = $product['price_override'] !== null ? (float) $product['price_override'] : $price100 * $weight;
+    $prices = ['weight' => $weight, 'fob' => $fob, 'cif' => null];
     if ($freightRate && $costs > 0 && in_array($weightTier, FREIGHT_TIERS, true)) {
         $divisor = $costs / $price100;
         $prices['cif'] = ($costs + (float) $freightRate[$weightTier]) / $divisor * $weight;

@@ -96,6 +96,16 @@ php -S localhost:8000
 1. Acesse `http://localhost:8000/setup.php` e crie as contas do gestor e do administrador.
 2. Depois use `http://localhost:8000/Portal_Hiperroll_Final.html`.
 
+### 🎬 Sem PHP: modo demonstração
+
+A pasta `demo/` fica só na máquina de desenvolvimento (está no `.gitignore`, não vai para o repositório). Para ver e apresentar o sistema sem servidor, abra **`demo/index.html`** com dois cliques. O arquivo `demo/demo_api.js` simula a API dentro do navegador com as mesmas regras do PHP (papéis, margem mínima, versão da tabela de preços, histórico).
+
+- A barra no canto inferior troca de usuário (gestor, administrador, representantes) e tem o botão **Zerar dados**. As contas de exemplo aceitam qualquer senha.
+- Os dados ficam só no `localStorage` daquele navegador; nada é enviado a lugar nenhum.
+- A demonstração **não testa o PHP** e não é segurança de verdade: serve para navegar, treinar e apresentar.
+- `demo/index.html` é gerado a partir do HTML principal. Depois de mudar o `Portal_Hiperroll_Final.html`, rode `powershell -File demo\gerar_demo.ps1`.
+- A pasta `demo/` não deve ser enviada para a hospedagem (e o `.htaccess` dela bloqueia o acesso se for).
+
 ## ☁️ Publicação na HostGator
 
 1. **PHP:** em cPanel → *MultiPHP Manager*, selecione PHP 8.1 ou superior. Em *Select PHP Version → Extensions*, confirme `pdo_sqlite` e `mbstring` marcados.
@@ -112,8 +122,8 @@ php -S localhost:8000
 - Usuários, pedidos, lixeira, numeração Hiper Roll e o registro de auditoria ficam em um banco **SQLite** (um único arquivo, `data/portal.sqlite` por padrão), criado automaticamente pelo PHP.
 - O número Hiper Roll é gerado pelo servidor quando o pedido é salvo pela primeira vez, então dois representantes nunca recebem o mesmo número. O número exibido em um pedido ainda não salvo é uma previsão.
 - **Backup:** gestor ou administrador → **👥 Usuários → ⬇️ Baixar backup** (arquivo JSON com pedidos e usuários, sem as senhas). Para uma cópia completa, baixe o arquivo `.sqlite` pelo Gerenciador de Arquivos do cPanel; para restaurar, basta substituí-lo.
-- **Tabela de preços:** depois da importação (aba 💲 Tabela de Preços → *Importar tabela atual*, feita uma única vez pelo gestor ou administrador), linhas de produto, frete, produtos e o histórico de preços ficam no mesmo banco SQLite, com um número de versão que sobe a cada alteração e é gravado em cada pedido.
-- Antes da importação, o portal usa o `data.js`, entregue pelo `api/data.php` **somente para usuários logados**. Depois dela o `data.js` não é mais necessário no servidor.
+- **Tabela de preços:** na primeira vez que o gestor (ou o administrador) abre a aba 💲 Tabela de Preços, a tabela do `data.js` é copiada para o banco automaticamente, sem mudar nenhum preço. A partir daí, linhas de produto, frete, produtos e o histórico de preços ficam no mesmo banco SQLite, com um número de versão que sobe a cada alteração e é gravado em cada pedido.
+- Até essa primeira abertura, o portal usa o `data.js`, entregue pelo `api/data.php` **somente para usuários logados**. Depois dela o `data.js` não é mais necessário no servidor.
 - Preferências de interface (tema claro/escuro) continuam salvas no navegador.
 
 ## 🔒 Segurança
@@ -130,15 +140,15 @@ php -S localhost:8000
 
 ### Atualização de preços, produtos e fretes
 
-Depois da importação, tudo é feito pelo gestor na aba **💲 Tabela de Preços**, sem mexer em arquivos:
+O gestor entra na aba **💲 Tabela de Preços** e altera direto na tela (digita o valor e aperta Enter), sem importar nem mexer em arquivos:
 
-- **Linhas de produto:** custo, despesas e preço 100% NF (R$/kg); a tela mostra o total de custos e o markup.
+- **Linhas de produto:** preço por kg de cada linha; "Mostrar custos" revela custo, despesas, total e markup.
 - **Frete:** valores por UF/praça e faixa de peso; é possível adicionar ou remover praças.
 - **Produtos:** descrição, linha de produto, peso, ativo/inativo e **preço FOB próprio** (digitar o valor e Enter; "↺ usar linha" desfaz). Filtro por categoria com ações para todos os produtos listados: reajuste %, mover para outra linha e voltar ao preço da linha. Produtos com preço próprio não acompanham os reajustes da linha. Cadastro de produtos novos.
 - **Reajuste em lote:** um percentual sobre as linhas escolhidas (preço e custos juntos, só preço ou só custos) ou sobre o frete das UFs escolhidas. Sempre com pré-visualização antes de aplicar.
 - **Histórico:** quem mudou, quando, o valor anterior, o novo e o motivo.
 
-Os scripts abaixo só servem para atualizar o `data.js` **antes** da importação:
+Os scripts abaixo só servem para atualizar o `data.js` **antes** de a tabela ir para o banco:
 
 - `scratch/update_data.py`: importa o CSV de produtos para o bloco `PRODUTOS_CSV` de `data.js`.
 - `scratch/update_data.ps1`: versão PowerShell da atualização do bloco de produtos.
@@ -159,7 +169,7 @@ Portal_Precos_Hiperroll/
 ├── Portal_Hiperroll_Final.html  # Página principal da aplicação
 ├── script_v5.js                 # Interface, regras de preço e cliente da API
 ├── style.css                    # Estilos, temas claro/escuro e layout responsivo
-├── data.js                      # Tabela inicial (usada só até a importação para o banco)
+├── data.js                      # Tabela inicial (usada só até a tabela ir para o banco)   
 ├── setup.php                    # Configuração inicial (cria gestor e administrador)
 ├── .htaccess                    # Bloqueios de arquivos sensíveis no Apache
 ├── api/
@@ -168,6 +178,7 @@ Portal_Precos_Hiperroll/
 │   ├── config.php               # Configuração padrão
 │   ├── config.local.example.php # Modelo para ajustes da hospedagem
 │   └── lib/                     # Banco, autenticação, pedidos, usuários, margem e tabela de preços
+├── demo/                        # Modo demonstração local (fora do git; não publicar)
 ├── data/                        # Banco SQLite (criado automaticamente; fora do git)
 ├── scratch/                     # Scripts auxiliares de atualização de dados
 ├── logo-hiperroll.png           # Logo oficial (fundo transparente) — cabeçalho e favicon
@@ -178,7 +189,7 @@ Arquivos como `index_backup.html`, `data_backup.js`, `style_backup.css` e `data.
 
 ## ⚠️ Limitações atuais
 
-- Antes da importação da tabela, o FOB de cada item ainda vem do navegador; depois dela, o servidor recalcula tudo.
+- Enquanto a tabela ainda não está no banco, o FOB de cada item ainda vem do navegador; depois dela, o servidor recalcula tudo.
 - A ligação produto → linha de produto vem de uma regra de palavras-chave (`getCategoryMatch()`) mais a tabela `LEGACY_CATEGORY_LINES` no `script_v5.js`: sacarias, sacos de lixo (uma linha por categoria) e bobinas de fundo reto têm linhas próprias, criadas como cópia da linha que as precificava (Fundo Reto ou Bobina estrela), sem alterar nenhum preço. As linhas da planilha que nenhum produto usa (Corte solda MD/BD, Saco para lixo, Dobrado Azul/Preto, Bobina Forração) ficam fora do portal. Depois da importação, tudo isso passa a ser editado na aba Tabela de Preços.
 - As notas fiscais anexadas ficam dentro do banco (em base64); com muitos anexos grandes, vale movê-las para arquivos separados.
 - O histórico de status exibido no botão "📋 Histórico" do resumo do pedido é local ao navegador.
