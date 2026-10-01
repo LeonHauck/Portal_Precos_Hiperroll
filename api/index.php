@@ -244,6 +244,13 @@ switch ($action) {
         json_response(200, ['success' => true, 'changed' => $changed ? 1 : 0, 'catalog' => get_catalog($actor)]);
         break;
 
+    case 'pricing.saveProducts':
+        expect_method('POST');
+        $actor = require_role(ROLE_GESTOR);
+        $changed = save_products($actor, $body['products'] ?? [], str_field($body['note'] ?? '', 300));
+        json_response(200, ['success' => true, 'changed' => $changed, 'catalog' => get_catalog($actor)]);
+        break;
+
     case 'pricing.bulkAdjust':
         expect_method('POST');
         $actor = require_role(ROLE_GESTOR);
