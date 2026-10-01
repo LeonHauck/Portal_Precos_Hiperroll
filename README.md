@@ -179,7 +179,7 @@ Arquivos como `index_backup.html`, `data_backup.js`, `style_backup.css` e `data.
 ## ⚠️ Limitações atuais
 
 - Antes da importação da tabela, o FOB de cada item ainda vem do navegador; depois dela, o servidor recalcula tudo.
-- A ligação produto → linha de produto importada é a mesma regra de palavras-chave usada até hoje; hoje ela coloca os sacos de lixo e as sacarias na linha "Fundo Reto". Revise na aba Tabela de Preços → Produtos (filtre a categoria e use "Mover para a linha").
+- A ligação produto → linha de produto vem de uma regra de palavras-chave (`getCategoryMatch()`) mais a tabela `LEGACY_CATEGORY_LINES` no `script_v5.js`: sacarias, sacos de lixo (uma linha por categoria) e bobinas de fundo reto têm linhas próprias, criadas como cópia da linha que as precificava (Fundo Reto ou Bobina estrela), sem alterar nenhum preço. As linhas da planilha que nenhum produto usa (Corte solda MD/BD, Saco para lixo, Dobrado Azul/Preto, Bobina Forração) ficam fora do portal. Depois da importação, tudo isso passa a ser editado na aba Tabela de Preços.
 - As notas fiscais anexadas ficam dentro do banco (em base64); com muitos anexos grandes, vale movê-las para arquivos separados.
 - O histórico de status exibido no botão "📋 Histórico" do resumo do pedido é local ao navegador.
 - Os scripts de atualização dependem de planilhas e caminhos locais que podem variar por máquina.
