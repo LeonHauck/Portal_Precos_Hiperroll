@@ -3897,7 +3897,7 @@ const PRICING_FIELD_LABELS = Object.freeze({
     descricao: 'Descrição',
     categoria: 'Categoria',
     subcat: 'Subcategoria',
-    cost_line_key: 'Linha de produto',
+    cost_line_key: 'Grupo de preço',
     weight: 'Peso (kg)',
     ncm: 'NCM',
     active: 'Ativo',
@@ -3939,7 +3939,7 @@ function renderPricingTab() {
     }
 
     const sections = [
-        ['lines', '🏷️ Linhas de produto'],
+        ['lines', '🏷️ Grupos de preço'],
         ['freight', '🚚 Frete'],
         ['products', '📦 Produtos'],
         ['bulk', '📈 Reajuste em lote'],
@@ -4081,7 +4081,7 @@ async function runPricingImport() {
         await applyServerCatalog(data.catalog, 'A tabela de preços passou a vir do sistema. Confira o pedido que está montando.');
         renderPricingTab();
         const notes = legacy.warnings.length ? ` Confira: ${legacy.warnings.join(' ')}` : '';
-        setPricingMessage(`Tabela pronta para edição: ${data.imported.costLines} linhas de produto, ${data.imported.freight} praças de frete e ${data.imported.products} produtos, com os preços que o portal já usava.${notes}`, 'success');
+        setPricingMessage(`Tabela pronta para edição: ${data.imported.costLines} grupos de preço, ${data.imported.freight} praças de frete e ${data.imported.products} produtos, com os preços que o portal já usava.${notes}`, 'success');
     } catch (e) {
         // 409 = someone else (another tab, the admin) did the same a moment ago: just load it.
         if (e.status === 409) {
@@ -4093,7 +4093,7 @@ async function runPricingImport() {
     }
 }
 
-// ----- Linhas de produto -----
+// ----- Grupos de preço (cost lines) -----
 
 let pricingShowCosts = false;
 
@@ -4131,25 +4131,25 @@ function renderPricingLines(body) {
 
     body.innerHTML = `
         <div class="pricing-filterbar">
-            <p class="pricing-hint">${editable ? 'Altere o <strong>preço por kg</strong> da linha e aperte <strong>Enter</strong>. ' : ''}O preço FOB de cada produto da linha = preço por kg × peso do produto. Produtos com <strong>preço próprio</strong> (seção Produtos) não mudam quando a linha muda.</p>
+            <p class="pricing-hint">${editable ? 'Altere o <strong>preço por kg</strong> do grupo e aperte <strong>Enter</strong>. ' : ''}Cada grupo de preço tem um preço por kg; o preço FOB de cada produto do grupo = preço por kg × peso do produto. Produtos com <strong>preço próprio</strong> (seção Produtos) não mudam quando o grupo muda.</p>
             <label class="pricing-check"><input type="checkbox" ${pricingShowCosts ? 'checked' : ''} onchange="pricingShowCosts = this.checked; this.closest('#pricingSectionBody').querySelector('.pricing-table').classList.toggle('pricing-table--simple', !this.checked)"> Mostrar custos</label>
         </div>
         <div class="results-table-container">
             <table class="pricing-table${pricingShowCosts ? '' : ' pricing-table--simple'}">
-                <thead><tr><th>Linha de produto</th><th class="col-cost">Custo produto</th><th class="col-cost">Desp. comercial</th><th class="col-cost">Desp. adm.</th><th class="col-cost">Total custos</th><th title="Preço 100% NF">Preço por kg (R$)</th><th class="col-cost">Markup s/ custos</th><th>Produtos</th></tr></thead>
+                <thead><tr><th>Grupo de preço</th><th class="col-cost">Custo produto</th><th class="col-cost">Desp. comercial</th><th class="col-cost">Desp. adm.</th><th class="col-cost">Total custos</th><th title="Preço 100% NF">Preço por kg (R$)</th><th class="col-cost">Markup s/ custos</th><th>Produtos</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
         ${editable ? `
         <details class="pricing-new">
-            <summary>➕ Nova linha de produto</summary>
+            <summary>➕ Novo grupo de preço</summary>
             <div class="pricing-form-grid">
                 <label>Nome<input id="newLineName" class="pricing-input pricing-input--text" maxlength="80"></label>
                 <label>Custo produto<input id="newLineCustoBase" type="number" step="0.01" min="0" class="pricing-input"></label>
                 <label>Desp. comercial<input id="newLineDespCom" type="number" step="0.01" min="0" class="pricing-input"></label>
                 <label>Desp. adm.<input id="newLineDespAdm" type="number" step="0.01" min="0" class="pricing-input"></label>
                 <label>Preço por kg<input id="newLinePrice100" type="number" step="0.01" min="0" class="pricing-input"></label>
-                <button type="button" class="btn-modal btn-modal-ghost" onclick="createPricingLine()">Criar linha</button>
+                <button type="button" class="btn-modal btn-modal-ghost" onclick="createPricingLine()">Criar grupo</button>
             </div>
         </details>
         ${pricingSaveBar('savePricingLines()')}` : ''}`;
@@ -4183,18 +4183,18 @@ async function savePricingLines() {
 async function createPricingLine() {
     const name = document.getElementById('newLineName')?.value.trim() || '';
     if (!name) {
-        setPricingMessage('Informe o nome da nova linha de produto.', 'error');
+        setPricingMessage('Informe o nome do novo grupo de preço.', 'error');
         return;
     }
     const key = name.toLowerCase();
     if (costsData[key]) {
-        setPricingMessage('Já existe uma linha de produto com esse nome.', 'error');
+        setPricingMessage('Já existe um grupo de preço com esse nome.', 'error');
         return;
     }
     const num = id => parseFloat(document.getElementById(id)?.value) || 0;
     await sendPricingChange('pricing.updateCostLines', {
         lines: [{ key, name, custoBase: num('newLineCustoBase'), despCom: num('newLineDespCom'), despAdm: num('newLineDespAdm'), price100: num('newLinePrice100') }],
-        note: 'Nova linha de produto'
+        note: 'Novo grupo de preço'
     });
 }
 
@@ -4261,7 +4261,7 @@ async function createFreightRow() {
         return;
     }
     if (freightData[uf] && freightData[uf][pracaType]) {
-        setPricingMessage(`${uf} · ${pracaType} já existe: edite a linha na tabela.`, 'error');
+        setPricingMessage(`${uf} · ${pracaType} já existe: edite essa praça na tabela.`, 'error');
         return;
     }
     const num = id => parseFloat(document.getElementById(id)?.value) || 0;
@@ -4318,7 +4318,7 @@ function renderPricingProducts(body) {
             <input id="pricingProductSearch" class="pricing-input pricing-input--wide" placeholder="Buscar por código ou descrição" value="${escapeHtml(pricingProductFilter)}" oninput="pricingProductFilter = this.value; renderPricingProductRows()">
             <label class="pricing-check"><input type="checkbox" ${pricingShowInactive ? 'checked' : ''} onchange="pricingShowInactive = this.checked; renderPricingProductRows()"> Mostrar inativos</label>
         </div>
-        <p class="pricing-hint">Clique em uma ou mais categorias para filtrar. ${editable ? 'Altere quantos produtos quiser e clique em <strong>Salvar alterações</strong> (ou aperte Enter). ' : ''}Um produto <strong>sem preço próprio</strong> segue a linha de produto: preço por kg × peso. O CIF de cada região é calculado a partir do preço FOB.</p>
+        <p class="pricing-hint">Clique em uma ou mais categorias para filtrar. ${editable ? 'Altere quantos produtos quiser e clique em <strong>Salvar alterações</strong> (ou aperte Enter). ' : ''}Um produto <strong>sem preço próprio</strong> segue o grupo de preço dele: preço por kg do grupo × peso. O CIF de cada região é calculado a partir do preço FOB.</p>
         ${editable ? `
         <div class="pricing-bulkbar">
             <span>Com os <strong id="pricingFilteredCount">0</strong> produtos listados:</span>
@@ -4328,9 +4328,9 @@ function renderPricingProducts(body) {
             </span>
             <span class="pricing-bulkbar-group">
                 <select id="bulkProductLine" class="pricing-input">${lineOptions}</select>
-                <button type="button" class="pricing-row-btn" onclick="bulkUpdateFilteredProducts('setLine')" title="Os produtos listados passam a pertencer a esta linha de produto e a usar o preço por kg dela.">Mover para a linha</button>
+                <button type="button" class="pricing-row-btn" onclick="bulkUpdateFilteredProducts('setLine')" title="Os produtos listados passam a pertencer a este grupo de preço e a usar o preço por kg dele.">Mover para o grupo</button>
             </span>
-            <button type="button" class="pricing-row-btn pricing-row-btn--ghost" onclick="bulkUpdateFilteredProducts('clearPrice')" title="Apaga o preço próprio dos produtos listados: eles voltam a custar preço por kg da linha × peso.">Voltar ao preço da linha</button>
+            <button type="button" class="pricing-row-btn pricing-row-btn--ghost" onclick="bulkUpdateFilteredProducts('clearPrice')" title="Apaga o preço próprio dos produtos listados: eles voltam a custar preço por kg do grupo × peso.">Voltar ao preço do grupo</button>
         </div>
         <div class="pricing-pending" id="pricingProductPending" hidden>
             <span>✏️ <strong id="pricingPendingCount">0</strong> produto(s) com alteração ainda não salva</span>
@@ -4339,7 +4339,7 @@ function renderPricingProducts(body) {
         </div>` : ''}
         <div class="results-table-container">
             <table class="pricing-table">
-                <thead><tr><th>Código</th><th>Descrição</th><th>Linha de produto</th><th>Peso (kg)</th><th>Preço FOB (R$)</th><th>Ativo</th></tr></thead>
+                <thead><tr><th>Código</th><th>Descrição</th><th>Grupo de preço</th><th>Peso (kg)</th><th>Preço FOB (R$)</th><th>Ativo</th></tr></thead>
                 <tbody id="pricingProductRows"></tbody>
             </table>
         </div>
@@ -4351,9 +4351,9 @@ function renderPricingProducts(body) {
                 <label>Descrição<input id="newProductDescricao" class="pricing-input pricing-input--text" maxlength="200"></label>
                 <label>Categoria<input id="newProductCategoria" class="pricing-input pricing-input--text" maxlength="80" placeholder="Ex.: Bobina Fundo Estrela"></label>
                 <label>Subcategoria<input id="newProductSubcat" class="pricing-input pricing-input--text" maxlength="80"></label>
-                <label>Linha de produto<select id="newProductLine" class="pricing-input">${lineOptions}</select></label>
+                <label>Grupo de preço<select id="newProductLine" class="pricing-input">${lineOptions}</select></label>
                 <label>Peso (kg)<input id="newProductWeight" type="number" step="0.001" min="0" class="pricing-input"></label>
-                <label>Preço FOB próprio (opcional)<input id="newProductPrice" type="number" step="0.01" min="0" class="pricing-input" placeholder="vazio = preço da linha"></label>
+                <label>Preço FOB próprio (opcional)<input id="newProductPrice" type="number" step="0.01" min="0" class="pricing-input" placeholder="vazio = preço do grupo"></label>
                 <label>NCM<input id="newProductNcm" class="pricing-input" maxlength="20"></label>
                 <button type="button" class="btn-modal btn-modal-ghost" onclick="createPricingProduct()">Cadastrar produto</button>
             </div>
@@ -4394,8 +4394,8 @@ function renderPricingProductRows() {
         const price = edit && edit.priceEdited ? edit.price : (p.priceOverride != null ? p.priceOverride : lineFobFor(p, shown.costLineKey, shown.weight));
         const own = p.priceOverride != null;
         const priceNote = own
-            ? `<span class="price-badge">preço próprio</span>${editable ? ` <button type="button" class="pricing-link-btn" onclick="resetPricingProductPrice(this)" title="Voltar a seguir a linha (R$ ${formatBRL(lineFobFor(p))})">↺ usar linha</button>` : ''}`
-            : '<span class="price-badge price-badge--line">da linha</span>';
+            ? `<span class="price-badge">preço próprio</span>${editable ? ` <button type="button" class="pricing-link-btn" onclick="resetPricingProductPrice(this)" title="Voltar a seguir o grupo de preço (R$ ${formatBRL(lineFobFor(p))})">↺ usar grupo</button>` : ''}`
+            : '<span class="price-badge price-badge--line">do grupo</span>';
         return `
         <tr data-codigo="${escapeHtml(p.codigo)}" class="${shown.active ? '' : 'is-inactive'}${edit ? ' is-dirty' : ''}"${edit && edit.priceEdited ? ' data-price-edited="1"' : ''}>
             <td><strong>${escapeHtml(p.codigo)}</strong><div class="reprice-desc">${escapeHtml(p.categoria)}</div></td>
@@ -4487,9 +4487,9 @@ async function resetPricingProductPrice(el) {
     const row = el.closest('tr');
     const current = pricingCatalog.products.find(p => p.codigo === row.dataset.codigo);
     if (!current) return;
-    if (!confirm(`${current.codigo} volta a seguir o preço da linha: R$ ${formatBRL(lineFobFor(current))} (hoje R$ ${formatBRL(current.priceOverride)}). Confirmar?`)) return;
+    if (!confirm(`${current.codigo} volta a seguir o preço do grupo: R$ ${formatBRL(lineFobFor(current))} (hoje R$ ${formatBRL(current.priceOverride)}). Confirmar?`)) return;
     delete pricingProductEdits[current.codigo];
-    await sendPricingChange('pricing.saveProduct', { product: { ...current, priceOverride: null }, note: 'Voltou ao preço da linha' });
+    await sendPricingChange('pricing.saveProduct', { product: { ...current, priceOverride: null }, note: 'Voltou ao preço do grupo' });
 }
 
 async function bulkUpdateFilteredProducts(action) {
@@ -4514,12 +4514,12 @@ async function bulkUpdateFilteredProducts(action) {
         const sample = list[0];
         const before = currentFobFor(sample);
         const after = Math.round(before * (1 + percent / 100) * 100) / 100;
-        if (!confirm(`Reajustar em ${percent}% o preço de ${list.length} produto(s)${scope}?\n\nExemplo: ${sample.codigo}: R$ ${formatBRL(before)} → R$ ${formatBRL(after)}\n\nEles passam a ter preço próprio e deixam de acompanhar os reajustes da linha (até você usar "Voltar ao preço da linha").`)) return;
+        if (!confirm(`Reajustar em ${percent}% o preço de ${list.length} produto(s)${scope}?\n\nExemplo: ${sample.codigo}: R$ ${formatBRL(before)} → R$ ${formatBRL(after)}\n\nEles passam a ter preço próprio e deixam de acompanhar os reajustes do grupo (até você usar "Voltar ao preço do grupo").`)) return;
         body.percent = percent;
     } else if (action === 'setLine') {
         const select = document.getElementById('bulkProductLine');
         const lineName = select?.selectedOptions[0]?.textContent || '';
-        if (!confirm(`Mover ${list.length} produto(s)${scope} para a linha "${lineName}"?\n\nQuem não tem preço próprio passa a usar o preço por kg dessa linha.`)) return;
+        if (!confirm(`Mover ${list.length} produto(s)${scope} para o grupo "${lineName}"?\n\nQuem não tem preço próprio passa a usar o preço por kg desse grupo.`)) return;
         body.costLineKey = select.value;
     } else {
         const withOwn = list.filter(p => p.priceOverride != null).length;
@@ -4527,7 +4527,7 @@ async function bulkUpdateFilteredProducts(action) {
             setPricingMessage('Nenhum dos produtos listados tem preço próprio.', 'info');
             return;
         }
-        if (!confirm(`${withOwn} produto(s)${scope} voltam a seguir o preço da linha. Confirmar?`)) return;
+        if (!confirm(`${withOwn} produto(s)${scope} voltam a seguir o preço do grupo. Confirmar?`)) return;
     }
     await sendPricingChange('pricing.bulkProducts', body);
 }
@@ -4565,7 +4565,7 @@ function renderPricingBulk(body) {
             <div class="pricing-form-grid">
                 <label>Aplicar em
                     <select id="bulkTarget" class="pricing-input" onchange="onBulkParamsChange(true)">
-                        <option value="costLines">Linhas de produto</option>
+                        <option value="costLines">Grupos de preço</option>
                         <option value="freight">Frete</option>
                     </select>
                 </label>
@@ -4579,7 +4579,7 @@ function renderPricingBulk(body) {
                 </label>
             </div>
             <div class="pricing-bulk-select">
-                <div><strong id="bulkSelectTitle">Linhas incluídas</strong>
+                <div><strong id="bulkSelectTitle">Grupos incluídos</strong>
                     <button type="button" class="pricing-link-btn" onclick="toggleBulkSelection(true)">marcar todas</button> ·
                     <button type="button" class="pricing-link-btn" onclick="toggleBulkSelection(false)">desmarcar todas</button>
                 </div>
@@ -4600,7 +4600,7 @@ function renderBulkSelectList() {
     const items = target === 'freight'
         ? [...new Set(pricingCatalog.freight.map(f => f.uf))].sort().map(uf => ({ value: uf, label: uf }))
         : pricingCatalog.costLines.map(l => ({ value: l.key, label: l.name }));
-    document.getElementById('bulkSelectTitle').textContent = target === 'freight' ? 'UFs incluídas' : 'Linhas incluídas';
+    document.getElementById('bulkSelectTitle').textContent = target === 'freight' ? 'UFs incluídas' : 'Grupos incluídos';
     document.getElementById('bulkModeLabel').hidden = target === 'freight';
     document.getElementById('bulkSelectList').innerHTML = items.map(i => `
         <label class="pricing-chip"><input type="checkbox" class="bulk-item" value="${escapeHtml(i.value)}" checked onchange="onBulkParamsChange()"> ${escapeHtml(i.label)}</label>`).join('');
@@ -4636,7 +4636,7 @@ function getBulkParams() {
 }
 
 function formatPricingValue(field, value) {
-    if (field === 'price_override' && (value === null || value === undefined || value === '')) return 'preço da linha';
+    if (field === 'price_override' && (value === null || value === undefined || value === '')) return 'preço do grupo';
     if (value === null || value === undefined || value === '') return '—';
     if (field === 'weight') return formatBRL(parseFloat(value), 3);
     if (field === 'active') return String(value) === '1' ? 'Sim' : 'Não';
