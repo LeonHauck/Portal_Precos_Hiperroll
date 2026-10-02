@@ -36,8 +36,13 @@ Além da calculadora, o portal oferece um fluxo de negociação com preço unit�
 - Alteração do preço negociado por item.
 - Sincronização entre preço negociado e desconto unitário.
 - Desconto manual, pagamento antecipado (−2%) e frete FOB (−3%), somados.
-- **Contrato (%):** acréscimo na nota para cobrir um custo que a própria Hiperroll paga (ex.: percentual logístico). O lucro continua sendo líquido − FOB, mas a margem % é medida sobre a nota com o contrato — ex.: 15% vira 14,29% com contrato de 5%.
-- Margem ponderada por valor: (total líquido − total FOB) ÷ total da nota.
+- **Margem líquida, medida sobre o custo** (a mesma conta que forma o preço na planilha de custos): `(preço líquido − custo − deduções) ÷ valor da nota`.
+  - *custo* = (custo do produto + despesa comercial + despesa administrativa) × peso, mais o frete da região × peso. O frete não entra quando o pedido é "Frete FOB" (o cliente paga).
+  - *deduções* = 27,51% da nota: ICMS 12% + PIS 1,65% + COFINS 7,6% + comissão 3% + despesa financeira 3,26%.
+  - No preço de tabela, a margem de um grupo é `1 − custo ÷ preço − 27,51%`, igual em qualquer região. A aba Tabela de Preços mostra esse número por grupo ("Margem líq. na tabela").
+  - Pedidos salvos antes desta regra não têm o custo nos itens e mantêm a conta antiga (lucro = líquido − FOB).
+- **Contrato (%):** acréscimo na nota para cobrir um custo que a própria Hiperroll paga (ex.: percentual logístico). Aumenta a nota sem aumentar o lucro, então reduz a margem.
+- Margem do pedido ponderada por valor: soma dos lucros ÷ total da nota.
 - **Margem mínima por produto:** cada produto tem a sua (coluna "Margem" da planilha de produtos: 5% nas sacolas, 10% nas bobinas, sacarias e hospitalar, 15% em condomínio/rolo/perfumado, 20% no dobrado, 30% em Freezer e Micro-Ondas). O mínimo do pedido é a média dessas margens ponderada pelo valor de cada item; abaixo dele o envio exige justificativa, que chega ao gestor. O gestor altera a margem de cada produto na aba Tabela de Preços → Produtos.
 - Cores da margem: vermelho abaixo do mínimo do produto; amarelo do mínimo até o alvo de 15%; verde a partir de 15% (ou do mínimo, quando ele é maior que 15%).
 - **Preços atualizados:** ao abrir um rascunho, repetir um pedido ou enviar depois que o gestor mudou a tabela, o portal mostra o que mudou e o representante escolhe entre manter os preços negociados ou aplicar a nova tabela (mantendo o mesmo desconto em R$).
@@ -162,7 +167,7 @@ Os caminhos de entrada de alguns scripts apontam para pastas locais específicas
 
 ### Regras de margem
 
-As regras (margem mínima por produto, com 10% de padrão para produto sem margem informada; alvo de 15%; antecipado −2%; frete FOB −3%) e o cálculo do mínimo ponderado do pedido existem em dois lugares que precisam andar juntos: `PRICING_RULES` no `script_v5.js` (o que a tela mostra) e `api/lib/pricing.php` (o que o servidor aceita). O mesmo vale para as fórmulas de FOB/CIF: `computeItemPrices()` no `script_v5.js` e `server_item_prices()` em `api/lib/catalog.php`.
+As regras (margem mínima por produto, com 10% de padrão para produto sem margem informada; alvo de 15%; antecipado −2%; frete FOB −3%; deduções da venda de 27,51%), a fórmula da margem líquida e o cálculo do mínimo ponderado do pedido existem em dois lugares que precisam andar juntos: `PRICING_RULES` no `script_v5.js` (o que a tela mostra) e `api/lib/pricing.php` (o que o servidor aceita). O mesmo vale para as fórmulas de FOB/CIF: `computeItemPrices()` no `script_v5.js` e `server_item_prices()` em `api/lib/catalog.php`.
 
 ## 🗂️ Estrutura principal
 
@@ -191,7 +196,9 @@ Arquivos como `index_backup.html`, `data_backup.js`, `style_backup.css` e `data.
 
 ## ⚠️ Limitações atuais
 
-- Enquanto a tabela ainda não está no banco, o FOB de cada item ainda vem do navegador; depois dela, o servidor recalcula tudo.
+- Enquanto a tabela ainda não está no banco, o FOB, o custo e a margem mínima de cada item ainda vêm do navegador; depois dela, o servidor recalcula tudo.
+- As deduções da venda (27,51%) são as da planilha para **100% da NF** e iguais para todos os estados. As modalidades de 50% e 10% da NF ainda não existem no portal.
+- Com os preços por kg atuais, Freezer e Micro-Ondas (mínimo de 30%) e Saco para lixo - Dobrado (mínimo de 20%) ficam abaixo do próprio mínimo mesmo no preço de tabela; o gestor precisa ajustar o preço desses grupos.
 - A ligação produto → grupo de preço vem de uma regra de palavras-chave (`getCategoryMatch()`) mais a tabela `LEGACY_CATEGORY_LINES` no `script_v5.js`: sacarias, sacos de lixo (um grupo por categoria) e bobinas de fundo reto têm grupos próprios, criados como cópia do grupo que os precificava (Fundo Reto ou Bobina estrela), sem alterar nenhum preço. Os grupos da planilha que nenhum produto usa (Corte solda MD/BD, Saco para lixo, Dobrado Azul/Preto, Bobina Forração) ficam fora do portal. Depois da importação, tudo isso passa a ser editado na aba Tabela de Preços.
 - As notas fiscais anexadas ficam dentro do banco (em base64); com muitos anexos grandes, vale movê-las para arquivos separados.
 - O histórico de status exibido no botão "📋 Histórico" do resumo do pedido é local ao navegador.

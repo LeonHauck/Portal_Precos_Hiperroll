@@ -4234,12 +4234,13 @@ function renderPricingLines(body) {
             <td class="col-cost pricing-computed" data-computed="costs">${formatBRL(line.custoBase + line.despCom + line.despAdm)}</td>
             <td>${money('price100', line.price100, ' pricing-input--strong')}</td>
             <td class="col-cost pricing-computed" data-computed="markup">${formatMarkup(line)}</td>
+            <td class="pricing-computed" data-computed="netMargin">${formatLineNetMargin(line)}</td>
             <td class="pricing-computed">${describeLineProducts(line.key)}</td>
         </tr>`).join('');
 
     body.innerHTML = `
         <div class="pricing-filterbar">
-            <p class="pricing-hint">${editable ? 'Altere o <strong>preço por kg</strong> do grupo e aperte <strong>Enter</strong>. ' : ''}Cada grupo de preço tem um preço por kg; o preço FOB de cada produto do grupo = preço por kg × peso do produto. Produtos com <strong>preço próprio</strong> (seção Produtos) não mudam quando o grupo muda.</p>
+            <p class="pricing-hint">${editable ? 'Altere o <strong>preço por kg</strong> do grupo e aperte <strong>Enter</strong>. ' : ''}Cada grupo de preço tem um preço por kg; o preço FOB de cada produto do grupo = preço por kg × peso do produto. <strong>Margem líq. na tabela</strong> é a margem que sobra vendendo no preço cheio; compare com a margem mínima dos produtos do grupo. Produtos com <strong>preço próprio</strong> (seção Produtos) não mudam quando o grupo muda.</p>
             <label class="pricing-check"><input type="checkbox" ${pricingShowCosts ? 'checked' : ''} onchange="pricingShowCosts = this.checked; this.closest('#pricingSectionBody').querySelector('.pricing-table').classList.toggle('pricing-table--simple', !this.checked)"> Mostrar custos</label>
         </div>
         <div class="results-table-container">

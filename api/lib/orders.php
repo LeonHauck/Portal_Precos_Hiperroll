@@ -35,6 +35,10 @@ function sanitize_cart($cart): array
             // Minimum margin of the product when the item was priced; replaced by the price table's
             // value in apply_catalog_prices() once the table is in the database.
             'minMargin' => min(is_numeric($item['minMargin'] ?? null) ? num_field($item['minMargin']) : PRICING_MIN_ORDER_MARGIN, 100.0),
+            // Unit cost (product + expenses) and unit freight: the base of the net margin. Null on
+            // items from before this rule; replaced by the price table's values once it is imported.
+            'cost' => is_numeric($item['cost'] ?? null) ? num_field($item['cost']) : null,
+            'freightCost' => is_numeric($item['freightCost'] ?? null) ? num_field($item['freightCost']) : null,
             'qty' => max((int) ($item['qty'] ?? 0), 1),
             // Region the CIF was quoted for, so the price can be recalculated when the table changes.
             'uf' => preg_match('/^[A-Z]{2}$/', $uf) ? $uf : '',
