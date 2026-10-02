@@ -29,6 +29,7 @@ const PRODUCT_FIELDS = [
     'ncm' => 'text',
     'active' => 'num',
     'price_override' => 'numnull',
+    'min_margin' => 'num',
 ];
 const PRODUCT_BULK_ACTIONS = ['percent', 'setLine', 'clearPrice'];
 
@@ -125,6 +126,8 @@ function product_to_client(array $row): array
         'active' => (bool) (int) $row['active'],
         // Individual FOB price (R$ per unit) set by the gestor; null = price of the product line.
         'priceOverride' => $row['price_override'] === null ? null : (float) $row['price_override'],
+        // Minimum margin (%) accepted for this product in a negotiation.
+        'minMargin' => (float) $row['min_margin'],
         'updatedAt' => $row['updated_at'],
     ];
 }
@@ -296,6 +299,9 @@ function clean_product(array $input): array
         'ncm' => str_field($input['ncm'] ?? '', 20),
         'active' => array_key_exists('active', $input) && !$input['active'] ? 0 : 1,
         'price_override' => clean_price_override($input['priceOverride'] ?? null, $codigo),
+        'min_margin' => array_key_exists('minMargin', $input) && $input['minMargin'] !== null && $input['minMargin'] !== ''
+            ? round(price_value($input['minMargin'], "margem mínima do produto {$codigo}", true, 100.0), 2)
+            : PRICING_MIN_ORDER_MARGIN,
     ];
 }
 
@@ -584,14 +590,14 @@ function save_products(array $user, $inputs, string $note): int
 
 function insert_product(PDO $pdo, array $p, int $sortOrder, string $now): void
 {
-    $pdo->prepare('INSERT INTO products (codigo, descricao, categoria, subcat, cost_line_key, weight, ncm, active, sort_order, price_override, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        ->execute([$p['codigo'], $p['descricao'], $p['categoria'], $p['subcat'], $p['cost_line_key'], $p['weight'], $p['ncm'], $p['active'], $sortOrder, $p['price_override'], $now]);
+    $pdo->prepare('INSERT INTO products (codigo, descricao, categoria, subcat, cost_line_key, weight, ncm, active, sort_order, price_override, min_margin, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        ->execute([$p['codigo'], $p['descricao'], $p['categoria'], $p['subcat'], $p['cost_line_key'], $p['weight'], $p['ncm'], $p['active'], $sortOrder, $p['price_override'], $p['min_margin'], $now]);
 }
 
 function update_product(PDO $pdo, array $p, string $now): void
 {
-    $pdo->prepare('UPDATE products SET descricao = ?, categoria = ?, subcat = ?, cost_line_key = ?, weight = ?, ncm = ?, active = ?, price_override = ?, updated_at = ? WHERE codigo = ?')
-        ->execute([$p['descricao'], $p['categoria'], $p['subcat'], $p['cost_line_key'], $p['weight'], $p['ncm'], $p['active'], $p['price_override'], $now, $p['codigo']]);
+    $pdo->prepare('UPDATE products SET descricao = ?, categoria = ?, subcat = ?, cost_line_key = ?, weight = ?, ncm = ?, active = ?, price_override = ?, min_margin = ?, updated_at = ? WHERE codigo = ?')
+        ->execute([$p['descricao'], $p['categoria'], $p['subcat'], $p['cost_line_key'], $p['weight'], $p['ncm'], $p['active'], $p['price_override'], $p['min_margin'], $now, $p['codigo']]);
 }
 
 // FOB of one product today: its individual price, or line price 100% NF × weight.
@@ -789,7 +795,8 @@ function server_item_prices(array $product, ?array $freightRate, string $weightT
     $costs = (float) $product['custo_base'] + (float) $product['desp_com'] + (float) $product['desp_adm'];
     // An individual price is used exactly as typed (no ÷ × rounding noise).
     $fob = $product['price_override'] !== null ? (float) $product['price_override'] : $price100 * $weight;
-    $prices = ['weight' => $weight, 'fob' => $fob, 'cif' => null];
+    $freight = $freightRate && in_array($weightTier, FREIGHT_TIERS, true) ? (float) $freightRate[$weightTier] * $weight : 0.0;
+    $prices = ['weight' => $weight, 'fob' => $fob, 'cif' => null, 'cost' => $costs * $weight, 'freightCost' => $freight];
     if ($freightRate && $costs > 0 && in_array($weightTier, FREIGHT_TIERS, true)) {
         $divisor = $costs / $price100;
         $prices['cif'] = ($costs + (float) $freightRate[$weightTier]) / $divisor * $weight;
@@ -806,7 +813,7 @@ function apply_catalog_prices(array $cart, bool $submit): array
     }
     $codes = array_values(array_unique(array_column($cart, 'codigo')));
     $stmt = db()->prepare('
-        SELECT p.codigo, p.active, p.weight, p.price_override, c.custo_base, c.desp_com, c.desp_adm, c.price100
+        SELECT p.codigo, p.active, p.weight, p.price_override, p.min_margin, c.custo_base, c.desp_com, c.desp_adm, c.price100
         FROM products p JOIN cost_lines c ON c.key = p.cost_line_key
         WHERE p.codigo IN (' . implode(',', array_fill(0, count($codes), '?')) . ')
     ');
@@ -832,6 +839,9 @@ function apply_catalog_prices(array $cart, bool $submit): array
         $prices = server_item_prices($product, $rate, $item['weightTier']);
         $item['weight'] = $prices['weight'];
         $item['fob'] = $prices['fob'];
+        $item['minMargin'] = (float) $product['min_margin'];
+        $item['cost'] = $prices['cost'];
+        $item['freightCost'] = $prices['freightCost'];
         if ($prices['cif'] !== null) {
             $item['cif'] = $prices['cif'];
             $item['unitDiscount'] = max($prices['cif'] - $item['negotiatedPrice'], 0);

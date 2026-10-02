@@ -32,6 +32,9 @@ function sanitize_cart($cart): array
             'negotiatedPrice' => num_field($item['negotiatedPrice'] ?? 0),
             'unitDiscount' => num_field($item['unitDiscount'] ?? 0),
             'weight' => num_field($item['weight'] ?? 0),
+            // Minimum margin of the product when the item was priced; replaced by the price table's
+            // value in apply_catalog_prices() once the table is in the database.
+            'minMargin' => min(is_numeric($item['minMargin'] ?? null) ? num_field($item['minMargin']) : PRICING_MIN_ORDER_MARGIN, 100.0),
             'qty' => max((int) ($item['qty'] ?? 0), 1),
             // Region the CIF was quoted for, so the price can be recalculated when the table changes.
             'uf' => preg_match('/^[A-Z]{2}$/', $uf) ? $uf : '',
@@ -207,7 +210,7 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
                 fail(422, sprintf(
                     'A margem do pedido (%s%%) está abaixo do mínimo de %s%%. Informe uma justificativa com pelo menos %d caracteres para enviar.',
                     number_format($pricing['margin'], 2, '.', ''),
-                    rtrim(rtrim(number_format($conditions['minMargin'], 2, '.', ''), '0'), '.'),
+                    rtrim(rtrim(number_format($pricing['minMargin'], 2, '.', ''), '0'), '.'),
                     PRICING_MIN_JUSTIFICATION_LENGTH
                 ));
             }
@@ -220,6 +223,7 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
                 'discountPercent' => $pricing['discountPercent'],
                 'totalNet' => $pricing['totalNet'],
                 'totalInvoice' => $pricing['totalInvoice'],
+                'minMargin' => $pricing['minMargin'],
                 'belowMinimum' => $pricing['belowMinimum'],
             ];
             $payload['submittedAt'] = $now;
@@ -228,6 +232,9 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
         } else {
             $conditions['lowMarginJustification'] = '';
         }
+        // The order's minimum (weighted by the items' own minimums) is stored with it, like the
+        // other percentages, so a later change in the table never rewrites a saved order.
+        $conditions['minMargin'] = calculate_order_totals($input['cart'], $conditions)['minMargin'];
         $payload['conditions'] = $conditions;
 
         if ($existing) {
