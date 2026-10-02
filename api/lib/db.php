@@ -3,7 +3,7 @@
 // v1: usuários, pedidos, contadores, tentativas de login, auditoria.
 // v2: tabela de preços editável (linhas de produto, frete, produtos, histórico de preços).
 // v3: preço individual por produto (products.price_override).
-// v4: margem mínima por produto (products.min_margin).
+// v4: margem do produto no preço cheio (products.table_margin).
 const SCHEMA_VERSION = 4;
 
 const DENY_ALL_HTACCESS = "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order allow,deny\n    Deny from all\n</IfModule>\n";
@@ -152,13 +152,13 @@ function migrate(PDO $pdo): void
                 active INTEGER NOT NULL DEFAULT 1,
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 price_override REAL,
-                min_margin REAL NOT NULL DEFAULT 10,
+                table_margin REAL NOT NULL DEFAULT 10,
                 updated_at TEXT NOT NULL
             )
         ");
         // A v2 database already has the table without the column; SQLite has no "ADD COLUMN IF NOT EXISTS".
         ensure_column($pdo, 'products', 'price_override', 'REAL');
-        ensure_column($pdo, 'products', 'min_margin', 'REAL NOT NULL DEFAULT 10');
+        ensure_column($pdo, 'products', 'table_margin', 'REAL NOT NULL DEFAULT 10');
 
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS price_history (
