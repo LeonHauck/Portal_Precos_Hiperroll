@@ -36,15 +36,25 @@ Além da calculadora, o portal oferece um fluxo de negociação com preço unit�
 - Alteração do preço negociado por item.
 - Sincronização entre preço negociado e desconto unitário.
 - Desconto manual, pagamento antecipado (−2%) e frete FOB (−3%), somados.
-- **Margem líquida, medida sobre o custo** (a mesma conta que forma o preço na planilha de custos): `(preço líquido − custo − deduções) ÷ valor da nota`.
-  - *custo* = (custo do produto + despesa comercial + despesa administrativa) × peso, mais o frete da região × peso. O frete não entra quando o pedido é "Frete FOB" (o cliente paga).
-  - *deduções* = 27,51% da nota: ICMS 12% + PIS 1,65% + COFINS 7,6% + comissão 3% + despesa financeira 3,26%.
-  - No preço de tabela, a margem de um grupo é `1 − custo ÷ preço − 27,51%`, igual em qualquer região. A aba Tabela de Preços mostra esse número por grupo ("Margem líq. na tabela").
-  - Pedidos salvos antes desta regra não têm o custo nos itens e mantêm a conta antiga (lucro = líquido − FOB).
-- **Contrato (%):** acréscimo na nota para cobrir um custo que a própria Hiperroll paga (ex.: percentual logístico). Aumenta a nota sem aumentar o lucro, então reduz a margem.
+- **Modalidade do pedido**, marcada pelo representante. Ela define o desconto máximo e o aviso de implantação:
+
+  | Modalidade | Desconto permitido | Aviso quando há desconto |
+  |---|---|---|
+  | 100% · Preço base (Livre) | nenhum | — |
+  | 50% · Aval | até 10% | "PEDIDO DEVE SER IMPLANTADO AVAL." |
+  | 10% · Garantia | até 20% | "PEDIDO DEVE SER IMPLANTADO GARANTIA." |
+
+  - O **desconto** é o que o cliente paga comparado ao preço de tabela (CIF): entram o desconto por item, o desconto % do pedido, o pagamento antecipado e o frete FOB.
+  - Acima do limite da modalidade, o pedido só é enviado com **justificativa** e chega ao gestor com o alerta "desconto acima do limite". O aviso de implantação aparece para o representante e para o gestor.
+  - Pedidos salvos antes das modalidades não têm essa regra.
+- **Margem do produto:** cada produto tem uma margem no preço cheio (coluna "Margem" da planilha: 5% nas sacolas, 10% nas bobinas, sacarias e hospitalar, 15% em condomínio/rolo/perfumado, 20% no dobrado, 30% em Freezer e Micro-Ondas). Um produto de R$ 100 com margem de 5% precisa manter R$ 95; os descontos baixam o preço e esse valor fica igual:
+  `margem = (preço líquido − preço de tabela × (1 − margem do produto)) ÷ valor da nota`.
+  - Desconto em um item muda só a margem dele; desconto no pedido muda a de todos. Ex.: 2% de desconto em um produto de 5% → 3,06%.
+  - A margem é informação para o gestor (verde no preço cheio, amarela com desconto, vermelha quando negativa). **Ela não trava o envio**; quem trava é a faixa de desconto da modalidade.
+  - O gestor altera a margem de cada produto na aba Tabela de Preços → Produtos.
+  - Pedidos salvos antes desta regra mantêm a conta antiga (lucro = líquido − FOB, mínimo de 10%).
+- **Contrato (%):** acréscimo na nota para cobrir um custo que a própria Hiperroll paga (ex.: percentual logístico). Aumenta a nota sem aumentar o lucro, então reduz a margem; não conta como desconto.
 - Margem do pedido ponderada por valor: soma dos lucros ÷ total da nota.
-- **Margem mínima por produto:** cada produto tem a sua (coluna "Margem" da planilha de produtos: 5% nas sacolas, 10% nas bobinas, sacarias e hospitalar, 15% em condomínio/rolo/perfumado, 20% no dobrado, 30% em Freezer e Micro-Ondas). O mínimo do pedido é a média dessas margens ponderada pelo valor de cada item; abaixo dele o envio exige justificativa, que chega ao gestor. O gestor altera a margem de cada produto na aba Tabela de Preços → Produtos.
-- Cores da margem: vermelho abaixo do mínimo do produto; amarelo do mínimo até o alvo de 15%; verde a partir de 15% (ou do mínimo, quando ele é maior que 15%).
 - **Preços atualizados:** ao abrir um rascunho, repetir um pedido ou enviar depois que o gestor mudou a tabela, o portal mostra o que mudou e o representante escolhe entre manter os preços negociados ou aplicar a nova tabela (mantendo o mesmo desconto em R$).
 
 ### 🧾 Pedidos e workflow comercial
@@ -105,7 +115,7 @@ php -S localhost:8000
 
 ### 🎬 Sem PHP: modo demonstração
 
-A pasta `demo/` fica só na máquina de desenvolvimento (está no `.gitignore`, não vai para o repositório). Para ver e apresentar o sistema sem servidor, abra **`demo/index.html`** com dois cliques. O arquivo `demo/demo_api.js` simula a API dentro do navegador com as mesmas regras do PHP (papéis, margem mínima, versão da tabela de preços, histórico).
+A pasta `demo/` fica só na máquina de desenvolvimento (está no `.gitignore`, não vai para o repositório). Para ver e apresentar o sistema sem servidor, abra **`demo/index.html`** com dois cliques. O arquivo `demo/demo_api.js` simula a API dentro do navegador com as mesmas regras do PHP (papéis, modalidades e limites de desconto, versão da tabela de preços, histórico).
 
 - A barra no canto inferior troca de usuário (gestor, administrador, representantes) e tem o botão **Zerar dados**. As contas de exemplo aceitam qualquer senha.
 - Os dados ficam só no `localStorage` daquele navegador; nada é enviado a lugar nenhum.
@@ -137,7 +147,7 @@ A pasta `demo/` fica só na máquina de desenvolvimento (está no `.gitignore`, 
 
 - Senhas guardadas com `password_hash()` (bcrypt); o login é limitado a 5 tentativas a cada 15 minutos por usuário/IP.
 - Sessão em cookie `HttpOnly`/`SameSite` e renovada no login; toda alteração exige um token CSRF.
-- A regra de margem mínima é recalculada no servidor (`api/lib/pricing.php`), e, com a tabela importada, o FOB e o CIF de cada item também são recalculados a partir do banco (`api/lib/catalog.php`) — não dá para burlar a margem alterando o JavaScript no navegador.
+- O desconto e o limite da modalidade são recalculados no servidor (`api/lib/pricing.php`), e, com a tabela no banco, o preço de tabela (CIF), o FOB e a margem de cada produto também vêm do banco (`api/lib/catalog.php`) — não dá para esconder um desconto nem inflar a margem alterando o JavaScript no navegador.
 - Um pedido montado com uma versão antiga da tabela é recusado no envio até o representante revisar os novos preços.
 - `.htaccess` bloqueia o download do banco, da planilha, dos scripts de manutenção, dos backups e de arquivos ocultos.
 - `api/config.local.php` e o banco `.sqlite` estão no `.gitignore` e nunca devem ir para o repositório.
@@ -167,7 +177,7 @@ Os caminhos de entrada de alguns scripts apontam para pastas locais específicas
 
 ### Regras de margem
 
-As regras (margem mínima por produto, com 10% de padrão para produto sem margem informada; alvo de 15%; antecipado −2%; frete FOB −3%; deduções da venda de 27,51%), a fórmula da margem líquida e o cálculo do mínimo ponderado do pedido existem em dois lugares que precisam andar juntos: `PRICING_RULES` no `script_v5.js` (o que a tela mostra) e `api/lib/pricing.php` (o que o servidor aceita). O mesmo vale para as fórmulas de FOB/CIF: `computeItemPrices()` no `script_v5.js` e `server_item_prices()` em `api/lib/catalog.php`.
+As regras (modalidades e seus limites de desconto; margem padrão de 10% para produto sem margem informada; antecipado −2%; frete FOB −3%), a fórmula da margem e o cálculo do desconto sobre a tabela existem em dois lugares que precisam andar juntos: `PRICING_RULES` no `script_v5.js` (o que a tela mostra) e `api/lib/pricing.php` (o que o servidor aceita). O mesmo vale para as fórmulas de FOB/CIF: `computeItemPrices()` no `script_v5.js` e `server_item_prices()` em `api/lib/catalog.php`.
 
 ## 🗂️ Estrutura principal
 
@@ -196,9 +206,9 @@ Arquivos como `index_backup.html`, `data_backup.js`, `style_backup.css` e `data.
 
 ## ⚠️ Limitações atuais
 
-- Enquanto a tabela ainda não está no banco, o FOB, o custo e a margem mínima de cada item ainda vêm do navegador; depois dela, o servidor recalcula tudo.
-- As deduções da venda (27,51%) são as da planilha para **100% da NF** e iguais para todos os estados. As modalidades de 50% e 10% da NF ainda não existem no portal.
-- Com os preços por kg atuais, Freezer e Micro-Ondas (mínimo de 30%) e Saco para lixo - Dobrado (mínimo de 20%) ficam abaixo do próprio mínimo mesmo no preço de tabela; o gestor precisa ajustar o preço desses grupos.
+- Enquanto a tabela ainda não está no banco, o preço de tabela, o FOB e a margem de cada item ainda vêm do navegador; depois dela, o servidor recalcula tudo.
+- A modalidade (100% / 50% / 10%) só define a faixa de desconto e o aviso: o preço de tabela é o mesmo nas três, e o portal não calcula impostos.
+- A margem do produto vem da planilha como um percentual fixo no preço cheio; o portal não a deriva dos custos do grupo de preço.
 - A ligação produto → grupo de preço vem de uma regra de palavras-chave (`getCategoryMatch()`) mais a tabela `LEGACY_CATEGORY_LINES` no `script_v5.js`: sacarias, sacos de lixo (um grupo por categoria) e bobinas de fundo reto têm grupos próprios, criados como cópia do grupo que os precificava (Fundo Reto ou Bobina estrela), sem alterar nenhum preço. Os grupos da planilha que nenhum produto usa (Corte solda MD/BD, Saco para lixo, Dobrado Azul/Preto, Bobina Forração) ficam fora do portal. Depois da importação, tudo isso passa a ser editado na aba Tabela de Preços.
 - As notas fiscais anexadas ficam dentro do banco (em base64); com muitos anexos grandes, vale movê-las para arquivos separados.
 - O histórico de status exibido no botão "📋 Histórico" do resumo do pedido é local ao navegador.

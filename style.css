@@ -2678,10 +2678,94 @@ select.pricing-input {
 }
 
 /* Carrinho: margem mínima do produto, abaixo da margem do item */
-.item-min-margin {
+.item-table-margin {
     font-size: 0.72rem;
     color: var(--text-tertiary);
     white-space: nowrap;
+}
+
+/* Modalidade do pedido (100% Livre / 50% Aval / 10% Garantia) e o aviso de implantação */
+.invoice-mode {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 4px;
+    padding: 0;
+    border: none;
+}
+
+.invoice-mode legend {
+    padding: 0;
+    margin-bottom: 6px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.invoice-mode-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    flex: 1 1 150px;
+    margin: 0;
+    padding: 8px 10px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card-bg);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.invoice-mode-option input {
+    width: auto;
+    margin-top: 3px;
+}
+
+.invoice-mode-option small {
+    display: block;
+    font-size: 0.74rem;
+    color: var(--text-tertiary);
+}
+
+.invoice-mode-option:has(input:checked) {
+    border-color: var(--secondary);
+    background: var(--secondary-light);
+}
+
+.order-mode-notice {
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    background: var(--margin-warning-bg);
+    border: 1.5px solid var(--margin-warning-border);
+    color: var(--margin-warning-text, #92400e);
+    font-size: 0.88rem;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+}
+
+.order-mode-notice[hidden] {
+    display: none;
+}
+
+.low-margin-alert strong {
+    display: block;
+}
+
+.condition-chip--mode {
+    background: var(--navy-deep);
+    color: #fff;
+}
+
+.mode-notice-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #fef3c7;
+    color: #92400e;
+    font-size: 0.75rem;
+    font-weight: 800;
 }
 
 /* Produtos: categorias como botões de marcar/desmarcar e barra de alterações pendentes */
@@ -2939,7 +3023,9 @@ select.pricing-input {
 }
 
 @media print {
-    .item-min-margin,
+    .item-table-margin,
+    .invoice-mode,
+    .order-mode-notice,
     .site-footer,
     .order-condition-toggle,
     .order-min-margin-warning {

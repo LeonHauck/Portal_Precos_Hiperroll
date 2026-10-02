@@ -19,7 +19,7 @@
             } catch (e) { /* localStorage indisponível: mantém tema claro padrão */ }
         }());
     </script>
-    <link rel="stylesheet" href="style.css?v=8">
+    <link rel="stylesheet" href="style.css?v=9">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -48,7 +48,7 @@
                         <div class="info-value" id="headerOrderDate">--</div>
                     </div>
                     <div class="info-box info-box--margin">
-                        <div class="info-label">Margem mín.</div>
+                        <div class="info-label" title="Margem do pedido atual vendido no preço de tabela, sem descontos">Margem tabela</div>
                         <div class="margin-value-line">
                             <div class="info-value" id="marginThreshold">10</div>
                             <div class="margin-percent">%</div>
@@ -201,10 +201,26 @@
                         <p>Total (CIF): R$&nbsp;<strong id="totalCif" style="color: var(--primary); font-size: 1.2rem;">0.00</strong></p>
                         <p style="margin-top: 10px; font-size: 0.9rem;">
                             Margem do Pedido: <strong id="marginPercentage" style="color: var(--primary);">0.00%</strong>
-                            <span class="margin-min-hint">(mín. <span data-pricing-rule="MIN_ORDER_MARGIN">10%</span>)</span>
+                            <span class="margin-min-hint" title="Margem deste pedido se fosse vendido no preço de tabela, sem descontos">(no preço de tabela: <span id="orderTableMargin">—</span>)</span>
                         </p>
                     </div>
                     <div style="flex: 1; min-width: 250px; display: flex; flex-direction: column; gap: 8px; justify-content: center;">
+                        <!-- Modalidade da nota: define o desconto máximo do pedido (regras em INVOICE_MODES, script_v5.js) -->
+                        <fieldset class="invoice-mode" id="orderInvoiceMode">
+                            <legend>Modalidade do pedido</legend>
+                            <label class="invoice-mode-option" title="Preço de tabela, sem desconto">
+                                <input type="radio" name="orderInvoiceMode" value="livre" checked onchange="updateOrderTable()">
+                                <span><strong>100%</strong> Preço base (Livre)<small>sem desconto</small></span>
+                            </label>
+                            <label class="invoice-mode-option" title="Permite até 10% de desconto sobre o preço de tabela">
+                                <input type="radio" name="orderInvoiceMode" value="aval" onchange="updateOrderTable()">
+                                <span><strong>50%</strong> Aval<small>desconto até 10%</small></span>
+                            </label>
+                            <label class="invoice-mode-option" title="Permite até 20% de desconto sobre o preço de tabela">
+                                <input type="radio" name="orderInvoiceMode" value="garantia" onchange="updateOrderTable()">
+                                <span><strong>10%</strong> Garantia<small>desconto até 20%</small></span>
+                            </label>
+                        </fieldset>
                         <div style="display: flex; align-items: center; gap: 10px;">
                             <label for="orderDiscount" style="margin-bottom: 0; min-width: 100px;">Desconto (%):</label>
                             <input type="number" id="orderDiscount" value="0" min="0" max="100" style="width: 80px;" oninput="updateOrderTable()">
@@ -224,6 +240,7 @@
                             <span class="order-condition-badge">−<span data-pricing-rule="FOB_FREIGHT_DISCOUNT">3%</span></span>
                         </label>
                         <div id="orderDiscountBreakdown" class="order-discount-breakdown"></div>
+                        <div id="orderModeNotice" class="order-mode-notice" hidden></div>
                         <div id="orderMinMarginWarning" class="order-min-margin-warning" hidden></div>
                         <div class="print-values" style="display:none; flex-direction:column; gap:6px; font-size:0.95rem;">
                             <div>Desconto (total): <strong id="printDiscount">0%</strong></div>
@@ -318,15 +335,17 @@
                         <div>Número: <strong id="submitOrderNumber">---</strong></div>
                         <div>Cliente: <strong id="submitClientName">---</strong></div>
                         <div>Itens: <strong id="submitItemCount">0</strong></div>
-                        <div>Descontos: <strong id="submitDiscounts">Nenhum</strong></div>
+                        <div>Modalidade: <strong id="submitMode">—</strong></div>
+                        <div>Desconto: <strong id="submitDiscounts">0.00%</strong></div>
                         <div>Total CIF: <strong id="submitTotalCif">R$ 0.00</strong></div>
                         <div>Margem do pedido: <strong id="submitMargin">0.00%</strong></div>
                     </div>
                 </div>
+                <div id="submitModeNotice" class="order-mode-notice" hidden></div>
                 <div id="submitLowMarginBlock" class="low-margin-justification" hidden>
-                    <label for="submitLowMarginJustification">Justificativa para margem abaixo do mínimo *</label>
+                    <label for="submitLowMarginJustification">Justificativa *</label>
                     <textarea id="submitLowMarginJustification" rows="3" placeholder="Ex.: cliente estratégico, volume elevado, ação comercial combinada com a supervisão..."></textarea>
-                    <small>O pedido chegará ao supervisor com um alerta de margem e esta justificativa.</small>
+                    <small>O pedido chegará ao gestor com o alerta acima e esta justificativa.</small>
                 </div>
                 <div id="submitOrderMessage" class="modal-msg"></div>
             </div>
@@ -503,7 +522,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js"></script>
     <!-- Tabelas de preço/custo: entregues pelo servidor somente para usuários logados -->
     <script src="api/data.php"></script>
-    <script src="script_v5.js?v=20261002b"></script>
+    <script src="script_v5.js?v=20261002c"></script>
     <script>
         window.addEventListener('load', function () {
             if (typeof window.loginUser !== 'function') {
