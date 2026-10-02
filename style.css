@@ -1,4 +1,4 @@
-﻿/* ========== CSS VARIABLES & BASE STYLES ========== */
+/* ========== CSS VARIABLES & BASE STYLES ========== */
 :root {
     /* fixed brand identity colors — never swapped by the dark theme, used only for
        the header and login banner so the brand mark stays pixel-consistent */
@@ -2677,6 +2677,13 @@ select.pricing-input {
     cursor: default;
 }
 
+/* Carrinho: margem mínima do produto, abaixo da margem do item */
+.item-min-margin {
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+}
+
 /* Produtos: categorias como botões de marcar/desmarcar e barra de alterações pendentes */
 .pricing-categories {
     display: flex;
@@ -2932,6 +2939,7 @@ select.pricing-input {
 }
 
 @media print {
+    .item-min-margin,
     .site-footer,
     .order-condition-toggle,
     .order-min-margin-warning {

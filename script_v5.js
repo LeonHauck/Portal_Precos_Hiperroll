@@ -25,11 +25,17 @@ const PRICING_RULES = Object.freeze({
     TARGET_MARGIN: 15,
     EARLY_PAYMENT_DISCOUNT: 2,
     FOB_FREIGHT_DISCOUNT: 3,
-    MIN_JUSTIFICATION_LENGTH: 10
+    MIN_JUSTIFICATION_LENGTH: 10,
+    // What leaves the invoice before it becomes margin, as in the cost spreadsheet (100% NF):
+    // ICMS 12 + PIS 1,65 + COFINS 7,6 + comissão 3 + despesa financeira 3,26.
+    SALE_DEDUCTIONS_PERCENT: 27.51
 });
 
+// minMargin comes from the products (each one has its own minimum, set in the price table).
+// Green needs the general target AND the minimum, so a product whose minimum is above the
+// target (e.g. 30%) never shows green while it is below its own minimum.
 function getMarginStatus(margin, minMargin = PRICING_RULES.MIN_ORDER_MARGIN) {
-    if (margin >= PRICING_RULES.TARGET_MARGIN) {
+    if (margin >= Math.max(PRICING_RULES.TARGET_MARGIN, minMargin)) {
         return { label: 'Verde', color: '#15803d', description: 'Margem segura' };
     }
     if (margin >= minMargin) {
@@ -54,6 +60,7 @@ function normalizeOrderConditions(conditions) {
         earlyPaymentPercent: toPercent(c.earlyPaymentPercent, PRICING_RULES.EARLY_PAYMENT_DISCOUNT),
         fobFreightPercent: toPercent(c.fobFreightPercent, PRICING_RULES.FOB_FREIGHT_DISCOUNT),
         minMargin: toPercent(c.minMargin, PRICING_RULES.MIN_ORDER_MARGIN),
+        deductionsPercent: toPercent(c.deductionsPercent, PRICING_RULES.SALE_DEDUCTIONS_PERCENT),
         lowMarginJustification: String(c.lowMarginJustification || '').trim()
     };
 }
@@ -65,23 +72,50 @@ function getOrderDiscountPercent(conditions) {
         + (c.fobFreight ? c.fobFreightPercent : 0);
 }
 
-// Margin is value-weighted. The contract % raises the invoice, but Hiperroll pays that same
-// amount out (logistics/contract cost), so profit stays net − FOB while the margin % is
-// measured against the full invoice: a contract lowers the margin percentage.
+// "10" or "12,35": a minimum margin for messages (the order minimum is a weighted average).
+function formatMarginPercent(value) {
+    return Number(value || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+}
+
+// Net margin, the same way the cost spreadsheet forms a price (preço = custo ÷ (1 − margem − 27,51%)):
+//
+//   margem = (preço líquido − custo − deduções) ÷ valor da nota
+//
+// custo    = (custo do produto + desp. comercial + desp. administrativa) × peso, plus the region's
+//            freight × peso — except when the order is "Frete FOB" (the customer pays the freight);
+// deduções = SALE_DEDUCTIONS_PERCENT of the invoice (ICMS, PIS, COFINS, comissão, desp. financeira).
+// The contract % raises the invoice, but Hiperroll pays that same amount out, so it adds
+// nothing to the profit and lowers the margin percentage.
+//
+// Each product has its own minimum margin (item.minMargin, from the price table). The order's
+// minimum is the average of those minimums weighted by each item's invoice value, which is the
+// same as asking that the order's profit covers the minimum profit of every item added up.
+//
+// Items saved before 2026-10 carry neither cost nor minMargin: they keep the old rule
+// (lucro = líquido − FOB, no deductions) and the order's stored minimum.
 function calculateOrderTotals(items, conditions) {
     const c = normalizeOrderConditions(conditions);
     const discountPercent = getOrderDiscountPercent(c);
     const discountFactor = Math.max(1 - discountPercent / 100, 0);
     const contractFactor = 1 + c.contract / 100;
 
-    const totals = { totalQty: 0, totalWeight: 0, totalFob: 0, totalGross: 0, totalNet: 0, totalInvoice: 0 };
+    const totals = { totalQty: 0, totalWeight: 0, totalFob: 0, totalGross: 0, totalNet: 0, totalInvoice: 0, totalProfit: 0 };
+    let requiredProfit = 0;
     const lines = (Array.isArray(items) ? items : []).map(item => {
         const qty = parseFloat(item.qty) || 0;
         const fobUnit = parseFloat(item.fob) || 0;
         const negotiatedUnit = Math.max(parseFloat(item.negotiatedPrice || item.cif) || 0, 0);
         const netUnit = negotiatedUnit * discountFactor;
         const invoiceUnit = netUnit * contractFactor;
-        const marginPercent = invoiceUnit > 0 ? ((netUnit - fobUnit) / invoiceUnit) * 100 : 0;
+
+        const productCost = parseFloat(item.cost);
+        const hasCost = Number.isFinite(productCost) && productCost > 0;
+        const costUnit = hasCost ? productCost + (c.fobFreight ? 0 : (parseFloat(item.freightCost) || 0)) : fobUnit;
+        const deductionsUnit = hasCost ? invoiceUnit * (c.deductionsPercent / 100) : 0;
+        const profitUnit = netUnit - costUnit - deductionsUnit;
+        const marginPercent = invoiceUnit > 0 ? (profitUnit / invoiceUnit) * 100 : 0;
+        const itemMinMargin = parseFloat(item.minMargin);
+        const minMargin = Number.isFinite(itemMinMargin) && itemMinMargin >= 0 ? itemMinMargin : c.minMargin;
 
         totals.totalQty += qty;
         totals.totalWeight += (parseFloat(item.weight) || 0) * qty;
@@ -89,19 +123,24 @@ function calculateOrderTotals(items, conditions) {
         totals.totalGross += negotiatedUnit * qty;
         totals.totalNet += netUnit * qty;
         totals.totalInvoice += invoiceUnit * qty;
+        totals.totalProfit += profitUnit * qty;
+        requiredProfit += (minMargin / 100) * invoiceUnit * qty;
 
-        return { item, qty, fobUnit, negotiatedUnit, netUnit, invoiceUnit, marginPercent, subtotal: invoiceUnit * qty };
+        return { item, qty, fobUnit, negotiatedUnit, netUnit, invoiceUnit, costUnit, deductionsUnit, profitUnit, marginPercent, minMargin, subtotal: invoiceUnit * qty };
     });
 
-    const margin = totals.totalInvoice > 0 ? ((totals.totalNet - totals.totalFob) / totals.totalInvoice) * 100 : 0;
+    const margin = totals.totalInvoice > 0 ? (totals.totalProfit / totals.totalInvoice) * 100 : 0;
+    // Rounded so float noise (10.000000000000002) never turns an exact-minimum order into "below".
+    const minMargin = totals.totalInvoice > 0 ? Math.round((requiredProfit / totals.totalInvoice) * 1e6) / 1e4 : c.minMargin;
     return {
         ...totals,
-        conditions: c,
+        conditions: { ...c, minMargin },
         discountPercent,
         lines,
         margin,
-        belowMinimum: lines.length > 0 && margin < c.minMargin,
-        status: getMarginStatus(margin, c.minMargin)
+        minMargin,
+        belowMinimum: lines.length > 0 && margin < minMargin,
+        status: getMarginStatus(margin, minMargin)
     };
 }
 
@@ -138,7 +177,7 @@ function renderOrderConditionsSummary(submission) {
 
     const justificationHtml = totals.belowMinimum
         ? `<div class="low-margin-alert">
-                <strong>⚠️ Margem abaixo do mínimo de ${c.minMargin.toFixed(0)}%</strong>
+                <strong>⚠️ Margem abaixo do mínimo de ${formatMarginPercent(c.minMargin)}%</strong>
                 <div>${c.lowMarginJustification
                     ? `Justificativa do representante: <em>${escapeHtml(c.lowMarginJustification)}</em>`
                     : 'Nenhuma justificativa registrada.'}</div>
@@ -700,6 +739,9 @@ function buildCurrentOrderInput(extraConditions = {}) {
             negotiatedPrice: item.negotiatedPrice,
             unitDiscount: item.unitDiscount,
             weight: item.weight,
+            minMargin: item.minMargin,
+            cost: item.cost,
+            freightCost: item.freightCost,
             qty: item.qty,
             uf: item.uf || '',
             cityType: item.cityType || '',
@@ -718,8 +760,7 @@ async function init() {
     statusManager.init();
 
     applyPricingRuleLabels();
-    const marginThresholdEl = document.getElementById('marginThreshold');
-    if (marginThresholdEl) marginThresholdEl.textContent = PRICING_RULES.MIN_ORDER_MARGIN;
+    updateMinMarginLabels(null);
 
     try {
         await authManager.init();
@@ -792,42 +833,73 @@ function parseDecimal(value) {
     return parseFloat(String(value ?? '').replace(',', '.')) || 0;
 }
 
-// Product lines that are not in the cost spreadsheet (decided with Leon on 2026-10-01).
-// Each one starts as an exact copy of the line that has priced those products until now
-// (`copyFrom`), so no price changes; from then on the gestor can adjust it on its own.
-// Only products the keyword rule (getCategoryMatch) sends to `copyFrom` are moved.
+// Price groups that are not in the cost spreadsheet (decided with Leon on 2026-10-01/02).
+// Each one starts as an exact copy of the group that priced those products (`copyFrom`); from
+// then on the gestor can adjust it on its own. `category` is the "Linha" column of the product
+// spreadsheet (parseCSV drops the double quotes). By default only the products the keyword rule
+// (getCategoryMatch) sends to `copyFrom` are moved; `all: true` moves the whole category, for
+// categories whose name or descriptions would mislead the keyword rule.
 const LEGACY_CATEGORY_LINES = [
     { category: 'Sacarias - Corte e Solda', name: 'Corte e Solda', copyFrom: 'fundo reto' },
-    { category: 'Saco para lixo - Condominio', name: 'Saco para lixo - Condomínio', copyFrom: 'fundo reto' },
+    { category: 'Bobina Saco em Rolo - Condominio', name: 'Bobina Saco em Rolo - Condomínio', copyFrom: 'fundo reto', all: true },
+    { category: 'Saco para lixo - Condominio', name: 'Saco para lixo - Condomínio', copyFrom: 'fundo reto', all: true },
     { category: 'Saco para Lixo - Dobrado', name: 'Saco para lixo - Dobrado', copyFrom: 'fundo reto' },
     { category: 'Saco para Lixo - Perfumado', name: 'Saco para lixo - Perfumado', copyFrom: 'fundo reto' },
     { category: 'Saco para lixo - Rolo', name: 'Saco para lixo - Rolo', copyFrom: 'fundo reto' },
+    { category: 'Saco para lixo - Hospitalar', name: 'Saco para lixo - Hospitalar', copyFrom: 'fundo reto', all: true },
     { category: 'Bobina Fundo Reto', name: 'Bobina Fundo Reto', copyFrom: 'bobina estrela (cx branca)' }
 ];
+
+// Columns of the product spreadsheet are found by header name, so a new or reordered column in
+// the next spreadsheet doesn't break the portal. "Peso Caixa/Frd" appears twice (gross, then
+// net): the last one is the net weight, which is what prices use.
+function mapProductColumns(headerRow) {
+    const names = headerRow.map(cell => cell.trim().toLowerCase());
+    const first = name => names.indexOf(name);
+    return {
+        margem: first('margem'),
+        linha: first('linha'),
+        categoria: first('categoria'),
+        codigo: first('cod. produto'),
+        descricao: names.findIndex(name => name.startsWith('descri')),
+        peso: names.lastIndexOf('peso caixa/frd'),
+        ncm: first('ncm')
+    };
+}
 
 // Reads data.js and returns it in the same shape as the server's pricing.get, so the rest of
 // the code never needs to know where prices came from.
 function buildLegacyCatalog() {
     const products = [];
-    parseCSV(PRODUTOS_CSV).forEach((row, index) => {
-        if (index === 0 || row.length < 10) return;
-        const codigo = row[4]?.trim() || '';
-        const descricao = row[5]?.trim() || '';
-        // Filter out header-like rows from the CSV
-        if (!codigo || !descricao ||
-            codigo.toLowerCase().includes('cd') ||
-            codigo.toLowerCase().includes('cod') ||
-            descricao.toLowerCase().includes('descrio') ||
-            descricao.toLowerCase().includes('descricao') ||
-            descricao.toLowerCase() === 'produto') {
+    const warnings = [];
+    const productRows = parseCSV(PRODUTOS_CSV);
+    const headerIndex = productRows.findIndex(row => row.some(cell => cell.trim().toLowerCase() === 'cod. produto'));
+    const cols = headerIndex >= 0 ? mapProductColumns(productRows[headerIndex]) : null;
+    const seenCodes = new Set();
+    const repeatedCodes = [];
+    (cols ? productRows.slice(headerIndex + 1) : []).forEach(row => {
+        const codigo = row[cols.codigo]?.trim() || '';
+        const descricao = row[cols.descricao]?.trim() || '';
+        if (!codigo || !descricao) return;
+        const weight = parseDecimal(row[cols.peso]);
+        if (weight === 0) return; // Skip zeroed products
+        // The same code listed in two categories is one product: the first row wins.
+        if (seenCodes.has(codigo)) {
+            repeatedCodes.push(codigo);
             return;
         }
-        const weight = parseDecimal(row[18]);
-        if (weight === 0) return; // Skip zeroed products
-        const product = { codigo, descricao, categoria: row[0] || '', subcat: row[1] || '', weight, ncm: row[20] || '', active: true };
+        seenCodes.add(codigo);
+        // "10%" (or 0,1 if the cell came as a fraction); without the column, today's general minimum.
+        let minMargin = cols.margem >= 0 ? parseDecimal(row[cols.margem]) : PRICING_RULES.MIN_ORDER_MARGIN;
+        if (minMargin > 0 && minMargin <= 1 && !String(row[cols.margem]).includes('%')) minMargin *= 100;
+        if (!(minMargin > 0)) minMargin = PRICING_RULES.MIN_ORDER_MARGIN;
+        const product = { codigo, descricao, categoria: row[cols.linha] || '', subcat: row[cols.categoria] || '', weight, ncm: row[cols.ncm] || '', active: true, minMargin };
         product.costLineKey = getCategoryMatch(product);
         products.push(product);
     });
+    if (repeatedCodes.length) {
+        warnings.push(`A planilha repete o código de ${repeatedCodes.join(', ')} em duas categorias; o portal usa a primeira ocorrência.`);
+    }
 
     // Colunas: B(1)=Linha, C(2)=Custo Prod, D(3)=Desp Com, E(4)=Desp Adm, M(12)=100% NF.
     // A line may appear twice in the spreadsheet; the row with the highest 100% NF wins.
@@ -855,7 +927,6 @@ function buildLegacyCatalog() {
     // The first row of each UF is its capital; "interior"/"fluvial" rows are named. Any other
     // named city is treated as Interior and replaces it — reported in `warnings` for the gestor.
     const freight = {};
-    const warnings = [];
     let currentUF = '';
     let ufEntryCount = 0;
     parseCSV(FRETE_CSV).forEach(row => {
@@ -885,7 +956,7 @@ function buildLegacyCatalog() {
     LEGACY_CATEGORY_LINES.forEach(rule => {
         const source = costLines[rule.copyFrom];
         const category = rule.category.toLowerCase();
-        const moved = products.filter(p => p.categoria.toLowerCase() === category && p.costLineKey === rule.copyFrom);
+        const moved = products.filter(p => p.categoria.toLowerCase() === category && (rule.all || p.costLineKey === rule.copyFrom));
         if (!source || !moved.length) return;
         const key = rule.name.toLowerCase();
         costLines[key] = { ...source, key, name: rule.name };
@@ -942,6 +1013,7 @@ function applyCatalog(catalog) {
             weightRaw: p.weight,
             costLineKey: p.costLineKey,
             priceOverride: p.priceOverride ?? null,
+            minMargin: p.minMargin ?? PRICING_RULES.MIN_ORDER_MARGIN,
             active: p.active !== false
         });
     });
@@ -988,7 +1060,8 @@ function computeItemPrices(product, { uf, cityType, weightTier } = {}) {
     const fData = freightData[uf] ? freightData[uf][cityType] : null;
     const rate = fData ? (fData[weightTier] || 0) : 0;
     const cif = divisor > 0 ? (line.costs + rate) / divisor * product.weightRaw : 0;
-    return { fob, cif, rate };
+    // cost and freightCost (per unit) are what the margin is measured against (calculateOrderTotals).
+    return { fob, cif, rate, cost: line.costs * product.weightRaw, freightCost: rate * product.weightRaw };
 }
 
 // Refreshes whatever shows prices after the table changed. The price tab is not redrawn while
@@ -1065,7 +1138,12 @@ function planCartRepricing(items) {
         const prices = computeItemPrices(product, item);
         const newCif = item.uf ? prices.cif : item.cif;
         const changed = Math.abs(prices.fob - item.fob) >= 0.005 || Math.abs(newCif - item.cif) >= 0.005;
-        changes.push({ item, newFob: prices.fob, newCif, newWeight: product.weightRaw, changed });
+        changes.push({
+            item, newFob: prices.fob, newCif, newWeight: product.weightRaw, changed,
+            newMinMargin: product.minMargin,
+            newCost: prices.cost,
+            newFreightCost: item.uf ? prices.freightCost : (parseFloat(item.freightCost) || 0)
+        });
     });
     return { changes, missing, hasDifferences: missing.length > 0 || changes.some(c => c.changed) };
 }
@@ -1073,11 +1151,17 @@ function planCartRepricing(items) {
 // 'keep'  = the negotiated price stays; the discount against the new table is recalculated.
 // 'table' = the same R$ discount as before is applied on top of the new table price.
 function applyCartRepricing(plan, choice) {
-    plan.changes.forEach(({ item, newFob, newCif, newWeight }) => {
+    plan.changes.forEach(({ item, newFob, newCif, newWeight, newMinMargin, newCost, newFreightCost }) => {
         const previousDiscount = item.unitDiscount || 0;
         item.fob = newFob;
         item.cif = newCif;
         item.weight = newWeight;
+        // Minimum margin and costs always follow the table in force, whatever the price choice.
+        if (newMinMargin !== undefined) item.minMargin = newMinMargin;
+        if (newCost !== undefined) {
+            item.cost = newCost;
+            item.freightCost = newFreightCost;
+        }
         if (choice === 'table') {
             item.negotiatedPrice = Math.max(newCif - previousDiscount, 0);
         }
@@ -1309,7 +1393,7 @@ function addToCart(codigo) {
         existing.qty++;
     } else {
         const region = getCurrentRegionFilters();
-        const { fob, cif } = computeItemPrices(p, region);
+        const { fob, cif, cost, freightCost } = computeItemPrices(p, region);
         cart.push({
             codigo: p.codigo,
             descricao: p.descricao,
@@ -1318,6 +1402,9 @@ function addToCart(codigo) {
             negotiatedPrice: cif,
             unitDiscount: 0,
             weight: p.weightRaw,
+            minMargin: p.minMargin,
+            cost: cost,               // custo + despesas do produto (base da margem)
+            freightCost: freightCost, // frete da região, pago pela Hiperroll na venda CIF
             qty: 1,
             uf: region.uf,
             cityType: region.cityType,
@@ -1367,7 +1454,7 @@ function renderOrderDiscountBreakdown(totals) {
     if (warning) {
         warning.hidden = !totals.belowMinimum;
         warning.textContent = totals.belowMinimum
-            ? `⚠️ Margem do pedido abaixo do mínimo de ${totals.conditions.minMargin}%. O envio exigirá uma justificativa e será sinalizado ao supervisor.`
+            ? `⚠️ Margem do pedido abaixo do mínimo de ${formatMarginPercent(totals.minMargin)}% (média das margens mínimas dos produtos, ponderada pelo valor de cada item). O envio exigirá uma justificativa e será sinalizado ao supervisor.`
             : '';
     }
 }
@@ -1379,12 +1466,14 @@ function updateOrderTable() {
     if (cart.length === 0) {
         container.innerHTML = '<div class="empty-state">Nenhum item no pedido.</div>';
         summaryDiv.style.display = 'none';
+        updateMinMarginLabels(null);
         return;
     }
 
     summaryDiv.style.display = 'block';
 
     const totals = calculateOrderTotals(cart, getCurrentOrderConditions());
+    updateMinMarginLabels(totals.minMargin);
 
     let html = `
         <table>
@@ -1397,7 +1486,7 @@ function updateOrderTable() {
                     <th>CIF Unit.</th>
                     <th>Desconto Unit.</th>
                     <th>Preço Negociado</th>
-                    <th title="Margem sobre o preço líquido, já considerando os descontos do pedido">Margem Líq. (%)</th>
+                    <th title="Margem líquida: (preço líquido − custo e frete − impostos, comissão e despesa financeira) ÷ valor da nota, já com os descontos do pedido">Margem Líq. (%)</th>
                     <th>Subtotal</th>
                     <th>Ação</th>
                 </tr>
@@ -1439,9 +1528,10 @@ function updateOrderTable() {
                     <span class="print-value">R$&nbsp;${negotiatedPrice.toFixed(2)}</span>
                 </td>
                 <td style="text-align: center;">
-                    <span style="color: ${getMarginStatus(itemMarginPercent, totals.conditions.minMargin).color}">
+                    <span style="color: ${getMarginStatus(itemMarginPercent, line.minMargin).color}" title="Margem mínima deste produto: ${formatMarginPercent(line.minMargin)}%">
                         ${itemMarginPercent.toFixed(2)}%
                     </span>
+                    <div class="item-min-margin">mín. ${formatMarginPercent(line.minMargin)}%</div>
                 </td>
                 <td class="price-tag">R$&nbsp;${subCifWithDiscountContract.toFixed(2)}</td>
                 <td class="col-action">
@@ -1474,6 +1564,17 @@ function updateOrderTable() {
     totalsPriceContainer.classList.add(statusClass);
 
     renderOrderDiscountBreakdown(totals);
+}
+
+// The header box and the "(mín. X%)" next to the order margin show the minimum of the order
+// being built (it depends on which products are in it); "—" while the order is empty.
+function updateMinMarginLabels(minMargin) {
+    const text = minMargin === null ? '—' : formatMarginPercent(minMargin);
+    const header = document.getElementById('marginThreshold');
+    if (header) header.textContent = text;
+    document.querySelectorAll('[data-pricing-rule="MIN_ORDER_MARGIN"]').forEach(el => {
+        el.textContent = minMargin === null ? '—' : `${text}%`;
+    });
 }
 
 // Atualiza o desconto unitário e recalcula os valores do item
@@ -2467,7 +2568,7 @@ function showSubmitOrderModal() {
     if (summaryBox) summaryBox.classList.toggle('is-warning', totals.belowMinimum);
     if (summaryTitle) {
         summaryTitle.textContent = totals.belowMinimum
-            ? `⚠️ Margem abaixo do mínimo de ${totals.conditions.minMargin}%`
+            ? `⚠️ Margem abaixo do mínimo de ${formatMarginPercent(totals.minMargin)}%`
             : '✓ Pedido está pronto para envio';
     }
 
@@ -2886,13 +2987,10 @@ function renderTrashDetails(deletionId, deletion) {
         const billedQty = deletion.billedQuantities?.[item.codigo] || 0;
         const pendingQty = qty - billedQty;
         
-        // Calcular margem: ((negotiatedPrice - fob) / negotiatedPrice) * 100
-        let marginPercent = 0;
-        if (item.fob && negotiatedPrice > 0) {
-            marginPercent = ((negotiatedPrice - item.fob) / negotiatedPrice) * 100;
-        }
-        
-        const marginColor = getMarginStatus(marginPercent, normalizeOrderConditions(deletion.conditions).minMargin).color;
+        // Same rule as everywhere else (net margin, with the order's discounts and contract).
+        const marginPercent = calculateOrderTotals([item], deletion.conditions).margin;
+
+        const marginColor = getMarginStatus(marginPercent, Number.isFinite(parseFloat(item.minMargin)) ? parseFloat(item.minMargin) : normalizeOrderConditions(deletion.conditions).minMargin).color;
         
         // Cor para a quantidade faturada (verde se completo, amarelo se parcial, cinza se nenhum)
         const billingColor = billedQty === qty ? '#15803d' : billedQty > 0 ? '#f59e0b' : '#9ca3af';
@@ -3094,7 +3192,7 @@ function openSupervisorOrderActions(submissionId) {
     let itemsHtml = `<table class="draft-items-table" style="width:100%; margin-top:10px;"><thead><tr><th>Cód</th><th>Descrição</th><th>Qtd</th><th style="text-align:right">Unit.</th><th style="text-align:right">Margem</th><th style="text-align:right">Subtotal</th></tr></thead><tbody>`;
     pricing.lines.forEach(line => {
         const item = line.item;
-        const marginColor = getMarginStatus(line.marginPercent, pricing.conditions.minMargin).color;
+        const marginColor = getMarginStatus(line.marginPercent, line.minMargin).color;
         itemsHtml += `<tr><td>${item.codigo}</td><td>${(item.descricao || '').replace(/"/g, '')}</td><td style="text-align:center">${line.qty}</td><td style="text-align:right">R$ ${line.negotiatedUnit.toFixed(2)}</td><td style="text-align:right; color:${marginColor}; font-weight:600;">${line.marginPercent.toFixed(2)}%</td><td style="text-align:right">R$ ${line.subtotal.toFixed(2)}</td></tr>`;
     });
     itemsHtml += `</tbody></table><div style="text-align:right; margin-top:10px; font-weight:700;">Total: R$ ${pricing.totalInvoice.toFixed(2)}</div>`;
@@ -3419,7 +3517,7 @@ function showPendingOrderDetails(submissionId) {
         const negotiatedPrice = line.negotiatedUnit;
         const subtotal = line.subtotal;
         const marginPercent = line.marginPercent;
-        const itemMarginColor = getMarginStatus(marginPercent, pricing.conditions.minMargin).color;
+        const itemMarginColor = getMarginStatus(marginPercent, line.minMargin).color;
         const billedQty = Math.min(submission.billedQuantities?.[item.codigo] || 0, qty);
         const billingColor = billedQty >= qty ? '#15803d' : billedQty > 0 ? '#b45309' : '#64748b';
         
@@ -3643,7 +3741,7 @@ function renderHistoryTab() {
             const negotiated = line.negotiatedUnit;
             const subtotal = line.subtotal;
             const marginPercent = line.marginPercent;
-            const itemMarginColor = getMarginStatus(marginPercent, pricing.conditions.minMargin).color;
+            const itemMarginColor = getMarginStatus(marginPercent, line.minMargin).color;
 
             let billedStr = '';
             if (hasBillingInfo || submission.status === 'aprovado') {
@@ -3902,6 +4000,7 @@ const PRICING_FIELD_LABELS = Object.freeze({
     ncm: 'NCM',
     active: 'Ativo',
     price_override: 'Preço FOB próprio (R$)',
+    min_margin: 'Margem mínima (%)',
     import: 'Importação',
     removido: 'Praça removida'
 });
@@ -4104,6 +4203,15 @@ function formatMarkup(line) {
     return `${pct >= 0 ? '+' : ''}${formatBRL(pct, 1)}%`;
 }
 
+// Net margin of a group at its table price: 1 − custos ÷ preço − deduções. The same for every
+// region, because the freight enters the CIF with the group's own markup.
+function formatLineNetMargin(line) {
+    const costs = line.custoBase + line.despCom + line.despAdm;
+    if (!(line.price100 > 0)) return '—';
+    const pct = (1 - costs / line.price100) * 100 - PRICING_RULES.SALE_DEDUCTIONS_PERCENT;
+    return `${formatBRL(pct, 1)}%`;
+}
+
 // "42" or "42 (3 com preço próprio)": products with their own price don't follow this line's price.
 function describeLineProducts(key) {
     const products = productsData.filter(p => p.costLineKey === key && p.active);
@@ -4136,7 +4244,7 @@ function renderPricingLines(body) {
         </div>
         <div class="results-table-container">
             <table class="pricing-table${pricingShowCosts ? '' : ' pricing-table--simple'}">
-                <thead><tr><th>Grupo de preço</th><th class="col-cost">Custo produto</th><th class="col-cost">Desp. comercial</th><th class="col-cost">Desp. adm.</th><th class="col-cost">Total custos</th><th title="Preço 100% NF">Preço por kg (R$)</th><th class="col-cost">Markup s/ custos</th><th>Produtos</th></tr></thead>
+                <thead><tr><th>Grupo de preço</th><th class="col-cost">Custo produto</th><th class="col-cost">Desp. comercial</th><th class="col-cost">Desp. adm.</th><th class="col-cost">Total custos</th><th title="Preço 100% NF">Preço por kg (R$)</th><th class="col-cost">Markup s/ custos</th><th title="Margem líquida do grupo no preço de tabela: 1 − custos ÷ preço − 27,51% (impostos, comissão e despesa financeira). Compare com a margem mínima dos produtos do grupo.">Margem líq. na tabela</th><th>Produtos</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -4171,6 +4279,7 @@ function onPricingLineInput(input) {
     const line = readPricingLineRow(row);
     row.querySelector('[data-computed="costs"]').textContent = formatBRL(line.custoBase + line.despCom + line.despAdm);
     row.querySelector('[data-computed="markup"]').textContent = formatMarkup(line);
+    row.querySelector('[data-computed="netMargin"]').textContent = formatLineNetMargin(line);
     markPricingDirty(row);
 }
 
@@ -4318,7 +4427,7 @@ function renderPricingProducts(body) {
             <input id="pricingProductSearch" class="pricing-input pricing-input--wide" placeholder="Buscar por código ou descrição" value="${escapeHtml(pricingProductFilter)}" oninput="pricingProductFilter = this.value; renderPricingProductRows()">
             <label class="pricing-check"><input type="checkbox" ${pricingShowInactive ? 'checked' : ''} onchange="pricingShowInactive = this.checked; renderPricingProductRows()"> Mostrar inativos</label>
         </div>
-        <p class="pricing-hint">Clique em uma ou mais categorias para filtrar. ${editable ? 'Altere quantos produtos quiser e clique em <strong>Salvar alterações</strong> (ou aperte Enter). ' : ''}Um produto <strong>sem preço próprio</strong> segue o grupo de preço dele: preço por kg do grupo × peso. O CIF de cada região é calculado a partir do preço FOB.</p>
+        <p class="pricing-hint">Clique em uma ou mais categorias para filtrar. ${editable ? 'Altere quantos produtos quiser e clique em <strong>Salvar alterações</strong> (ou aperte Enter). ' : ''}Um produto <strong>sem preço próprio</strong> segue o grupo de preço dele: preço por kg do grupo × peso. <strong>Margem mín.</strong> é a margem mínima do produto na negociação. O CIF de cada região é calculado a partir do preço FOB.</p>
         ${editable ? `
         <div class="pricing-bulkbar">
             <span>Com os <strong id="pricingFilteredCount">0</strong> produtos listados:</span>
@@ -4339,7 +4448,7 @@ function renderPricingProducts(body) {
         </div>` : ''}
         <div class="results-table-container">
             <table class="pricing-table">
-                <thead><tr><th>Código</th><th>Descrição</th><th>Grupo de preço</th><th>Peso (kg)</th><th>Preço FOB (R$)</th><th>Ativo</th></tr></thead>
+                <thead><tr><th>Código</th><th>Descrição</th><th>Grupo de preço</th><th>Peso (kg)</th><th>Preço FOB (R$)</th><th title="Margem mínima do produto na negociação. O pedido precisa de justificativa quando fica abaixo da média ponderada dos itens.">Margem mín. (%)</th><th>Ativo</th></tr></thead>
                 <tbody id="pricingProductRows"></tbody>
             </table>
         </div>
@@ -4354,7 +4463,7 @@ function renderPricingProducts(body) {
                 <label>Grupo de preço<select id="newProductLine" class="pricing-input">${lineOptions}</select></label>
                 <label>Peso (kg)<input id="newProductWeight" type="number" step="0.001" min="0" class="pricing-input"></label>
                 <label>Preço FOB próprio (opcional)<input id="newProductPrice" type="number" step="0.01" min="0" class="pricing-input" placeholder="vazio = preço do grupo"></label>
-                <label>NCM<input id="newProductNcm" class="pricing-input" maxlength="20"></label>
+                <label>Margem mínima (%)<input id="newProductMinMargin" type="number" step="0.5" min="0" max="100" class="pricing-input" value="${PRICING_RULES.MIN_ORDER_MARGIN}"></label>
                 <button type="button" class="btn-modal btn-modal-ghost" onclick="createPricingProduct()">Cadastrar produto</button>
             </div>
         </details>` : ''}`;
@@ -4407,9 +4516,10 @@ function renderPricingProductRows() {
                     oninput="this.closest('tr').dataset.priceEdited = '1'; onPricingProductInput(this)">
                 <div class="price-note">${priceNote}</div>
             </td>
+            <td><input type="number" step="0.5" min="0" max="100" class="pricing-input pricing-input--narrow" data-field="minMargin" value="${shown.minMargin}" ${dis} oninput="onPricingProductInput(this)"></td>
             <td><input type="checkbox" data-field="active" ${shown.active ? 'checked' : ''} ${dis} onchange="onPricingProductInput(this)"></td>
         </tr>`;
-    }).join('') || `<tr><td colspan="6"><div class="empty-state">Nenhum produto encontrado.</div></td></tr>`;
+    }).join('') || `<tr><td colspan="7"><div class="empty-state">Nenhum produto encontrado.</div></td></tr>`;
     updatePricingProductPending();
 }
 
@@ -4431,6 +4541,7 @@ function onPricingProductInput(el) {
         descricao: row.querySelector('[data-field="descricao"]').value,
         costLineKey: row.querySelector('[data-field="costLineKey"]').value,
         weight: readPricingNumber(row, 'weight'),
+        minMargin: readPricingNumber(row, 'minMargin'),
         active: row.querySelector('[data-field="active"]').checked,
         priceEdited: row.dataset.priceEdited === '1'
     };
@@ -4446,7 +4557,7 @@ function onPricingProductInput(el) {
 }
 
 function buildEditedProduct(current, edit) {
-    const product = { ...current, descricao: edit.descricao.trim(), costLineKey: edit.costLineKey, weight: edit.weight, active: edit.active };
+    const product = { ...current, descricao: edit.descricao.trim(), costLineKey: edit.costLineKey, weight: edit.weight, minMargin: edit.minMargin, active: edit.active };
     if (edit.priceEdited) {
         // Typing exactly the line price on a product without its own price keeps it following the line.
         product.priceOverride = current.priceOverride == null && Math.abs(edit.price - lineFobFor(product)) < 0.005 ? null : edit.price;
@@ -4545,6 +4656,7 @@ async function createPricingProduct() {
             costLineKey: value('newProductLine'),
             weight: parseFloat(value('newProductWeight')) || 0,
             priceOverride: Number.isFinite(price) && price > 0 ? price : null,
+            minMargin: parseFloat(value('newProductMinMargin')) || 0,
             ncm: value('newProductNcm'),
             active: true
         },
@@ -4639,6 +4751,7 @@ function formatPricingValue(field, value) {
     if (field === 'price_override' && (value === null || value === undefined || value === '')) return 'preço do grupo';
     if (value === null || value === undefined || value === '') return '—';
     if (field === 'weight') return formatBRL(parseFloat(value), 3);
+    if (field === 'min_margin') return `%`;
     if (field === 'active') return String(value) === '1' ? 'Sim' : 'Não';
     if (field === 'cost_line_key') return costsData[value] ? costsData[value].name : String(value);
     if (PRICING_MONEY_FIELDS.includes(field)) return `R$ ${formatBRL(parseFloat(value))}`;

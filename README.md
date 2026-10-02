@@ -38,7 +38,8 @@ Além da calculadora, o portal oferece um fluxo de negociação com preço unit�
 - Desconto manual, pagamento antecipado (−2%) e frete FOB (−3%), somados.
 - **Contrato (%):** acréscimo na nota para cobrir um custo que a própria Hiperroll paga (ex.: percentual logístico). O lucro continua sendo líquido − FOB, mas a margem % é medida sobre a nota com o contrato — ex.: 15% vira 14,29% com contrato de 5%.
 - Margem ponderada por valor: (total líquido − total FOB) ÷ total da nota.
-- Classificação visual da margem: 15% ou mais (verde), de 10% a 15% (amarelo), abaixo de 10% (vermelho — o envio exige justificativa, que chega ao gestor).
+- **Margem mínima por produto:** cada produto tem a sua (coluna "Margem" da planilha de produtos: 5% nas sacolas, 10% nas bobinas, sacarias e hospitalar, 15% em condomínio/rolo/perfumado, 20% no dobrado, 30% em Freezer e Micro-Ondas). O mínimo do pedido é a média dessas margens ponderada pelo valor de cada item; abaixo dele o envio exige justificativa, que chega ao gestor. O gestor altera a margem de cada produto na aba Tabela de Preços → Produtos.
+- Cores da margem: vermelho abaixo do mínimo do produto; amarelo do mínimo até o alvo de 15%; verde a partir de 15% (ou do mínimo, quando ele é maior que 15%).
 - **Preços atualizados:** ao abrir um rascunho, repetir um pedido ou enviar depois que o gestor mudou a tabela, o portal mostra o que mudou e o representante escolhe entre manter os preços negociados ou aplicar a nova tabela (mantendo o mesmo desconto em R$).
 
 ### 🧾 Pedidos e workflow comercial
@@ -151,8 +152,8 @@ O gestor entra na aba **💲 Tabela de Preços** e altera direto na tela (digita
 
 Os scripts abaixo só servem para atualizar o `data.js` **antes** de a tabela ir para o banco:
 
-- `scratch/update_data.py`: importa o CSV de produtos para o bloco `PRODUTOS_CSV` de `data.js`.
-- `scratch/update_data.ps1`: versão PowerShell da atualização do bloco de produtos.
+- `scratch/update_data.ps1`: lê a planilha de produtos `.xlsx` direto (sem Excel e sem exportar CSV) e regrava o bloco `PRODUTOS_CSV` do `data.js`. Uso: `powershell -File scratch/update_data.ps1 -Xlsx "TABELA HIPERROLL PRODUTOS - ATUALIZADA SETEMBRO.xlsx"`. O portal acha as colunas pelo nome do cabeçalho (Margem, Linha, Categoria, Cod. Produto, Descrição, Peso Caixa/Frd líquido, NCM), então colunas novas ou fora de ordem não quebram nada.
+- `scratch/update_data.py`: versão antiga, que importava um CSV exportado do Excel (mantida só como histórico).
 - `update_product_weights.py`: atualiza pesos por código de produto em `data.js` usando um mapa de códigos.
 - `update_weights.ps1`: rotina PowerShell equivalente para atualização de pesos.
 - `extract_excel.ps1` e `read_excel.ps1`: scripts auxiliares para leitura e extração de planilhas.
@@ -161,7 +162,7 @@ Os caminhos de entrada de alguns scripts apontam para pastas locais específicas
 
 ### Regras de margem
 
-As regras (margem mínima de 10%, alvo de 15%, antecipado −2%, frete FOB −3%) existem em dois lugares que precisam andar juntos: `PRICING_RULES` no `script_v5.js` (o que a tela mostra) e `api/lib/pricing.php` (o que o servidor aceita). O mesmo vale para as fórmulas de FOB/CIF: `computeItemPrices()` no `script_v5.js` e `server_item_prices()` em `api/lib/catalog.php`.
+As regras (margem mínima por produto, com 10% de padrão para produto sem margem informada; alvo de 15%; antecipado −2%; frete FOB −3%) e o cálculo do mínimo ponderado do pedido existem em dois lugares que precisam andar juntos: `PRICING_RULES` no `script_v5.js` (o que a tela mostra) e `api/lib/pricing.php` (o que o servidor aceita). O mesmo vale para as fórmulas de FOB/CIF: `computeItemPrices()` no `script_v5.js` e `server_item_prices()` em `api/lib/catalog.php`.
 
 ## 🗂️ Estrutura principal
 
