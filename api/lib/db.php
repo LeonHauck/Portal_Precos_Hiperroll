@@ -4,7 +4,8 @@
 // v2: tabela de preços editável (linhas de produto, frete, produtos, histórico de preços).
 // v3: preço individual por produto (products.price_override).
 // v4: margem do produto no preço cheio (products.table_margin).
-const SCHEMA_VERSION = 4;
+// v5: índice da auditoria por alvo, usado pelo histórico de cada pedido.
+const SCHEMA_VERSION = 5;
 
 const DENY_ALL_HTACCESS = "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order allow,deny\n    Deny from all\n</IfModule>\n";
 
@@ -114,6 +115,8 @@ function migrate(PDO $pdo): void
                 created_at TEXT NOT NULL
             )
         ");
+        // The order timeline (order_history) looks the log up by order id.
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_audit_log_target ON audit_log(target)');
 
         // Every statement uses IF NOT EXISTS, so a v1 database only gains the tables below.
         $pdo->exec("

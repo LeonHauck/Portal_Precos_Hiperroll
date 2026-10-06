@@ -47,7 +47,7 @@ Os percentuais, limites e margens da política comercial não são descritos nes
 - Registro de cliente, representante, validade da proposta e número do pedido do cliente.
 - Salvamento e carregamento de rascunhos.
 - Envio de pedidos para o status **Em Análise**.
-- Histórico de status com data, usuário e motivo.
+- **Histórico do pedido** (botão "📋 Histórico" no resumo do pedido e em cada cartão da aba Histórico e Entregas): rascunho salvo, envio, aprovação ou rejeição com o motivo, faturamento, lixeira e restauração, com data e usuário. Vem do registro de auditoria do servidor, então o representante e o gestor veem a mesma linha do tempo em qualquer computador.
 - Consulta dos pedidos do usuário na aba **Histórico e Entregas**.
 - Aprovação ou rejeição com justificativa e observação do supervisor.
 - Previsão de faturamento calculada após a aprovação.
@@ -62,7 +62,7 @@ Os percentuais, limites e margens da política comercial não são descritos nes
 
 - **🌓 Tema claro e escuro:** botão dedicado no cabeçalho para alternar o tema; a escolha é salva no navegador e, no primeiro acesso, o portal detecta automaticamente a preferência do sistema operacional.
 - **🏷️ Identidade visual da Hiperroll:** cabeçalho com o logo oficial em destaque sobre um degradê nas cores da marca (vermelho → azul-marinho), reaproveitado também na tela de login.
-- **🧩 Painéis padronizados:** os modais de Supervisor, Lixeira, Faturamento, Detalhes do Pedido, Histórico de Status e Envio de Pedido seguem o mesmo padrão visual (cabeçalho com ícone, corpo rolável e rodapé de ações).
+- **🧩 Painéis padronizados:** os modais de Supervisor, Lixeira, Faturamento, Detalhes do Pedido, Histórico do Pedido e Envio de Pedido seguem o mesmo padrão visual (cabeçalho com ícone, corpo rolável e rodapé de ações).
 - **🔘 Botões com hierarquia clara:** a ação principal de cada tela (como "Enviar Pedido ao Sistema") se destaca visualmente das ações secundárias (PDF, Salvar Rascunho, Ver Meus Pedidos).
 - **🖼️ Ícone da aba (favicon)** com o logo da Hiperroll e rodapé com crédito de desenvolvimento.
 
@@ -149,15 +149,19 @@ O gestor entra na aba **💲 Tabela de Preços** e altera direto na tela (digita
 - **Reajuste em lote:** um percentual sobre os grupos de preço escolhidos (preço e custos juntos, só preço ou só custos) ou sobre o frete das UFs escolhidas. Sempre com pré-visualização antes de aplicar.
 - **Histórico:** quem mudou, quando, o valor anterior, o novo e o motivo.
 
-Os scripts abaixo só servem para atualizar o `data.js` **antes** de a tabela ir para o banco:
+O script abaixo só serve para atualizar o `data.js` **antes** de a tabela ir para o banco:
 
-- `scratch/update_data.ps1`: lê a planilha de produtos `.xlsx` direto (sem Excel e sem exportar CSV) e regrava o bloco `PRODUTOS_CSV` do `data.js`. Uso: `powershell -File scratch/update_data.ps1 -Xlsx "TABELA HIPERROLL PRODUTOS - ATUALIZADA SETEMBRO.xlsx"`. O portal acha as colunas pelo nome do cabeçalho (Margem, Linha, Categoria, Cod. Produto, Descrição, Peso Caixa/Frd líquido, NCM), então colunas novas ou fora de ordem não quebram nada.
-- `scratch/update_data.py`: versão antiga, que importava um CSV exportado do Excel (mantida só como histórico).
-- `update_product_weights.py`: atualiza pesos por código de produto em `data.js` usando um mapa de códigos.
-- `update_weights.ps1`: rotina PowerShell equivalente para atualização de pesos.
-- `extract_excel.ps1` e `read_excel.ps1`: scripts auxiliares para leitura e extração de planilhas.
+- `scratch/update_data.ps1`: lê a planilha de produtos `.xlsx` direto (sem Excel e sem exportar CSV) e regrava o bloco `PRODUTOS_CSV` do `data.js`. O portal acha as colunas pelo nome do cabeçalho (Margem, Linha, Categoria, Cod. Produto, Descrição, Peso Caixa/Frd líquido, NCM), então colunas novas ou fora de ordem não quebram nada.
 
-Os caminhos de entrada de alguns scripts apontam para pastas locais específicas. Revise e ajuste esses caminhos antes de executar em outra máquina.
+```powershell
+# Usa a planilha de produtos mais recente da pasta do projeto ("TABELA ... PRODUTOS ... .xlsx")
+powershell -File scratch\update_data.ps1
+
+# Ou escolhe a planilha pelo nome
+powershell -File scratch\update_data.ps1 -Xlsx "TABELA HIPERROLL PRODUTOS - ATUALIZADA SETEMBRO.xlsx"
+```
+
+O script funciona em qualquer máquina com Windows: os caminhos partem da pasta do projeto, onde quer que ela esteja, e ele só precisa do PowerShell que já vem instalado (sem Excel e sem Python). Ao terminar, mostra a planilha usada e os códigos de produto que entraram e saíram em relação ao `data.js` anterior. Se houver mais de uma planilha com a mesma data (por exemplo, logo depois de baixar o repositório), ele para e pede o nome em `-Xlsx`.
 
 ### Regras comerciais no código
 
@@ -181,7 +185,7 @@ Portal_Precos_Hiperroll/
 │   └── lib/                     # Banco, autenticação, pedidos, usuários, margem e tabela de preços
 ├── demo/                        # Modo demonstração local (fora do git; não publicar)
 ├── data/                        # Banco SQLite (criado automaticamente; fora do git)
-├── scratch/                     # Scripts auxiliares de atualização de dados
+├── scratch/                     # Script que atualiza o data.js a partir da planilha de produtos
 ├── logo-hiperroll.png           # Logo oficial (fundo transparente) — cabeçalho e favicon
 └── logo.png                     # Logo com fundo sólido — usado na exportação em PDF
 ```
@@ -193,9 +197,6 @@ Arquivos como `index_backup.html`, `data_backup.js`, `style_backup.css` e `data.
 - Enquanto a tabela ainda não está no banco, os preços de cada item ainda vêm do navegador; depois dela, o servidor recalcula tudo.
 - A ligação inicial entre produto e grupo de preço vem de regras no `script_v5.js` (`getCategoryMatch()` e `LEGACY_CATEGORY_LINES`). Depois que a tabela vai para o banco, ela passa a ser editada na aba Tabela de Preços.
 - As notas fiscais anexadas ficam dentro do banco (em base64); com muitos anexos grandes, vale movê-las para arquivos separados.
-- O histórico de status exibido no botão "📋 Histórico" do resumo do pedido é local ao navegador.
-- Os scripts de atualização dependem de planilhas e caminhos locais que podem variar por máquina.
-
 ## 📄 Licença e uso
 
 Este projeto é destinado ao uso interno da operação comercial da Hiperroll, caso ocorra a intenção de utilizar a mesma ferramenta altere a parte que consta nomes e documentação da empresa Hiperroll.

@@ -19,7 +19,7 @@
             } catch (e) { /* localStorage indisponível: mantém tema claro padrão */ }
         }());
     </script>
-    <link rel="stylesheet" href="style.css?v=9">
+    <link rel="stylesheet" href="style.css?v=10">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -178,22 +178,6 @@
                         <input type="text" id="proposalValidity" placeholder="Ex: 30 dias" oninput="formatProposalValidityInput(this); updateHeaderInfo()" inputmode="numeric">
                     </div>
                 </div>
-                <!-- Status History Modal -->
-                <div id="statusHistoryModal" class="modal-backdrop" style="display: none; position: fixed; z-index: 1000;">
-                    <div class="modal-panel modal-panel--sm">
-                        <div class="modal-header">
-                            <div class="modal-header-title">
-                                <div class="modal-icon-badge">📋</div>
-                                <h3 class="modal-title">Histórico de Status</h3>
-                            </div>
-                            <button onclick="closeStatusHistory()" class="modal-close-btn" aria-label="Fechar">✕</button>
-                        </div>
-                        <div id="statusHistoryList" class="modal-body">
-                            <!-- Preenchido por JavaScript -->
-                        </div>
-                    </div>
-                </div>
-
                 <div style="display: flex; gap: 30px; flex-wrap: wrap;">
                     <div id="totalsPriceContainer" class="totals-price-container" style="flex: 1; min-width: 250px;">
                         <p>Peso Total: <strong id="totalWeight">0.00</strong>&nbsp;Kg</p>
@@ -305,6 +289,25 @@
             Desenvolvido por <a href="https://www.linkedin.com/in/leon-hauck/" target="_blank" rel="noopener noreferrer">Leon Hauck</a>
         </footer>
 
+    </div>
+
+    <!-- Modal: Histórico do Pedido (aberto pelo resumo do pedido e pelos cartões da aba Histórico) -->
+    <div id="statusHistoryModal" class="modal-backdrop" style="display: none; position: fixed; z-index: 1004;">
+        <div class="modal-panel modal-panel--sm">
+            <div class="modal-header">
+                <div class="modal-header-title">
+                    <div class="modal-icon-badge">📋</div>
+                    <div>
+                        <h3 class="modal-title">Histórico do Pedido</h3>
+                        <p id="statusHistoryOrder" class="modal-subtitle"></p>
+                    </div>
+                </div>
+                <button onclick="closeStatusHistory()" class="modal-close-btn" aria-label="Fechar">✕</button>
+            </div>
+            <div id="statusHistoryList" class="modal-body">
+                <!-- Preenchido por JavaScript -->
+            </div>
+        </div>
     </div>
 
     <!-- Modal: Enviar Pedido ao Sistema -->
@@ -522,7 +525,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js"></script>
     <!-- Tabelas de preço/custo: entregues pelo servidor somente para usuários logados -->
     <script src="api/data.php"></script>
-    <script src="script_v5.js?v=20261002c"></script>
+    <script src="script_v5.js?v=20261006a"></script>
     <script>
         window.addEventListener('load', function () {
             if (typeof window.loginUser !== 'function') {
