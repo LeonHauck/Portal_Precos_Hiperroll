@@ -18,6 +18,10 @@ $config = [
     // Limite do anexo de nota fiscal (em bytes, depois de decodificado).
     'max_invoice_bytes' => 2 * 1024 * 1024,
 
+    // Pasta onde ficam os arquivos das notas fiscais. null = pasta "invoices" ao lado do banco
+    // (acompanha o db_path, então fica fora do public_html quando o banco também fica).
+    'invoice_dir' => null,
+
     // Mostra detalhes de erro nas respostas. Deixe false em produção.
     'debug' => false,
 ];

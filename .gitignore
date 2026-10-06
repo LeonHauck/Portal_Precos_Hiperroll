@@ -10,6 +10,8 @@ users.json
 /data/*.sqlite-journal
 /data/*.sqlite-wal
 /data/*.sqlite-shm
+# Notas fiscais anexadas aos pedidos (documentos de clientes: nunca versionar)
+/data/invoices/
 /api/config.local.php
 
 # Modo demonstração local (simula o servidor no navegador; não vai para o repositório)

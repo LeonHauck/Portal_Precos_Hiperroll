@@ -1260,7 +1260,13 @@ td {
 
 .draft-modal h3 { margin-top: 0; }
 
-.draft-modal .invoice-link { display: inline-block; background: var(--text); color: white; padding: 8px 12px; border-radius: var(--radius-sm); margin-right: 8px; text-decoration: none; }
+/* Notas fiscais anexadas: "📄 nome" abre em outra aba e "⬇️" baixa. Fundo escuro nos dois temas. */
+.invoice-links { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.invoice-chip { display: inline-flex; gap: 2px; }
+.invoice-link { display: inline-block; background: #1e293b; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 0.85rem; font-weight: 600; }
+.invoice-link:hover { background: #334155; }
+.invoice-chip .invoice-link { border-radius: 4px 0 0 4px; }
+.invoice-chip .invoice-link--download { border-radius: 0 4px 4px 0; padding: 6px 9px; }
 
 /* ========== MODAL SYSTEM (Supervisor / Lixeira / Envio de Pedido) ========== */
 .modal-backdrop {
