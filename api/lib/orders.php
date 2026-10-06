@@ -366,12 +366,14 @@ function restore_order(array $user, string $id): array
     foreach (['supervisorNote', 'predictedBillingDate', 'billingStatus'] as $field) {
         $payload[$field] = '';
     }
+    $droppedInvoices = $payload['invoices'] ?? [];
     unset($payload['billedQuantities'], $payload['billingHistory'], $payload['invoices'], $payload['pricingSnapshot']);
     $payload['savedAt'] = now_iso();
     $payload['savedBy'] = $user['username'];
 
     db()->prepare('UPDATE orders SET payload = ?, status = ?, deleted_at = NULL, deleted_by = NULL, updated_at = ? WHERE id = ?')
         ->execute([json_encode($payload, JSON_UNESCAPED_UNICODE), 'rascunho', now_iso(), $id]);
+    delete_invoice_files($droppedInvoices);
     audit('order.restore', $id);
     return order_to_client(load_order_row($id));
 }
@@ -396,6 +398,7 @@ function purge_order(array $user, string $id): void
         fail(403, 'Pedidos em análise ou aprovados só podem ser excluídos definitivamente pelo gestor.');
     }
     db()->prepare('DELETE FROM orders WHERE id = ?')->execute([$id]);
+    delete_invoice_files((json_decode($row['payload'], true) ?: [])['invoices'] ?? []);
     audit('order.purge', $id, ['hiperrollNumber' => $row['hiperroll_number']]);
 }
 
@@ -408,6 +411,7 @@ function empty_trash(array $user): array
         $row = load_order_row($order['id']);
         if ($row && can_purge($row, $user)) {
             db()->prepare('DELETE FROM orders WHERE id = ?')->execute([$row['id']]);
+            delete_invoice_files($order['invoices'] ?? []);
             $deleted++;
         } else {
             $kept++;
@@ -417,28 +421,176 @@ function empty_trash(array $user): array
     return ['deleted' => $deleted, 'kept' => $kept];
 }
 
+// NOTAS FISCAIS ANEXADAS: each one is a file in a folder next to the database, never inside it.
+// The order only keeps {id, name, mime, size, date}, so listing orders stays light no matter how
+// many invoices exist. The folder refuses direct downloads (same "deny all" as the data folder):
+// a file only leaves through send_invoice(), which checks who is asking.
+// To accept another format, add it here and teach detect_invoice_type() to recognize it.
+const INVOICE_TYPES = [
+    'application/pdf' => 'pdf',
+    'image/png' => 'png',
+    'image/jpeg' => 'jpg',
+    'image/webp' => 'webp',
+    'image/gif' => 'gif',
+];
+const INVOICE_INVALID_TYPE = 'Anexe a nota fiscal em PDF ou imagem (PNG, JPG, WEBP ou GIF).';
+
+function invoice_dir(): string
+{
+    $config = app_config();
+    $dir = $config['invoice_dir'] ?? (dirname($config['db_path']) . '/invoices');
+    if (!is_dir($dir) && !mkdir($dir, 0750, true) && !is_dir($dir)) {
+        throw new RuntimeException('Não foi possível criar a pasta de notas fiscais: ' . $dir);
+    }
+    protect_data_dir($dir);
+    return $dir;
+}
+
+// Null when the entry is not a stored file. The path is always built from a 32-hex id and a
+// known extension, never from text typed by someone.
+function invoice_path($entry): ?string
+{
+    $id = is_array($entry) ? ($entry['id'] ?? null) : null;
+    $mime = is_array($entry) ? ($entry['mime'] ?? null) : null;
+    if (!is_string($id) || !preg_match('/^[a-f0-9]{32}$/', $id) || !is_string($mime) || !array_key_exists($mime, INVOICE_TYPES)) {
+        return null;
+    }
+    return invoice_dir() . '/' . $id . '.' . INVOICE_TYPES[$mime];
+}
+
+// Whoever sends the file only declares a type; what it really is comes from its first bytes.
+function detect_invoice_type(string $bytes): ?string
+{
+    if (strpos(substr($bytes, 0, 1024), '%PDF-') !== false) {
+        return 'application/pdf';
+    }
+    if (strncmp($bytes, "\x89PNG\r\n\x1a\n", 8) === 0) {
+        return 'image/png';
+    }
+    if (strncmp($bytes, "\xFF\xD8\xFF", 3) === 0) {
+        return 'image/jpeg';
+    }
+    if (strncmp($bytes, 'GIF87a', 6) === 0 || strncmp($bytes, 'GIF89a', 6) === 0) {
+        return 'image/gif';
+    }
+    if (strncmp($bytes, 'RIFF', 4) === 0 && substr($bytes, 8, 4) === 'WEBP') {
+        return 'image/webp';
+    }
+    return null;
+}
+
+// Validates the file itself and returns ['entry' => what the order keeps, 'bytes' => the file],
+// without writing anything yet. It takes plain bytes, so it serves the upload from the screen
+// today and any other source later (e.g. an integration that fetches the invoice by itself).
+function prepare_invoice(string $bytes, string $name): array
+{
+    if ($bytes === '') {
+        fail(422, 'O arquivo da nota fiscal está vazio ou corrompido.');
+    }
+    $max = app_config()['max_invoice_bytes'];
+    if (strlen($bytes) > $max) {
+        fail(422, 'A nota fiscal deve ter no máximo ' . round($max / 1048576, 1) . ' MB.');
+    }
+    $mime = detect_invoice_type($bytes);
+    if ($mime === null) {
+        fail(422, INVOICE_INVALID_TYPE);
+    }
+    return [
+        'entry' => [
+            'id' => bin2hex(random_bytes(16)),
+            'name' => str_field($name, 120) ?: 'Nota Fiscal',
+            'mime' => $mime,
+            'size' => strlen($bytes),
+            'date' => now_iso(),
+        ],
+        'bytes' => $bytes,
+    ];
+}
+
+// The screen sends the file as a data URL inside the JSON body.
 function decode_invoice($invoice): ?array
 {
     if (!is_array($invoice) || empty($invoice['dataUrl'])) {
         return null;
     }
     $dataUrl = (string) $invoice['dataUrl'];
-    if (!preg_match('#^data:(application/pdf|image/(?:png|jpeg|webp|gif));base64,#', $dataUrl, $m)) {
-        fail(422, 'Anexe a nota fiscal em PDF ou imagem (PNG, JPG, WEBP ou GIF).');
+    if (!preg_match('#^data:[^,]*;base64,#', $dataUrl, $m)) {
+        fail(422, INVOICE_INVALID_TYPE);
     }
-    $decoded = base64_decode(substr($dataUrl, strlen($m[0])), true);
-    if ($decoded === false) {
-        fail(422, 'O arquivo da nota fiscal está corrompido.');
+    $bytes = base64_decode(substr($dataUrl, strlen($m[0])), true);
+    return prepare_invoice($bytes === false ? '' : $bytes, (string) ($invoice['name'] ?? ''));
+}
+
+function save_invoice_file(array $entry, string $bytes): void
+{
+    $path = invoice_path($entry);
+    if ($path === null || file_put_contents($path, $bytes, LOCK_EX) !== strlen($bytes)) {
+        if ($path !== null && is_file($path)) {
+            @unlink($path);
+        }
+        throw new RuntimeException('Não foi possível gravar a nota fiscal.');
     }
-    $max = app_config()['max_invoice_bytes'];
-    if (strlen($decoded) > $max) {
-        fail(422, 'A nota fiscal deve ter no máximo ' . round($max / 1048576, 1) . ' MB.');
+}
+
+// Called when an order stops referring to its files (purged, or restored as a new draft).
+function delete_invoice_files($invoices): void
+{
+    foreach (is_array($invoices) ? $invoices : [] as $entry) {
+        $path = invoice_path($entry);
+        if ($path !== null && is_file($path)) {
+            @unlink($path);
+        }
     }
-    return [
-        'name' => str_field($invoice['name'] ?? 'Nota Fiscal', 120) ?: 'Nota Fiscal',
-        'data' => $dataUrl,
-        'date' => now_iso(),
-    ];
+}
+
+// Shows (or, with $download, saves) one invoice in its original format. Only for who may see
+// the order: its representative and the gestor.
+function send_invoice(array $user, string $orderId, string $invoiceId, bool $download): void
+{
+    $row = require_visible_order($orderId, $user);
+    $payload = json_decode($row['payload'], true) ?: [];
+    foreach ($payload['invoices'] ?? [] as $entry) {
+        if ($invoiceId === '' || !is_array($entry) || ($entry['id'] ?? null) !== $invoiceId) {
+            continue;
+        }
+        $path = invoice_path($entry);
+        if ($path === null || !is_file($path)) {
+            break;
+        }
+        $base = trim((string) preg_replace('/[^A-Za-z0-9.-]+/', '_', pathinfo((string) ($entry['name'] ?? ''), PATHINFO_FILENAME)), '_');
+        $filename = ($base !== '' ? $base : 'nota_fiscal') . '_' . $row['hiperroll_number'] . '.' . INVOICE_TYPES[$entry['mime']];
+
+        header('Content-Type: ' . $entry['mime']);
+        header('Content-Disposition: ' . ($download ? 'attachment' : 'inline') . '; filename="' . $filename . '"');
+        header('Content-Length: ' . filesize($path));
+        header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: private, no-store');
+        readfile($path);
+        exit;
+    }
+    fail(404, 'Nota fiscal não encontrada.');
+}
+
+// The backup stays a single file: each invoice goes inside it, read from its file.
+function order_with_invoice_data(array $order): array
+{
+    foreach ($order['invoices'] ?? [] as $i => $entry) {
+        $path = invoice_path($entry);
+        if ($path !== null && is_file($path)) {
+            $order['invoices'][$i]['data'] = 'data:' . $entry['mime'] . ';base64,' . base64_encode((string) file_get_contents($path));
+        }
+    }
+    return $order;
+}
+
+// Attaches an already validated invoice (see prepare_invoice) to the order payload. The file is
+// written here; the caller saves the payload and, if that fails, removes the file again.
+function attach_invoice(array $payload, array $invoice): array
+{
+    save_invoice_file($invoice['entry'], $invoice['bytes']);
+    $payload['invoices'] = $payload['invoices'] ?? [];
+    $payload['invoices'][] = $invoice['entry'];
+    return $payload;
 }
 
 function register_billing(string $id, $billedMap, $invoice): array
@@ -451,7 +603,7 @@ function register_billing(string $id, $billedMap, $invoice): array
         fail(409, 'Só é possível faturar pedidos aprovados.');
     }
     $billed = is_array($billedMap) ? $billedMap : [];
-    $invoiceEntry = decode_invoice($invoice);
+    $upload = decode_invoice($invoice);
 
     $payload = json_decode($row['payload'], true) ?: [];
     $payload['billedQuantities'] = $payload['billedQuantities'] ?? [];
@@ -476,7 +628,7 @@ function register_billing(string $id, $billedMap, $invoice): array
             $allComplete = false;
         }
     }
-    if (!$cleanMap && !$invoiceEntry) {
+    if (!$cleanMap && !$upload) {
         fail(422, 'Informe alguma quantidade ou anexe uma nota fiscal.');
     }
 
@@ -490,11 +642,19 @@ function register_billing(string $id, $billedMap, $invoice): array
     if ($anyBilled) {
         $payload['predictedBillingDate'] = $allComplete ? null : $nextPrediction;
     }
-    if ($invoiceEntry) {
-        $payload['invoices'][] = $invoiceEntry;
+    if ($upload) {
+        $payload = attach_invoice($payload, $upload);
     }
 
-    write_order($row, $payload, $row['status']);
-    audit('order.billing', $id, ['items' => $cleanMap, 'invoice' => $invoiceEntry['name'] ?? null]);
+    try {
+        write_order($row, $payload, $row['status']);
+    } catch (Throwable $e) {
+        // The order was not saved, so nothing would ever point to the file just written.
+        if ($upload) {
+            delete_invoice_files([$upload['entry']]);
+        }
+        throw $e;
+    }
+    audit('order.billing', $id, ['items' => $cleanMap, 'invoice' => $upload['entry']['name'] ?? null]);
     return order_to_client(load_order_row($id));
 }

@@ -72,7 +72,10 @@ function handle_login(array $body): void
 
 function export_backup(): void
 {
-    $orders = array_map('order_to_client', db()->query('SELECT * FROM orders ORDER BY created_at')->fetchAll());
+    $orders = array_map(
+        fn(array $row) => order_with_invoice_data(order_to_client($row)),
+        db()->query('SELECT * FROM orders ORDER BY created_at')->fetchAll()
+    );
     $counter = db()->query("SELECT value FROM counters WHERE name = 'hiperroll_order'")->fetchColumn();
     audit('backup.export', null, ['orders' => count($orders)]);
 
@@ -200,6 +203,19 @@ switch ($action) {
         require_role(ROLE_GESTOR);
         $order = register_billing((string) ($body['id'] ?? ''), $body['billed'] ?? [], $body['invoice'] ?? null);
         json_response(200, ['success' => true, 'order' => $order]);
+        break;
+
+    // Opened straight by the browser in another tab (like backup.export): the session cookie
+    // authorizes it. Shows the PDF/image; with download=1 the browser saves it instead.
+    case 'orders.invoice':
+        expect_method('GET');
+        $actor = require_login();
+        send_invoice(
+            $actor,
+            is_string($_GET['id'] ?? null) ? $_GET['id'] : '',
+            is_string($_GET['file'] ?? null) ? $_GET['file'] : '',
+            !empty($_GET['download'])
+        );
         break;
 
     case 'pricing.get':

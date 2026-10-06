@@ -2477,6 +2477,49 @@ function toggleDraftItems(draftId) {
     }
 }
 
+// Formats an attached invoice may have (same list as INVOICE_TYPES in api/lib/orders.php).
+const INVOICE_VIEWABLE_TYPES = Object.freeze(['application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+// Attached invoices are files on the server. Each one gets two links that go through the API,
+// which checks who may see the order: "📄 name" opens the PDF/image in another tab and "⬇️" saves
+// it. An entry that still carries the file itself (the local demo keeps it in the browser) is
+// opened by openEmbeddedInvoice() instead.
+function renderInvoiceLinks(submission) {
+    const invoices = Array.isArray(submission.invoices) ? submission.invoices : [];
+    return invoices.map((invoice, index) => {
+        const name = invoice.name || `NF ${index + 1}`;
+        const label = `📄 ${escapeHtml(name)}`;
+        const viewTitle = 'title="Abrir a nota fiscal em outra aba"';
+        const downloadTitle = `title="Baixar a nota fiscal" aria-label="Baixar ${escapeHtml(name)}"`;
+        let view, download;
+        if (invoice.data) {
+            view = `href="#" onclick="openEmbeddedInvoice('${escapeHtml(submission.id)}', ${index}); return false;"`;
+            download = `href="${escapeHtml(invoice.data)}" download="${escapeHtml(`${name}_${submission.orderNumber || ''}`)}"`;
+        } else {
+            const url = extra => escapeHtml(`${API_BASE}?${new URLSearchParams({ action: 'orders.invoice', id: submission.id, file: invoice.id || '', ...extra })}`);
+            view = `href="${url({})}" target="_blank" rel="noopener"`;
+            download = `href="${url({ download: 1 })}" target="_blank" rel="noopener"`;
+        }
+        return `<span class="invoice-chip">`
+            + `<a class="invoice-link" ${view} ${viewTitle}>${label}</a>`
+            + `<a class="invoice-link invoice-link--download" ${download} ${downloadTitle}>⬇️</a>`
+            + `</span>`;
+    }).join('');
+}
+
+// Demo only: the file is inside the order, so it becomes a temporary address the browser can show.
+function openEmbeddedInvoice(submissionId, index) {
+    const submission = orderSubmissionManager.getById(submissionId);
+    const invoice = submission && Array.isArray(submission.invoices) ? submission.invoices[index] : null;
+    const match = invoice && typeof invoice.data === 'string' ? invoice.data.match(/^data:([^;,]+);base64,(.*)$/) : null;
+    if (!match || !INVOICE_VIEWABLE_TYPES.includes(match[1])) {
+        alert('Não foi possível abrir esta nota fiscal. Use o botão ⬇️ para baixar.');
+        return;
+    }
+    const bytes = Uint8Array.from(atob(match[2]), char => char.charCodeAt(0));
+    window.open(URL.createObjectURL(new Blob([bytes], { type: match[1] })), '_blank');
+}
+
 function showDraftModal(submissionId) {
     const submission = orderSubmissionManager.getById(submissionId);
     if (!submission) return;
@@ -2503,13 +2546,7 @@ function showDraftModal(submissionId) {
 
     let invoicesHtml = '';
     if (submission.invoices && submission.invoices.length) {
-        invoicesHtml = '<div style="margin-top:12px;"><strong>Notas Fiscais anexadas:</strong><div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">';
-        submission.invoices.forEach((inv, idx) => {
-            const name = inv.name || `NF_${idx+1}`;
-            const href = inv.data || '';
-            invoicesHtml += `<a class="invoice-link" href="${href}" download="${name}_${submission.orderNumber || ''}">${name}</a>`;
-        });
-        invoicesHtml += '</div></div>';
+        invoicesHtml = `<div style="margin-top:12px;"><strong>Notas Fiscais anexadas:</strong><div class="invoice-links">${renderInvoiceLinks(submission)}</div></div>`;
     }
 
     modal.innerHTML = `
@@ -3827,11 +3864,7 @@ function renderHistoryTab() {
         // Notas Fiscais anexadas
         let invoicesHtml = '';
         if (submission.invoices && submission.invoices.length > 0) {
-            invoicesHtml += `<div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">`;
-            (Array.isArray(submission.invoices) ? submission.invoices : []).forEach((inv, i) => {
-                invoicesHtml += `<a href="${inv.data}" download="${inv.name}_${submission.orderNumber}.pdf" style="background:#1e293b; color:white; padding:6px 12px; border-radius:4px; text-decoration:none; font-size:0.85rem; font-weight:600;">📄 Baixar ${inv.name}</a>`;
-            });
-            invoicesHtml += `</div>`;
+            invoicesHtml += `<div class="invoice-links">${renderInvoiceLinks(submission)}</div>`;
         }
 
         // Ações

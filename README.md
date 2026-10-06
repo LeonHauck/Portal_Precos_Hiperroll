@@ -122,7 +122,8 @@ A pasta `demo/` fica só na máquina de desenvolvimento (está no `.gitignore`, 
 
 - Usuários, pedidos, lixeira, numeração Hiper Roll e o registro de auditoria ficam em um banco **SQLite** (um único arquivo, `data/portal.sqlite` por padrão), criado automaticamente pelo PHP.
 - O número Hiper Roll é gerado pelo servidor quando o pedido é salvo pela primeira vez, então dois representantes nunca recebem o mesmo número. O número exibido em um pedido ainda não salvo é uma previsão.
-- **Backup:** gestor ou administrador → **👥 Usuários → ⬇️ Baixar backup** (arquivo JSON com pedidos e usuários, sem as senhas). Para uma cópia completa, baixe o arquivo `.sqlite` pelo Gerenciador de Arquivos do cPanel; para restaurar, basta substituí-lo.
+- **Notas fiscais anexadas:** cada nota (PDF, PNG, JPG, WEBP ou GIF, até 2 MB) é gravada como arquivo na pasta `invoices/`, ao lado do banco (`data/invoices/` por padrão; acompanha o `db_path`). O pedido guarda só nome, tipo, tamanho e data, então listar pedidos não carrega os arquivos. No pedido, "📄 nome" abre a nota em outra aba e "⬇️" baixa; os dois passam pela API (`orders.invoice`), que só entrega o arquivo ao representante dono do pedido ou ao gestor. O tipo é conferido pelo conteúdo do arquivo, não pelo nome. Os arquivos são apagados quando o pedido é excluído definitivamente ou restaurado da lixeira como rascunho.
+- **Backup:** gestor ou administrador → **👥 Usuários → ⬇️ Baixar backup** (arquivo JSON com pedidos, as notas fiscais anexadas e usuários, sem as senhas). Para uma cópia completa, baixe o arquivo `.sqlite` e a pasta `invoices/` pelo Gerenciador de Arquivos do cPanel; para restaurar, basta substituí-los.
 - **Tabela de preços:** na primeira vez que o gestor (ou o administrador) abre a aba 💲 Tabela de Preços, a tabela do `data.js` é copiada para o banco automaticamente, sem mudar nenhum preço. A partir daí, grupos de preço, frete, produtos e o histórico de preços ficam no mesmo banco SQLite, com um número de versão que sobe a cada alteração e é gravado em cada pedido.
 - Até essa primeira abertura, o portal usa o `data.js`, entregue pelo `api/data.php` **somente para usuários logados**. Depois dela o `data.js` não é mais necessário no servidor.
 - Preferências de interface (tema claro/escuro) continuam salvas no navegador.
@@ -133,8 +134,8 @@ A pasta `demo/` fica só na máquina de desenvolvimento (está no `.gitignore`, 
 - Sessão em cookie `HttpOnly`/`SameSite` e renovada no login; toda alteração exige um token CSRF.
 - As regras comerciais são recalculadas no servidor (`api/lib/pricing.php`), e, com a tabela no banco, os preços de cada item também vêm do banco (`api/lib/catalog.php`) — não dá para burlá-las alterando o JavaScript no navegador.
 - Um pedido montado com uma versão antiga da tabela é recusado no envio até o representante revisar os novos preços.
-- `.htaccess` bloqueia o download do banco, da planilha, dos scripts de manutenção, dos backups e de arquivos ocultos.
-- `api/config.local.php` e o banco `.sqlite` estão no `.gitignore` e nunca devem ir para o repositório.
+- `.htaccess` bloqueia o download do banco, da planilha, dos scripts de manutenção, dos backups e de arquivos ocultos. A pasta de dados (banco e notas fiscais) recusa qualquer acesso direto pelo navegador.
+- `api/config.local.php`, o banco `.sqlite` e a pasta `data/invoices/` estão no `.gitignore` e nunca devem ir para o repositório.
 - As senhas que existiam no código até setembro de 2026 estão no histórico público do repositório e **não devem ser reutilizadas**.
 
 ## 🔄 Atualização das bases
@@ -184,7 +185,7 @@ Portal_Precos_Hiperroll/
 │   ├── config.local.example.php # Modelo para ajustes da hospedagem
 │   └── lib/                     # Banco, autenticação, pedidos, usuários, margem e tabela de preços
 ├── demo/                        # Modo demonstração local (fora do git; não publicar)
-├── data/                        # Banco SQLite (criado automaticamente; fora do git)
+├── data/                        # Banco SQLite e notas fiscais anexadas (criados automaticamente; fora do git)
 ├── scratch/                     # Script que atualiza o data.js a partir da planilha de produtos
 ├── logo-hiperroll.png           # Logo oficial (fundo transparente) — cabeçalho e favicon
 └── logo.png                     # Logo com fundo sólido — usado na exportação em PDF
@@ -196,7 +197,7 @@ Arquivos como `index_backup.html`, `data_backup.js`, `style_backup.css` e `data.
 
 - Enquanto a tabela ainda não está no banco, os preços de cada item ainda vêm do navegador; depois dela, o servidor recalcula tudo.
 - A ligação inicial entre produto e grupo de preço vem de regras no `script_v5.js` (`getCategoryMatch()` e `LEGACY_CATEGORY_LINES`). Depois que a tabela vai para o banco, ela passa a ser editada na aba Tabela de Preços.
-- As notas fiscais anexadas ficam dentro do banco (em base64); com muitos anexos grandes, vale movê-las para arquivos separados.
+- A nota fiscal é anexada manualmente pelo gestor na tela de faturamento; ainda não há busca automática do documento em outro sistema.
 ## 📄 Licença e uso
 
 Este projeto é destinado ao uso interno da operação comercial da Hiperroll, caso ocorra a intenção de utilizar a mesma ferramenta altere a parte que consta nomes e documentação da empresa Hiperroll.
