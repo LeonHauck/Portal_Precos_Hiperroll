@@ -17,6 +17,25 @@ O Portal de Preços Hiperroll é uma aplicação web para apoiar a equipe comerc
 
 Além da calculadora, o portal oferece um fluxo de negociação com preço unitário editável, descontos, contratos, acompanhamento de margem, rascunhos, envio para análise, aprovação ou rejeição por usuários autorizados e exportação de pedidos em PDF.
 
+## 🖼️ Telas do sistema
+
+Capturas feitas com usuários e clientes de exemplo. Preços, descontos e margens foram ocultados (aparecem desfocados).
+
+| Login | Consulta de preços |
+| :---: | :---: |
+| <img src="docs/screenshots/01-login.png" alt="Tela de login do portal" width="420" /> | <img src="docs/screenshots/02-consulta-de-precos.png" alt="Pesquisa de produtos com preços FOB e CIF" width="420" /> |
+| Cada pessoa entra com o próprio usuário. | Produto, estado, tipo de praça e faixa de peso definem o preço. |
+
+| Montagem do pedido | Histórico do pedido |
+| :---: | :---: |
+| <img src="docs/screenshots/03-pedido.png" alt="Resumo do pedido com itens, cliente e condições" width="420" /> | <img src="docs/screenshots/04-historico-do-pedido.png" alt="Linha do tempo de um pedido" width="420" /> |
+| Itens, preço negociado, condições e margem em tempo real. | Quem salvou, enviou, aprovou, rejeitou e faturou, com data e hora. |
+
+| Tabela de preços (tema escuro) |
+| :---: |
+| <img src="docs/screenshots/05-tabela-de-precos.png" alt="Aba Tabela de Preços do gestor, no tema escuro" width="640" /> |
+| O gestor altera preços, fretes e produtos direto na tela. |
+
 ## ⚙️ Funcionalidades
 
 ### 💰 Precificação
@@ -187,6 +206,7 @@ Portal_Precos_Hiperroll/
 ├── demo/                        # Modo demonstração local (fora do git; não publicar)
 ├── data/                        # Banco SQLite e notas fiscais anexadas (criados automaticamente; fora do git)
 ├── scratch/                     # Script que atualiza o data.js a partir da planilha de produtos
+├── docs/screenshots/            # Imagens usadas neste README (não precisam ir para a hospedagem)
 ├── logo-hiperroll.png           # Logo oficial (fundo transparente) — cabeçalho e favicon
 └── logo.png                     # Logo com fundo sólido — usado na exportação em PDF
 ```
