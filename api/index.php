@@ -135,6 +135,12 @@ switch ($action) {
         json_response(200, ['success' => true, 'nextNumber' => peek_next_hiperroll_number()]);
         break;
 
+    case 'orders.history':
+        expect_method('GET');
+        $actor = require_login();
+        json_response(200, ['success' => true, 'history' => order_history($actor, is_string($_GET['id'] ?? null) ? $_GET['id'] : '')]);
+        break;
+
     case 'orders.saveDraft':
     case 'orders.submit':
         expect_method('POST');

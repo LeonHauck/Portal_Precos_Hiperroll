@@ -260,52 +260,27 @@ function setLoadedOrderReference(reference = '') {
     updateHeaderInfo();
 }
 
-// ========== SISTEMA DE STATUS E HISTÓRICO ==========
+// ========== STATUS DO PEDIDO EM EDIÇÃO ==========
+// Only what the order form shows while it is being filled in. The real status of each order and
+// its timeline live on the server (see showStatusHistory), so nothing is kept in this browser.
 const statusManager = {
     currentStatus: 'rascunho',
-    history: [],
-    
-    // Inicializa o status e carrega do localStorage se existir
-    init() {
-        const saved = localStorage.getItem('orderStatus');
-        const savedHistory = localStorage.getItem('orderStatusHistory');
 
-        if (saved) {
-            this.currentStatus = saved;
-        }
-        
-        if (savedHistory) {
-            try {
-                this.history = JSON.parse(savedHistory);
-            } catch (e) {
-                this.history = [];
-            }
-        }
-        
-        // Se não há histórico, cria o primeiro registro
-        if (this.history.length === 0) {
-            this.addHistoryEntry(this.currentStatus, 'Sistema iniciado', null);
-        }
-        
+    init() {
+        // Left behind by versions that kept the status and its history in the browser.
+        try {
+            localStorage.removeItem('orderStatus');
+            localStorage.removeItem('orderStatusHistory');
+        } catch (e) {}
         this.updateUI();
     },
-    
-    // Adiciona entrada no histórico
-    addHistoryEntry(newStatus, reason = '', userName = null) {
-        const entry = {
-            timestamp: new Date().toISOString(),
-            statusAnterior: this.currentStatus,
-            statusNovo: newStatus,
-            razao: reason,
-            usuario: userName || 'Sistema',
-            dataFormatada: new Date().toLocaleString('pt-BR')
-        };
-        
-        this.history.push(entry);
-        this.save();
+
+    setStatus(newStatus) {
+        this.currentStatus = newStatus;
+        this.updateUI();
     },
-    
-    // Muda o status e registra no histórico
+
+    // Muda o status mostrado no formulário
     changeStatus(newStatus) {
         if (!['rascunho', 'analise', 'aprovado', 'rejeitado'].includes(newStatus)) return;
         const user = (typeof authManager !== 'undefined') ? authManager.getCurrentUser() : null;
@@ -320,8 +295,7 @@ const statusManager = {
         if (['rascunho', 'analise'].includes(newStatus)) {
             if (newStatus !== this.currentStatus) {
                 orderManager.ensureCreator(user);
-                // Alteração temporária do seletor/visual não deve criar entrada no histórico.
-                // Histórico será criado apenas ao salvar/enviar (saveDraft / submitOrder).
+                // Alteração só visual: o histórico é gravado pelo servidor ao salvar/enviar.
                 this.currentStatus = newStatus;
                 this.updateUI();
                 updateSupervisorPanel();
@@ -336,7 +310,6 @@ const statusManager = {
 
         if (newStatus !== this.currentStatus) {
             orderManager.ensureCreator(user);
-            this.addHistoryEntry(newStatus, '', user);
             this.currentStatus = newStatus;
             this.updateUI();
             updateSupervisorPanel();
@@ -378,25 +351,6 @@ const statusManager = {
                 }
             });
         }
-    },
-    
-    // Salva no localStorage
-    save() {
-        localStorage.setItem('orderStatus', this.currentStatus);
-        localStorage.setItem('orderStatusHistory', JSON.stringify(this.history));
-    },
-    
-    // Retorna o histórico formatado para exibição
-    getFormattedHistory() {
-        return this.history.map(entry => ({
-            ...entry,
-            labelStatus: {
-                'rascunho': 'Rascunho',
-                'analise': 'Em Análise',
-                'aprovado': 'Aprovado',
-                'rejeitado': 'Rejeitado'
-            }[entry.statusNovo] || entry.statusNovo
-        }));
     }
 };
 // ==========================================
@@ -407,7 +361,7 @@ let apiCsrfToken = '';
 
 // Every call goes through here: sends the session cookie, the CSRF token on writes,
 // and turns server errors into Error objects with the server's message.
-async function apiRequest(action, { method = 'GET', body = null, retryOnCsrf = true } = {}) {
+async function apiRequest(action, { method = 'GET', body = null, query = null, retryOnCsrf = true } = {}) {
     const options = { method, credentials: 'same-origin', headers: { Accept: 'application/json' } };
     if (method !== 'GET') {
         options.headers['Content-Type'] = 'application/json';
@@ -415,9 +369,10 @@ async function apiRequest(action, { method = 'GET', body = null, retryOnCsrf = t
         options.body = JSON.stringify(body || {});
     }
 
+    const params = new URLSearchParams({ action, ...(query || {}) });
     let response;
     try {
-        response = await fetch(`${API_BASE}?action=${encodeURIComponent(action)}`, options);
+        response = await fetch(`${API_BASE}?${params}`, options);
     } catch (networkError) {
         throw new Error('Não foi possível falar com o servidor. Verifique sua conexão (o portal precisa estar publicado ou rodando com php -S).');
     }
@@ -431,7 +386,7 @@ async function apiRequest(action, { method = 'GET', body = null, retryOnCsrf = t
 
     if (response.status === 419 && retryOnCsrf) {
         await authManager.refreshSession();
-        return apiRequest(action, { method, body, retryOnCsrf: false });
+        return apiRequest(action, { method, body, query, retryOnCsrf: false });
     }
     if (response.status === 401 && action !== 'login') {
         authManager.handleSessionExpired();
@@ -1991,62 +1946,83 @@ function changeOrderStatus(newStatus) {
     statusManager.changeStatus(newStatus);
 }
 
-function showStatusHistory() {
+// What each server record (audit_log action, without the "order." prefix) looks like in the list.
+const ORDER_HISTORY_EVENTS = Object.freeze({
+    save_draft: { label: 'Rascunho salvo', icon: '📝', tone: 'rascunho' },
+    submit: { label: 'Enviado para análise', icon: '🔍', tone: 'analise' },
+    approve: { label: 'Aprovado', icon: '✅', tone: 'aprovado' },
+    reject: { label: 'Rejeitado', icon: '❌', tone: 'rejeitado' },
+    billing: { label: 'Faturamento registrado', icon: '📦', tone: 'aprovado' },
+    note: { label: 'Observação do gestor atualizada', icon: '💬', tone: 'neutro' },
+    trash: { label: 'Movido para a lixeira', icon: '🗑️', tone: 'neutro' },
+    restore: { label: 'Restaurado da lixeira (voltou a rascunho)', icon: '♻️', tone: 'rascunho' }
+});
+
+// Saving the same draft several times in a row becomes one line with a counter.
+function groupOrderHistory(entries) {
+    const grouped = [];
+    (Array.isArray(entries) ? entries : []).forEach(entry => {
+        const last = grouped[grouped.length - 1];
+        if (last && entry.action === 'save_draft' && last.action === 'save_draft' && last.username === entry.username) {
+            last.at = entry.at;
+            last.count++;
+        } else {
+            grouped.push({ ...entry, count: 1 });
+        }
+    });
+    return grouped;
+}
+
+function renderOrderHistory(entries) {
+    const grouped = groupOrderHistory(entries);
+    if (grouped.length === 0) {
+        return '<div class="status-history-empty">Nenhum registro encontrado para este pedido.</div>';
+    }
+    // Newest first.
+    return grouped.reverse().map(entry => {
+        const event = ORDER_HISTORY_EVENTS[entry.action] || { label: entry.action, icon: '•', tone: 'neutro' };
+        const who = entry.displayName || entry.username;
+        return `
+            <div class="status-history-item status-history-item--${event.tone}">
+                <div class="status-history-title">${event.icon} ${escapeHtml(event.label)}${entry.count > 1 ? ` (${entry.count} vezes)` : ''}</div>
+                <div class="status-history-meta">${escapeHtml(new Date(entry.at).toLocaleString('pt-BR'))}</div>
+                ${who ? `<div class="status-history-meta">Usuário: <strong>${escapeHtml(who)}</strong></div>` : ''}
+                ${entry.reason ? `<div class="status-history-meta">Motivo: <em>${escapeHtml(entry.reason)}</em></div>` : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+let statusHistoryRequest = 0;
+
+// Without an id it shows the order loaded in the form. The list always comes from the server,
+// so the representative and the gestor see the same thing on any computer.
+async function showStatusHistory(orderId = activeDraftId) {
     const modal = document.getElementById('statusHistoryModal');
     const historyList = document.getElementById('statusHistoryList');
-    
-    const history = statusManager.getFormattedHistory();
-    
-    if (history.length === 0) {
-        historyList.innerHTML = '<div style="padding: 10px; text-align: center; color: #999;">Nenhum histórico disponível</div>';
-    } else {
-        let html = '';
-        const sortedHistory = [...history].reverse();
-        sortedHistory.forEach((entry, idx) => {
-            const isFirst = idx === 0;
-            const statusIcon = {
-                'rascunho': '📝',
-                'analise': '🔍',
-                'aprovado': '✅',
-                'rejeitado': '❌'
-            }[entry.statusNovo] || '•';
-            
-            const bgColor = {
-                'rascunho': '#fef3c7',
-                'analise': '#dbeafe',
-                'aprovado': '#dcfce7',
-                'rejeitado': '#fee2e2'
-            }[entry.statusNovo] || '#f3f4f6';
-            
-            html += `
-                <div style="padding: 12px; border-bottom: 1px solid #eee; background: ${bgColor}; margin-bottom: 8px; border-radius: 4px;">
-                    <div style="display: flex; justify-content: space-between; align-items: start; gap: 10px;">
-                        <div style="flex: 1;">
-                            <div style="font-weight: 600; font-size: 1rem;">
-                                ${statusIcon} ${entry.labelStatus}
-                            </div>
-                            <div style="font-size: 0.85rem; color: #666; margin-top: 4px;">
-                                ${entry.dataFormatada}
-                            </div>
-                            ${entry.usuario && entry.usuario !== 'Sistema' ? `
-                                <div style="font-size: 0.85rem; color: #666;">
-                                    Usuário: <strong>${entry.usuario}</strong>
-                                </div>
-                            ` : ''}
-                            ${entry.razao ? `
-                                <div style="font-size: 0.85rem; color: #666; margin-top: 4px;">
-                                    Motivo: <em>${entry.razao}</em>
-                                </div>
-                            ` : ''}
-                        </div>
-                    </div>
-                </div>
-            `;
-        });
-        historyList.innerHTML = html;
-    }
-    
+    const orderLabel = document.getElementById('statusHistoryOrder');
+    const order = orderId ? orderSubmissionManager.getById(orderId) : null;
+    const message = text => `<div class="status-history-empty">${escapeHtml(text)}</div>`;
+    const requestId = ++statusHistoryRequest;
+
+    if (orderLabel) orderLabel.textContent = order ? `Pedido ${order.orderNumber || order.hiperrollNumber || ''}` : '';
     modal.style.display = 'flex';
+
+    if (!orderId) {
+        historyList.innerHTML = message('Este pedido ainda não foi salvo. O histórico começa quando você salva o rascunho ou envia o pedido.');
+        return;
+    }
+
+    historyList.innerHTML = message('Carregando histórico...');
+    let html;
+    try {
+        const data = await apiRequest('orders.history', { query: { id: orderId } });
+        html = renderOrderHistory(data.history);
+    } catch (e) {
+        html = message(e.message);
+    }
+    // Another order may have been opened while this answer was on its way.
+    if (requestId === statusHistoryRequest) historyList.innerHTML = html;
 }
 
 function closeStatusHistory() {
@@ -2670,14 +2646,6 @@ async function submitOrder() {
             lowMarginJustification: document.getElementById('submitLowMarginJustification')?.value || ''
         }));
 
-        try {
-            statusManager.addHistoryEntry('analise', 'Enviado para análise', authManager.getCurrentUser());
-            statusManager.currentStatus = 'analise';
-            statusManager.updateUI();
-        } catch (e) {
-            console.warn('Não foi possível registrar histórico de envio:', e);
-        }
-
         closeSubmitOrderModal();
         resetCurrentOrderForm();
         alert(`Pedido ${order.orderNumber} enviado com sucesso! Aguardando aprovação do gestor.`);
@@ -2715,6 +2683,7 @@ async function submitOrder() {
 
 function resetCurrentOrderForm() {
     activeDraftId = null;
+    statusManager.setStatus('rascunho');
     setLoadedOrderReference('');
     cart.length = 0;
     updateOrderTable();
@@ -2746,13 +2715,7 @@ async function saveDraftCurrentOrder() {
         updateHeaderInfo();
         renderDraftsPanel();
         renderHistoryTab();
-        try {
-            statusManager.addHistoryEntry('rascunho', 'Rascunho salvo', authManager.getCurrentUser());
-            statusManager.currentStatus = 'rascunho';
-            statusManager.updateUI();
-        } catch (e) {
-            console.warn('Não foi possível registrar histórico do rascunho:', e);
-        }
+        statusManager.setStatus('rascunho');
         alert(`Rascunho ${order.orderNumber} salvo com sucesso. Ele já está disponível no painel de rascunhos.`);
     } catch (e) {
         alert(e.message);
@@ -2767,6 +2730,7 @@ async function loadDraftToCurrentOrder(submissionId, silent = false) {
     }
 
     activeDraftId = submissionId;
+    statusManager.setStatus('rascunho');
     setLoadedOrderReference(submission.orderNumber || '');
     const hiperrollField = document.getElementById('orderNumberHiperroll');
     if (hiperrollField) hiperrollField.value = submission.hiperrollNumber || '';
@@ -2795,6 +2759,7 @@ async function repeatOrder(submissionId) {
     }
 
     activeDraftId = null;
+    statusManager.setStatus('rascunho');
     setLoadedOrderReference('');
     hiperrollOrderNumberManager.applyToForm();
     document.getElementById('orderNumberClient').value = submission.clientOrderNumber || '';
@@ -3877,6 +3842,7 @@ function renderHistoryTab() {
         } else if (!isDraft) {
             actionsHtml += `<button onclick="repeatOrder('${submission.id}')" style="background:#64748b; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">🔁 Repetir Pedido</button>`;
         }
+        actionsHtml += `<button onclick="showStatusHistory('${submission.id}')" style="background:#475569; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer;">📋 Histórico</button>`;
 
         if (isGestor) {
             if (submission.status === 'analise') {

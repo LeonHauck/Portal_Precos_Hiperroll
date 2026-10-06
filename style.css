@@ -1366,6 +1366,22 @@ td {
     overflow-y: auto;
 }
 
+/* Histórico do pedido: os fundos são claros nos dois temas, então o texto tem cor própria. */
+.status-history-item {
+    padding: 12px;
+    margin-bottom: 8px;
+    border-radius: 6px;
+    background: #f3f4f6;
+    color: #0f172a;
+}
+.status-history-item--rascunho { background: #fef3c7; }
+.status-history-item--analise { background: #dbeafe; }
+.status-history-item--aprovado { background: #dcfce7; }
+.status-history-item--rejeitado { background: #fee2e2; }
+.status-history-title { font-weight: 600; font-size: 1rem; }
+.status-history-meta { font-size: 0.85rem; color: #475569; margin-top: 4px; }
+.status-history-empty { padding: 10px; text-align: center; color: var(--text-secondary); }
+
 .modal-section-title {
     margin: 0 0 14px;
     font-size: 1rem;

@@ -144,6 +144,35 @@ function list_orders(array $user): array
     return ['orders' => $orders, 'trash' => $trash];
 }
 
+// Timeline shown by the "📋 Histórico" button. It is read from audit_log, which every order
+// action below already writes, so it is the same on any computer and for whoever may see the
+// order (its representative and the gestor).
+function order_history(array $user, string $id): array
+{
+    require_visible_order($id, $user);
+    $stmt = db()->prepare(
+        "SELECT a.action, a.username, a.details, a.created_at, u.display_name
+           FROM audit_log a
+           LEFT JOIN users u ON u.id = a.user_id
+          WHERE a.target = ? AND a.action LIKE 'order.%'
+          ORDER BY a.id"
+    );
+    $stmt->execute([$id]);
+
+    $history = [];
+    foreach ($stmt->fetchAll() as $entry) {
+        $details = json_decode((string) $entry['details'], true) ?: [];
+        $history[] = [
+            'action' => substr($entry['action'], strlen('order.')),
+            'at' => $entry['created_at'],
+            'username' => (string) $entry['username'],
+            'displayName' => (string) ($entry['display_name'] ?? ''),
+            'reason' => is_string($details['reason'] ?? null) ? $details['reason'] : '',
+        ];
+    }
+    return $history;
+}
+
 function clear_decision_fields(array $payload): array
 {
     foreach (['rejectionReason', 'rejectionBy', 'rejectionAt', 'approvalAt', 'approvalBy'] as $field) {
