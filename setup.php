@@ -26,6 +26,15 @@ try {
 }
 $checks[] = ['Banco de dados acessível', $dbError === null, $dbError ?? ''];
 
+// The commercial rules live in api/regras_comerciais.php, which is not in Git and goes up by hand.
+$rulesError = null;
+try {
+    pricing_rules();
+} catch (Throwable $e) {
+    $rulesError = $e->getMessage();
+}
+$checks[] = ['Regras comerciais (api/regras_comerciais.php)', $rulesError === null, $rulesError ?? ''];
+
 $dbDir = realpath(dirname(app_config()['db_path']));
 $docRoot = realpath($_SERVER['DOCUMENT_ROOT'] ?? '');
 $dbInsideWebRoot = $dbDir && $docRoot && strpos($dbDir, $docRoot) === 0;

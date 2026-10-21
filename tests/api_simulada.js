@@ -1,6 +1,11 @@
 // Simulated API following the same contract as api/index.php (for front-end wiring tests only).
+// Test pages read data.js straight from disk (no login needed to "download" it).
+window.PORTAL_DATA_LOCKED = false;
+
 (function () {
     window.__errors = [];
+    // Anything the page's Content-Security-Policy blocks (inline code, foreign scripts) fails the test.
+    document.addEventListener('securitypolicyviolation', e => window.__errors.push(`CSP bloqueou ${e.violatedDirective}: ${e.blockedURI || e.sample || ''}`));
     window.addEventListener('error', e => window.__errors.push('JS ERROR: ' + e.message));
     window.addEventListener('unhandledrejection', e => window.__errors.push('UNHANDLED: ' + (e.reason && e.reason.message || e.reason)));
     window.__alerts = [];
@@ -9,6 +14,19 @@
     window.prompt = () => null;
 
     const mode = new URLSearchParams(location.search).get('mode') || 'rep';
+    // Commercial rules the simulated server sends with the session (test fixture with the same shape
+    // as pricing_rules_for_client() in api/lib/pricing.php).
+    // Regras FICTÍCIAS, só para os testes: os números reais ficam em api/regras_comerciais.php,
+    // que não vai para o Git. Os testes calculam o esperado a partir destes valores.
+    const TEST_RULES = {
+        defaultProductMargin: 12, earlyPaymentDiscount: 1.5, fobFreightDiscount: 2.5, minJustificationLength: 10, defaultInvoiceMode: 'livre',
+        invoiceModes: [
+            { key: 'livre', name: 'Livre', invoiceShare: '100%', maxDiscount: 0, notice: '' },
+            { key: 'aval', name: 'Aval', invoiceShare: '50%', maxDiscount: 8, notice: 'PEDIDO DEVE SER IMPLANTADO AVAL.' },
+            { key: 'garantia', name: 'Garantia', invoiceShare: '10%', maxDiscount: 15, notice: 'PEDIDO DEVE SER IMPLANTADO GARANTIA.' }
+        ]
+    };
+    window.__testRules = TEST_RULES;
     // Session token the simulated server hands out (the real one is random, see api/lib/auth.php).
     const FAKE_CSRF = 'tok123';
     const users = {
@@ -43,7 +61,7 @@
             clientName: 'Mercado Teste', representativeName: 'João Rep', submittedBy: 'joao', savedBy: 'joao',
             submittedAt: new Date().toISOString(), savedAt: new Date().toISOString(), deletedAt: null,
             cart: [{ codigo: 'P-07007', descricao: 'TESTE', fob: 100, cif: 120, negotiatedPrice: 120, unitDiscount: 0, weight: 4, qty: 1 }],
-            conditions: { manualDiscount: 10, contract: 0, earlyPayment: false, fobFreight: false, earlyPaymentPercent: X, fobFreightPercent: X, minMargin: X, lowMarginJustification: 'Cliente estratégico <script>x</script>' }
+            conditions: { manualDiscount: 10, contract: 0, earlyPayment: false, fobFreight: false, earlyPaymentPercent: 1.5, fobFreightPercent: 2.5, lowMarginJustification: 'Cliente estratégico <script>x</script>' }
         };
         // What the representative did on another computer: three saves, then the submit.
         ['save_draft', 'save_draft', 'save_draft', 'submit'].forEach((action, i) => events.push({
@@ -60,12 +78,12 @@
                 representativeName: 'Representante Demo', submittedBy: 'rep.demo', savedBy: 'rep.demo', proposalValidity: '30 dias',
                 submittedAt: at(minutes), savedAt: at(minutes), deletedAt: null,
                 cart: [item('X-0001', 'PRODUTO EXEMPLO A', 100, 108, 20), item('X-0002', 'PRODUTO EXEMPLO B', 80, 86, 10)],
-                conditions: { invoiceMode: 'livre', manualDiscount: 0, contract: 0, earlyPayment: false, fobFreight: false, earlyPaymentPercent: X, fobFreightPercent: X, lowMarginJustification: '' }
+                conditions: { invoiceMode: 'livre', manualDiscount: 0, contract: 0, earlyPayment: false, fobFreight: false, earlyPaymentPercent: 1.5, fobFreightPercent: 2.5, lowMarginJustification: '' }
             }, extra);
         };
         seed('order_a', '00012', 'aprovado', 'Mercado Exemplo', 30, { approvalAt: at(30), approvalBy: 'gestor.demo', billingStatus: 'parcial', invoices: [{ id: 'a'.repeat(32), name: 'NF 1234.pdf', mime: 'application/pdf', size: 1000, date: at(10) }] });
         seed('order_b', '00011', 'analise', 'Distribuidora Modelo', 90);
-        seed('order_c', '00010', 'analise', 'Atacado Exemplo', 150, { conditions: { invoiceMode: 'aval', manualDiscount: 5, contract: 0, earlyPayment: false, fobFreight: false, earlyPaymentPercent: X, fobFreightPercent: X, lowMarginJustification: '' } });
+        seed('order_c', '00010', 'analise', 'Atacado Exemplo', 150, { conditions: { invoiceMode: 'aval', manualDiscount: 5, contract: 0, earlyPayment: false, fobFreight: false, earlyPaymentPercent: 1.5, fobFreightPercent: 2.5, lowMarginJustification: '' } });
         orders.order_a.billedQuantities = { 'X-0001': 20 };
         orders.order_a.billingHistory = [{ date: at(10), predictedNextDate: at(-4 * 1440), billedMap: { 'X-0001': 20 } }];
         orders.order_a.predictedBillingDate = at(-4 * 1440);
@@ -115,12 +133,12 @@
         const body = opts.body ? JSON.parse(opts.body) : {};
         window.__mockCalls.push({ action, method, csrf: headers['X-CSRF-Token'], body, id: query.get('id') });
         if (method === 'POST' && headers['X-CSRF-Token'] !== FAKE_CSRF) return err(419, 'csrf');
-        if (catalogPreImported && !catalog && typeof buildLegacyCatalog === 'function') importFrom(buildLegacyCatalog());
+        if (catalogPreImported && !catalog && action !== 'session' && typeof buildLegacyCatalog === 'function') importFrom(buildLegacyCatalog());
 
         try {
             switch (action) {
                 case 'session':
-                    return ok({ user: me, csrfToken: FAKE_CSRF });
+                    return ok({ user: me, rules: me ? TEST_RULES : null, csrfToken: FAKE_CSRF });
                 case 'orders.list':
                     return ok({ orders: list(false), trash: list(true), nextNumber: pad(counter + 1) });
                 case 'orders.history': {

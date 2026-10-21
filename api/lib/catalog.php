@@ -302,7 +302,7 @@ function clean_product(array $input): array
         // Margin of the product sold at full table price (the "Margem" column of the spreadsheet).
         'table_margin' => array_key_exists('tableMargin', $input) && $input['tableMargin'] !== null && $input['tableMargin'] !== ''
             ? round(price_value($input['tableMargin'], "margem do produto {$codigo}", true, 100.0), 2)
-            : PRICING_DEFAULT_PRODUCT_MARGIN,
+            : pricing_default_product_margin(),
     ];
 }
 

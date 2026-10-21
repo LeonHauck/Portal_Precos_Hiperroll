@@ -7,19 +7,11 @@
     <title>Portal de Preços - Hiperroll</title>
     <link rel="icon" type="image/png" href="logo-hiperroll.png">
     <link rel="apple-touch-icon" href="logo-hiperroll.png">
-    <script>
-        (function () {
-            try {
-                var saved = localStorage.getItem('hr_theme');
-                var theme = saved === 'dark' || saved === 'light'
-                    ? saved
-                    : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-                document.documentElement.setAttribute('data-theme', theme);
-                document.documentElement.style.colorScheme = theme;
-            } catch (e) { /* localStorage indisponível: mantém tema claro padrão */ }
-        }());
-    </script>
-    <link rel="stylesheet" href="style.css?v=20261021a">
+    <!-- Política de segurança (CSP): só roda JavaScript vindo de arquivos deste site e da biblioteca de PDF.
+         Código escrito dentro do HTML (onclick, <script> inline) é bloqueado. A mesma regra está no .htaccess. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+    <script src="js/tema.js?v=20261022a"></script>
+    <link rel="stylesheet" href="style.css?v=20261022a">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -94,26 +86,26 @@
             </dl>
 
             <div class="app-header__user">
-                <button id="themeToggleBtn" onclick="toggleTheme()" class="btn btn--icon btn--ghost" title="Alternar tema claro/escuro" aria-label="Alternar tema claro/escuro"><svg class="icon"><use href="#i-moon"></use></svg></button>
+                <button id="themeToggleBtn" data-action="toggleTheme" class="btn btn--icon btn--ghost" title="Alternar tema claro/escuro" aria-label="Alternar tema claro/escuro"><svg class="icon"><use href="#i-moon"></use></svg></button>
                 <div id="currentUser" class="user-menu" hidden>
                     <div class="user-info">
                         <strong id="currentUserName">--</strong>
                         <span id="currentUserRole"></span>
                     </div>
-                    <button id="supervisorBtn" onclick="showSupervisorPanel()" class="btn btn--success btn--sm" hidden><svg class="icon"><use href="#i-check-circle"></use></svg>Aprovações</button>
-                    <button id="usersBtn" onclick="showUsersModal()" class="btn btn--ghost btn--sm" hidden><svg class="icon"><use href="#i-users"></use></svg>Usuários</button>
-                    <button onclick="showChangePasswordModal(false)" class="btn btn--ghost btn--sm" title="Alterar minha senha"><svg class="icon"><use href="#i-key"></use></svg>Senha</button>
-                    <button onclick="logoutUser()" class="btn btn--ghost btn--sm" title="Sair"><svg class="icon"><use href="#i-logout"></use></svg>Sair</button>
+                    <button id="supervisorBtn" data-action="showSupervisorPanel" class="btn btn--success btn--sm" hidden><svg class="icon"><use href="#i-check-circle"></use></svg>Aprovações</button>
+                    <button id="usersBtn" data-action="showUsersModal" class="btn btn--ghost btn--sm" hidden><svg class="icon"><use href="#i-users"></use></svg>Usuários</button>
+                    <button data-action="changeOwnPassword" class="btn btn--ghost btn--sm" title="Alterar minha senha"><svg class="icon"><use href="#i-key"></use></svg>Senha</button>
+                    <button data-action="logoutUser" class="btn btn--ghost btn--sm" title="Sair"><svg class="icon"><use href="#i-logout"></use></svg>Sair</button>
                 </div>
-                <button id="loginBtn" onclick="showLoginModal()" class="btn btn--primary btn--sm">Entrar</button>
+                <button id="loginBtn" data-action="showLoginModal" class="btn btn--primary btn--sm">Entrar</button>
             </div>
         </header>
 
         <!-- Navegação de Abas -->
         <nav class="app-tabs" aria-label="Seções do portal">
-            <button class="tab-btn active" onclick="switchTab('tab-order')" id="btn-tab-order"><svg class="icon"><use href="#i-cart"></use></svg>Novo pedido</button>
-            <button class="tab-btn" onclick="switchTab('tab-history')" id="btn-tab-history"><svg class="icon"><use href="#i-list"></use></svg>Pedidos e entregas</button>
-            <button class="tab-btn" onclick="switchTab('tab-pricing')" id="btn-tab-pricing" hidden><svg class="icon"><use href="#i-tag"></use></svg>Tabela de preços</button>
+            <button class="tab-btn active" data-action="switchTab" data-tab="tab-order" id="btn-tab-order"><svg class="icon"><use href="#i-cart"></use></svg>Novo pedido</button>
+            <button class="tab-btn" data-action="switchTab" data-tab="tab-history" id="btn-tab-history"><svg class="icon"><use href="#i-list"></use></svg>Pedidos e entregas</button>
+            <button class="tab-btn" data-action="switchTab" data-tab="tab-pricing" id="btn-tab-pricing" hidden><svg class="icon"><use href="#i-tag"></use></svg>Tabela de preços</button>
         </nav>
 
         <div id="tab-order" class="tab-content active">
@@ -160,7 +152,7 @@
                     <h2 class="card__title"><svg class="icon"><use href="#i-cart"></use></svg>Pedido</h2>
                     <div class="card__actions">
                         <span id="orderStatusChip"></span>
-                        <button class="btn btn--ghost btn--sm" onclick="showStatusHistory()"><svg class="icon"><use href="#i-clock"></use></svg>Histórico</button>
+                        <button class="btn btn--ghost btn--sm" data-action="showStatusHistory"><svg class="icon"><use href="#i-clock"></use></svg>Histórico</button>
                     </div>
                 </div>
 
@@ -183,61 +175,49 @@
                                 </div>
                                 <div class="field">
                                     <label for="orderNumberClient">Nº do pedido do cliente</label>
-                                    <input type="text" id="orderNumberClient" placeholder="Ex.: 2026-001" oninput="updateHeaderInfo()">
+                                    <input type="text" id="orderNumberClient" placeholder="Ex.: 2026-001" data-input="updateHeaderInfo">
                                 </div>
                                 <div class="field">
                                     <label for="proposalValidity">Validade da proposta</label>
-                                    <input type="text" id="proposalValidity" placeholder="Ex.: 30 dias" inputmode="numeric" onchange="formatProposalValidityInput(this)">
+                                    <input type="text" id="proposalValidity" placeholder="Ex.: 30 dias" inputmode="numeric" data-change="formatProposalValidity">
                                 </div>
                                 <div class="field field--wide">
                                     <label for="clientName">Cliente</label>
-                                    <input type="text" id="clientName" placeholder="Nome do cliente" oninput="updateHeaderInfo()">
+                                    <input type="text" id="clientName" placeholder="Nome do cliente" data-input="updateHeaderInfo">
                                 </div>
                                 <div class="field field--wide">
                                     <label for="representativeName">Representante</label>
-                                    <input type="text" id="representativeName" placeholder="Nome do representante" oninput="updateHeaderInfo()">
+                                    <input type="text" id="representativeName" placeholder="Nome do representante" data-input="updateHeaderInfo">
                                 </div>
                             </div>
                         </div>
 
                         <div class="panel">
                             <h3 class="panel__title">Condições</h3>
-                            <!-- Modalidade da nota: define o desconto máximo do pedido (regras em INVOICE_MODES, js/regras.js) -->
+                                                        <!-- Modalidades (Livre / Aval / Garantia): montadas a partir das regras enviadas pelo servidor -->
                             <fieldset class="invoice-mode" id="orderInvoiceMode">
                                 <legend class="sr-only">Modalidade do pedido</legend>
-                                <label class="invoice-mode-option" title="Preço de tabela, sem desconto">
-                                    <input type="radio" name="orderInvoiceMode" value="livre" checked onchange="updateOrderTable()">
-                                    <span><strong>100%</strong> Livre<small>sem desconto</small></span>
-                                </label>
-                                <label class="invoice-mode-option" title="Permite até X% de desconto sobre o preço de tabela">
-                                    <input type="radio" name="orderInvoiceMode" value="aval" onchange="updateOrderTable()">
-                                    <span><strong>50%</strong> Aval<small>desconto até X%</small></span>
-                                </label>
-                                <label class="invoice-mode-option" title="Permite até X% de desconto sobre o preço de tabela">
-                                    <input type="radio" name="orderInvoiceMode" value="garantia" onchange="updateOrderTable()">
-                                    <span><strong>10%</strong> Garantia<small>desconto até X%</small></span>
-                                </label>
                             </fieldset>
                             <div class="form-grid form-grid--2">
                                 <div class="field">
                                     <label for="orderDiscount">Desconto do pedido (%)</label>
-                                    <input type="number" id="orderDiscount" value="0" min="0" max="100" oninput="updateOrderTable()">
+                                    <input type="number" id="orderDiscount" value="0" min="0" max="100" data-input="updateOrderTable">
                                 </div>
                                 <div class="field">
                                     <label for="orderContract" title="Acréscimo no pedido para cobrir um custo pago pela Hiperroll (ex.: percentual logístico). Aumenta o valor da nota e reduz a margem %.">Contrato (%)</label>
-                                    <input type="number" id="orderContract" value="0" min="0" max="100" oninput="updateOrderTable()">
+                                    <input type="number" id="orderContract" value="0" min="0" max="100" data-input="updateOrderTable">
                                 </div>
                             </div>
                             <div class="toggle-row">
                                 <label class="order-condition-toggle" for="orderEarlyPayment">
-                                    <input type="checkbox" id="orderEarlyPayment" onchange="updateOrderTable()">
+                                    <input type="checkbox" id="orderEarlyPayment" data-change="updateOrderTable">
                                     <span>Pagamento antecipado</span>
-                                    <span class="order-condition-badge">−<span data-pricing-rule="EARLY_PAYMENT_DISCOUNT">X%</span></span>
+                                    <span class="order-condition-badge">−<span data-pricing-rule="EARLY_PAYMENT_DISCOUNT">—</span></span>
                                 </label>
                                 <label class="order-condition-toggle" for="orderFobFreight">
-                                    <input type="checkbox" id="orderFobFreight" onchange="updateOrderTable()">
+                                    <input type="checkbox" id="orderFobFreight" data-change="updateOrderTable">
                                     <span>Frete FOB</span>
-                                    <span class="order-condition-badge">−<span data-pricing-rule="FOB_FREIGHT_DISCOUNT">X%</span></span>
+                                    <span class="order-condition-badge">−<span data-pricing-rule="FOB_FREIGHT_DISCOUNT">—</span></span>
                                 </label>
                             </div>
                             <div id="orderDiscountBreakdown" class="order-discount-breakdown"></div>
@@ -272,10 +252,10 @@
                 </div>
 
                 <div class="order-actions-row">
-                    <button class="btn btn--ghost btn-export" onclick="exportPdfControlled()"><svg class="icon"><use href="#i-printer"></use></svg>PDF</button>
+                    <button class="btn btn--ghost btn-export" data-action="exportPdf"><svg class="icon"><use href="#i-printer"></use></svg>PDF</button>
                     <span class="spacer"></span>
-                    <button class="btn btn--secondary" onclick="saveDraftCurrentOrder()"><svg class="icon"><use href="#i-save"></use></svg>Salvar rascunho</button>
-                    <button class="btn btn--primary" onclick="showSubmitOrderModal()"><svg class="icon"><use href="#i-send"></use></svg>Enviar pedido</button>
+                    <button class="btn btn--secondary" data-action="saveDraft"><svg class="icon"><use href="#i-save"></use></svg>Salvar rascunho</button>
+                    <button class="btn btn--primary" data-action="showSubmitOrder"><svg class="icon"><use href="#i-send"></use></svg>Enviar pedido</button>
                 </div>
 
                 <details class="drafts-panel">
@@ -298,10 +278,10 @@
                     <div class="card__actions">
                         <div class="search-field">
                             <svg class="icon"><use href="#i-search"></use></svg>
-                            <input type="search" id="historySearchInput" placeholder="Buscar por número, cliente ou representante" oninput="renderHistoryTab()" aria-label="Buscar pedidos">
+                            <input type="search" id="historySearchInput" placeholder="Buscar por número, cliente ou representante" data-input="renderHistoryTab" aria-label="Buscar pedidos">
                         </div>
-                        <button class="btn btn--ghost btn--sm" onclick="reloadOrders()"><svg class="icon"><use href="#i-refresh"></use></svg>Atualizar</button>
-                        <button class="btn btn--ghost btn--sm" id="trashButton" onclick="showTrashModal()"><svg class="icon"><use href="#i-trash"></use></svg>Lixeira</button>
+                        <button class="btn btn--ghost btn--sm" data-action="reloadOrders"><svg class="icon"><use href="#i-refresh"></use></svg>Atualizar</button>
+                        <button class="btn btn--ghost btn--sm" id="trashButton" data-action="showTrash"><svg class="icon"><use href="#i-trash"></use></svg>Lixeira</button>
                     </div>
                 </div>
                 <div id="historyTabContent" class="order-list">
@@ -338,7 +318,7 @@
                         <p id="statusHistoryOrder" class="modal-subtitle"></p>
                     </div>
                 </div>
-                <button onclick="closeStatusHistory()" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
+                <button data-action="closeStatusHistory" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
             </div>
             <div id="statusHistoryList" class="modal-body">
                 <!-- Preenchido por JavaScript -->
@@ -357,7 +337,7 @@
                         <p class="modal-subtitle">Depois do envio, os itens não podem mais ser alterados.</p>
                     </div>
                 </div>
-                <button onclick="closeSubmitOrderModal()" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
+                <button data-action="closeSubmitOrder" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
             </div>
             <div class="modal-body">
                 <div class="field">
@@ -388,8 +368,8 @@
                 <div id="submitOrderMessage" class="modal-msg"></div>
             </div>
             <div class="modal-footer">
-                <button onclick="closeSubmitOrderModal()" class="btn btn--ghost">Cancelar</button>
-                <button onclick="submitOrder()" class="btn btn--primary btn-submit-order"><svg class="icon"><use href="#i-send"></use></svg>Enviar pedido</button>
+                <button data-action="closeSubmitOrder" class="btn btn--ghost">Cancelar</button>
+                <button data-action="submitOrder" class="btn btn--primary btn-submit-order"><svg class="icon"><use href="#i-send"></use></svg>Enviar pedido</button>
             </div>
         </div>
     </div>
@@ -405,7 +385,7 @@
                         <p class="modal-subtitle">Pedidos dos representantes aguardando decisão.</p>
                     </div>
                 </div>
-                <button onclick="closeSupervisorPanel()" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
+                <button data-action="closeSupervisorPanel" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
             </div>
             <div class="modal-body">
                 <div id="supervisorPendingOrdersList" class="pending-list">
@@ -428,14 +408,14 @@
                         <p class="modal-subtitle">Pedidos excluídos, com opção de restaurar.</p>
                     </div>
                 </div>
-                <button onclick="closeTrashModal()" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
+                <button data-action="closeTrash" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
             </div>
             <div id="trashContent" class="modal-body">
                 <!-- Preenchido por JavaScript -->
             </div>
             <div class="modal-footer">
-                <button onclick="closeTrashModal()" class="btn btn--ghost">Fechar</button>
-                <button onclick="emptyTrash()" class="btn btn--danger"><svg class="icon"><use href="#i-trash"></use></svg>Esvaziar lixeira</button>
+                <button data-action="closeTrash" class="btn btn--ghost">Fechar</button>
+                <button data-action="emptyTrash" class="btn btn--danger"><svg class="icon"><use href="#i-trash"></use></svg>Esvaziar lixeira</button>
             </div>
         </div>
     </div>
@@ -475,10 +455,10 @@
                         <p class="modal-subtitle">Crie as contas dos representantes e controle quem tem acesso.</p>
                     </div>
                 </div>
-                <button onclick="closeUsersModal()" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
+                <button data-action="closeUsers" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
             </div>
             <div class="modal-body">
-                <form id="newUserForm" class="new-user-form" onsubmit="submitNewUser(event)" autocomplete="off">
+                <form id="newUserForm" class="new-user-form" data-submit="submitNewUser" autocomplete="off">
                     <div class="field">
                         <label for="newUserName">Nome</label>
                         <input id="newUserName" placeholder="Ex.: João da Silva" required maxlength="80">
@@ -501,8 +481,8 @@
                 <div id="usersTableContainer" class="table-wrap users-table-container"></div>
             </div>
             <div class="modal-footer">
-                <button onclick="exportPortalBackup()" class="btn btn--ghost modal-footer__start"><svg class="icon"><use href="#i-download"></use></svg>Baixar backup</button>
-                <button onclick="closeUsersModal()" class="btn btn--secondary">Fechar</button>
+                <button data-action="exportBackup" class="btn btn--ghost modal-footer__start"><svg class="icon"><use href="#i-download"></use></svg>Baixar backup</button>
+                <button data-action="closeUsers" class="btn btn--secondary">Fechar</button>
             </div>
         </div>
     </div>
@@ -524,8 +504,8 @@
                 <div id="repriceModalBody"></div>
             </div>
             <div class="modal-footer reprice-footer">
-                <button onclick="resolveRepriceModal('keep')" class="btn btn--ghost">Manter meus preços negociados <small>margem: <span id="repriceKeepMargin">—</span></small></button>
-                <button onclick="resolveRepriceModal('table')" class="btn btn--secondary">Usar os novos preços de tabela <small>margem: <span id="repriceTableMargin">—</span></small></button>
+                <button data-action="resolveReprice" data-choice="keep" class="btn btn--ghost">Manter meus preços negociados <small>margem: <span id="repriceKeepMargin">—</span></small></button>
+                <button data-action="resolveReprice" data-choice="table" class="btn btn--secondary">Usar os novos preços de tabela <small>margem: <span id="repriceTableMargin">—</span></small></button>
             </div>
         </div>
     </div>
@@ -541,7 +521,7 @@
                         <p id="changePasswordSubtitle" class="modal-subtitle">Informe a senha atual e escolha uma nova.</p>
                     </div>
                 </div>
-                <button id="changePasswordCloseBtn" onclick="closeChangePasswordModal()" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
+                <button id="changePasswordCloseBtn" data-action="closeChangePassword" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
             </div>
             <div class="modal-body form-stack">
                 <div class="field">
@@ -559,8 +539,8 @@
                 <div id="changePasswordMessage" class="modal-msg"></div>
             </div>
             <div class="modal-footer">
-                <button id="changePasswordCancelBtn" onclick="closeChangePasswordModal()" class="btn btn--ghost">Cancelar</button>
-                <button onclick="submitChangePassword()" class="btn btn--secondary">Salvar nova senha</button>
+                <button id="changePasswordCancelBtn" data-action="closeChangePassword" class="btn btn--ghost">Cancelar</button>
+                <button data-action="submitChangePassword" class="btn btn--secondary">Salvar nova senha</button>
             </div>
         </div>
     </div>
@@ -570,29 +550,20 @@
     <!-- Tabelas de preço/custo: entregues pelo servidor somente para usuários logados -->
     <script src="api/data.php"></script>
     <!-- Código do portal, na ordem em que precisa carregar (cada arquivo cuida de um assunto) -->
-    <script src="js/regras.js?v=20261021a"></script>
-    <script src="js/servidor.js?v=20261021a"></script>
-    <script src="js/inicio.js?v=20261021a"></script>
-    <script src="js/catalogo.js?v=20261021a"></script>
-    <script src="js/pedido.js?v=20261021a"></script>
-    <script src="js/pdf.js?v=20261021a"></script>
-    <script src="js/historico-pedido.js?v=20261021a"></script>
-    <script src="js/login-usuarios.js?v=20261021a"></script>
-    <script src="js/rascunhos-envio.js?v=20261021a"></script>
-    <script src="js/lixeira.js?v=20261021a"></script>
-    <script src="js/gestor.js?v=20261021a"></script>
-    <script src="js/historico-faturamento.js?v=20261021a"></script>
-    <script src="js/tabela-precos.js?v=20261021a"></script>
-    <script>
-        window.addEventListener('load', function () {
-            if (typeof window.loginUser !== 'function') {
-                var message = document.getElementById('loginMessage');
-                if (message) {
-                    message.textContent = 'O sistema não carregou o módulo de login. Reabra esta página ou use um servidor local.';
-                }
-            }
-        });
-    </script>
+    <script src="js/regras.js?v=20261022a"></script>
+    <script src="js/servidor.js?v=20261022a"></script>
+    <script src="js/inicio.js?v=20261022a"></script>
+    <script src="js/catalogo.js?v=20261022a"></script>
+    <script src="js/pedido.js?v=20261022a"></script>
+    <script src="js/pdf.js?v=20261022a"></script>
+    <script src="js/historico-pedido.js?v=20261022a"></script>
+    <script src="js/login-usuarios.js?v=20261022a"></script>
+    <script src="js/rascunhos-envio.js?v=20261022a"></script>
+    <script src="js/lixeira.js?v=20261022a"></script>
+    <script src="js/gestor.js?v=20261022a"></script>
+    <script src="js/historico-faturamento.js?v=20261022a"></script>
+    <script src="js/tabela-precos.js?v=20261022a"></script>
+    <script src="js/acoes.js?v=20261022a"></script>
 </body>
 
 </html>

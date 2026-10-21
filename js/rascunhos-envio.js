@@ -35,10 +35,10 @@ function renderDraftsPanel() {
                     <div class="draft-card-meta">${itemCount} item(ns) · ${formatCurrency(totals.totalInvoice)} · margem <strong class="tone-${totals.status.tone}">${formatPercent(totals.margin)}</strong> · salvo em ${escapeHtml(formatDateTime(draft.savedAt))}</div>
                 </div>
                 <div class="draft-card-actions">
-                    <button class="btn btn--secondary btn--sm" onclick="loadDraftToCurrentOrder('${id}', true)">${icon('edit')}Carregar</button>
-                    <button class="btn btn--primary btn--sm" onclick="prepareDraftForSubmission('${id}')">${icon('send')}Enviar</button>
-                    <button class="btn btn--ghost btn--sm" onclick="showDraftModal('${id}')">${icon('eye')}Ver</button>
-                    <button class="btn btn--ghost btn--icon btn--danger-text" onclick="deleteSubmission('${id}')" title="Excluir rascunho" aria-label="Excluir rascunho">${icon('trash')}</button>
+                    <button class="btn btn--secondary btn--sm" data-action="loadDraft" data-id="${id}" data-silent="true">${icon('edit')}Carregar</button>
+                    <button class="btn btn--primary btn--sm" data-action="prepareDraftForSubmission" data-id="${id}">${icon('send')}Enviar</button>
+                    <button class="btn btn--ghost btn--sm" data-action="showDraftModal" data-id="${id}">${icon('eye')}Ver</button>
+                    <button class="btn btn--ghost btn--icon btn--danger-text" data-action="deleteSubmission" data-id="${id}" title="Excluir rascunho" aria-label="Excluir rascunho">${icon('trash')}</button>
                 </div>
             </div>
         `;
@@ -61,7 +61,7 @@ function renderInvoiceLinks(submission) {
         const downloadTitle = `title="Baixar a nota fiscal" aria-label="Baixar ${escapeHtml(name)}"`;
         let view, download;
         if (invoice.data) {
-            view = `href="#" onclick="openEmbeddedInvoice('${escapeHtml(submission.id)}', ${index}); return false;"`;
+            view = `href="#" data-action="openEmbeddedInvoice" data-id="${escapeHtml(submission.id)}" data-index="${index}"`;
             download = `href="${escapeHtml(invoice.data)}" download="${escapeHtml(`${name}_${submission.orderNumber || ''}`)}"`;
         } else {
             const url = extra => escapeHtml(`${API_BASE}?${new URLSearchParams({ action: 'orders.invoice', id: submission.id, file: invoice.id || '', ...extra })}`);
@@ -121,7 +121,7 @@ function showDraftModal(submissionId) {
                         <p class="modal-subtitle">${escapeHtml(submission.clientName || 'Cliente não informado')}</p>
                     </div>
                 </div>
-                <button class="modal-close-btn" onclick="document.getElementById('draftModalBackdrop').remove()" aria-label="Fechar">${icon('x')}</button>
+                <button class="modal-close-btn" data-action="removeModal" aria-label="Fechar">${icon('x')}</button>
             </div>
             <div class="modal-body">
                 <div class="table-wrap">
@@ -134,7 +134,7 @@ function showDraftModal(submissionId) {
                 ${invoicesHtml}
             </div>
             <div class="modal-footer">
-                <button class="btn btn--ghost" onclick="document.getElementById('draftModalBackdrop').remove()">Fechar</button>
+                <button class="btn btn--ghost" data-action="removeModal">Fechar</button>
             </div>
         </div>`;
     backdrop.addEventListener('click', event => { if (event.target === backdrop) backdrop.remove(); });

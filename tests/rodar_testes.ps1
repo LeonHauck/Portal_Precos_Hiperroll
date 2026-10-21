@@ -47,7 +47,7 @@ function Invoke-TestPage([string] $page, [string] $name, [int] $budget = 20000) 
 # Página de teste = página real do portal + API simulada + roteiro de testes.
 $html = [IO.File]::ReadAllText((Join-Path $raiz 'Portal_Hiperroll_Final.html'), $utf8)
 $html = $html.Replace('<meta charset="UTF-8">', "<meta charset=""UTF-8""><base href=""$raizUrl"">")
-$html = (Remove-PdfLib $html).Replace('<script src="api/data.php"></script>', '<script src="data.js"></script><script>window.PORTAL_DATA_LOCKED = false;</script><script src="tests/api_simulada.js"></script>')
+$html = (Remove-PdfLib $html).Replace('<script src="api/data.php"></script>', '<script src="tests/api_simulada.js"></script><script src="data.js"></script>')
 $html = Add-AfterLastAppScript $html '<script src="tests/testes_portal.js"></script>'
 $pagina = Join-Path $saida 'pagina_teste.html'
 [IO.File]::WriteAllText($pagina, $html, $utf8)
@@ -64,7 +64,7 @@ foreach ($modo in $Modos) {
 $demo = Join-Path $raiz 'demo\index.html'
 if (-not $SemDemo -and (Test-Path $demo)) {
     $d = [IO.File]::ReadAllText($demo, $utf8).Replace('<base href="../">', "<base href=""$raizUrl"">")
-    $d = (Remove-PdfLib $d).Replace('<script src="demo/demo_api.js"></script>', "<script>localStorage.removeItem('hr_demo_state_v2'); sessionStorage.setItem('hr_demo_user', '3');</script><script src=""demo/demo_api.js""></script>")
+    $d = (Remove-PdfLib $d).Replace('<script src="demo/demo_api.js"></script>', '<script src="tests/preparar_demo.js"></script><script src="demo/demo_api.js"></script>')
     $d = Add-AfterLastAppScript $d '<script src="tests/testes_demo.js"></script>'
     $paginaDemo = Join-Path $saida 'pagina_demo.html'
     [IO.File]::WriteAllText($paginaDemo, $d, $utf8)

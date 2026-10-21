@@ -73,18 +73,18 @@ function renderOrderRow(submission, isGestor) {
 
     const actions = [];
     if (isDraft && isOwnOrder) {
-        actions.push(`<button onclick="loadDraftToCurrentOrder('${id}')" class="btn btn--secondary btn--sm">${icon('edit')}Continuar rascunho</button>`);
+        actions.push(`<button data-action="loadDraft" data-id="${id}" class="btn btn--secondary btn--sm">${icon('edit')}Continuar rascunho</button>`);
     } else if (!isDraft) {
-        actions.push(`<button onclick="repeatOrder('${id}')" class="btn btn--ghost btn--sm">${icon('repeat')}Repetir pedido</button>`);
+        actions.push(`<button data-action="repeatOrder" data-id="${id}" class="btn btn--ghost btn--sm">${icon('repeat')}Repetir pedido</button>`);
     }
-    actions.push(`<button onclick="showStatusHistory('${id}')" class="btn btn--ghost btn--sm">${icon('clock')}Histórico</button>`);
+    actions.push(`<button data-action="showStatusHistory" data-id="${id}" class="btn btn--ghost btn--sm">${icon('clock')}Histórico</button>`);
     if (isGestor && submission.status === 'analise') {
-        actions.push(`<button onclick="openSupervisorOrderActions('${id}')" class="btn btn--secondary btn--sm">${icon('check-circle')}Analisar pedido</button>`);
+        actions.push(`<button data-action="openSupervisorOrderActions" data-id="${id}" class="btn btn--secondary btn--sm">${icon('check-circle')}Analisar pedido</button>`);
     }
     if (isGestor && submission.status === 'aprovado' && submission.billingStatus !== 'completo') {
-        actions.push(`<button onclick="openBillingModal('${id}')" class="btn btn--secondary btn--sm">${icon('package')}Faturar / anexar NF</button>`);
+        actions.push(`<button data-action="openBillingModal" data-id="${id}" class="btn btn--secondary btn--sm">${icon('package')}Faturar / anexar NF</button>`);
     }
-    actions.push(`<button onclick="deleteSubmission('${id}')" class="btn btn--ghost btn--sm btn--danger-text">${icon('trash')}Excluir</button>`);
+    actions.push(`<button data-action="deleteSubmission" data-id="${id}" class="btn btn--ghost btn--sm btn--danger-text">${icon('trash')}Excluir</button>`);
 
     return `
         <details class="order-row" id="historyCard_${id}">
@@ -188,7 +188,7 @@ function openBillingModal(submissionId) {
                         <p class="modal-subtitle">Pedido ${escapeHtml(submission.orderNumber || '')}</p>
                     </div>
                 </div>
-                <button onclick="document.getElementById('${modalId}').remove()" class="modal-close-btn" aria-label="Fechar">${icon('x')}</button>
+                <button data-action="removeModal" class="modal-close-btn" aria-label="Fechar">${icon('x')}</button>
             </div>
             <div class="modal-body form-stack">
                 <div class="billing-items">${itemsHtml || '<div class="empty-state empty-state--compact">Todos os itens já foram faturados.</div>'}</div>
@@ -198,8 +198,8 @@ function openBillingModal(submissionId) {
                 </div>
             </div>
             <div class="modal-footer">
-                <button onclick="document.getElementById('${modalId}').remove()" class="btn btn--ghost">Cancelar</button>
-                <button onclick="submitBilling('${escapeHtml(submissionId)}')" class="btn btn--primary">${icon('check')}Confirmar faturamento</button>
+                <button data-action="removeModal" class="btn btn--ghost">Cancelar</button>
+                <button data-action="submitBilling" data-id="${escapeHtml(submissionId)}" class="btn btn--primary">${icon('check')}Confirmar faturamento</button>
             </div>
         </div>
     `;

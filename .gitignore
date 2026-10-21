@@ -13,6 +13,8 @@ users.json
 # Notas fiscais anexadas aos pedidos (documentos de clientes: nunca versionar)
 /data/invoices/
 /api/config.local.php
+# Valores das regras comerciais (limites de desconto, percentuais): só no servidor
+/api/regras_comerciais.php
 
 # Modo demonstração local (simula o servidor no navegador; não vai para o repositório)
 /demo/

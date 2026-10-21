@@ -63,7 +63,7 @@ function openSupervisorOrderActions(submissionId) {
                         <p class="modal-subtitle">${describeOrderOrigin(submission)}</p>
                     </div>
                 </div>
-                <button onclick="closeSupervisorActionModal()" class="modal-close-btn" aria-label="Fechar">${icon('x')}</button>
+                <button data-action="closeSupervisorActionModal" class="modal-close-btn" aria-label="Fechar">${icon('x')}</button>
             </div>
             <div class="modal-body form-stack">
                 ${renderOrderConditionsSummary(submission)}
@@ -79,9 +79,9 @@ function openSupervisorOrderActions(submissionId) {
                 </div>
             </div>
             <div class="modal-footer">
-                <button onclick="handleSupervisorAction('${id}', 'saveNote')" class="btn btn--ghost modal-footer__start">${icon('message')}Salvar observação</button>
-                <button onclick="handleSupervisorAction('${id}', 'reject')" class="btn btn--danger" ${decisionAttrs}>${icon('x-circle')}Rejeitar</button>
-                <button onclick="handleSupervisorAction('${id}', 'approve')" class="btn btn--success" ${decisionAttrs}>${icon('check-circle')}Aprovar</button>
+                <button data-action="supervisorDecision" data-id="${id}" data-decision="saveNote" class="btn btn--ghost modal-footer__start">${icon('message')}Salvar observação</button>
+                <button data-action="supervisorDecision" data-id="${id}" data-decision="reject" class="btn btn--danger" ${decisionAttrs}>${icon('x-circle')}Rejeitar</button>
+                <button data-action="supervisorDecision" data-id="${id}" data-decision="approve" class="btn btn--success" ${decisionAttrs}>${icon('check-circle')}Aprovar</button>
             </div>
         </div>
     `;
@@ -198,7 +198,7 @@ function renderPendingOrder(submission) {
                     <span>Margem <strong class="tone-${pricing.status.tone}">${formatPercent(pricing.margin)}</strong></span>
                 </div>
             </div>
-            <button onclick="showPendingOrderDetails('${id}')" class="btn btn--ghost btn--sm">${icon('eye')}Detalhes</button>
+            <button data-action="showPendingOrderDetails" data-id="${id}" class="btn btn--ghost btn--sm">${icon('eye')}Detalhes</button>
         </div>`;
 }
 
@@ -235,8 +235,8 @@ function updateSupervisorPanel() {
                 <textarea id="rejectionReasonTextarea" rows="2"></textarea>
             </div>
             <div class="decision-box__actions">
-                <button onclick="rejectPendingOrders()" class="btn btn--danger">${icon('x-circle')}Rejeitar selecionados</button>
-                <button onclick="approvePendingOrders()" class="btn btn--success">${icon('check-circle')}Aprovar selecionados</button>
+                <button data-action="rejectPendingOrders" class="btn btn--danger">${icon('x-circle')}Rejeitar selecionados</button>
+                <button data-action="approvePendingOrders" class="btn btn--success">${icon('check-circle')}Aprovar selecionados</button>
             </div>
         </div>`;
 }
@@ -321,7 +321,7 @@ function showPendingOrderDetails(submissionId) {
                         <p class="modal-subtitle">${describeOrderOrigin(submission)} · validade: ${escapeHtml(submission.proposalValidity || 'não informada')}</p>
                     </div>
                 </div>
-                <button onclick="document.getElementById('detailsModalBackdrop').remove()" class="modal-close-btn" aria-label="Fechar">${icon('x')}</button>
+                <button data-action="removeModal" class="modal-close-btn" aria-label="Fechar">${icon('x')}</button>
             </div>
             <div class="modal-body form-stack">
                 ${renderOrderConditionsSummary(submission)}
@@ -332,7 +332,7 @@ function showPendingOrderDetails(submissionId) {
                 </div>
             </div>
             <div class="modal-footer">
-                <button onclick="document.getElementById('detailsModalBackdrop').remove()" class="btn btn--secondary">Fechar</button>
+                <button data-action="removeModal" class="btn btn--secondary">Fechar</button>
             </div>
         </div>
     `;

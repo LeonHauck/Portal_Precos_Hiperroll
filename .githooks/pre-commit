@@ -4,7 +4,7 @@
 # (Funciona também pelo GitHub Desktop.)
 
 # Também barra os dados comerciais (custos, fretes, preços, margens): data.js, planilhas e CSVs.
-blocked_paths='(^|/)\.env($|\.)|\.sqlite3?(-journal|-wal|-shm)?$|(^|/)api/config\.local\.php$|(^|/)users\.json$|\.bundle$|^data\.js$|(^|/)data\.json$|\.(xlsx|xls|csv)$|_backup\.|(^|/)data/invoices/'
+blocked_paths='(^|/)\.env($|\.)|\.sqlite3?(-journal|-wal|-shm)?$|(^|/)api/config\.local\.php$|(^|/)api/regras_comerciais\.php$|(^|/)users\.json$|\.bundle$|^data\.js$|(^|/)data\.json$|\.(xlsx|xls|csv)$|_backup\.|(^|/)data/invoices/'
 
 # Palavras como PASSWORD/SENHA/TOKEN seguidas de um valor literal entre aspas.
 # (Nunca liste senhas reais aqui: este arquivo também vai para o repositório público.)

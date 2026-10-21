@@ -33,7 +33,7 @@ $telas = [ordered]@{
     layout_hist        = @('layout_hist.png', '1280,1500')
     layout_super       = @('layout_super.png', '1280,900')
     layout_users       = @('layout_users.png', '1280,900')
-    layout_mobile      = @('layout_mobile.png', '390,1700')
+    layout_mobile      = @('layout_mobile.png', '375,1700')
     layout_dark        = @('layout_dark.png', '1280,1400')
 }
 # Aceita "-Modos a,b" vindo do powershell -File (chega como um texto só).
@@ -43,7 +43,7 @@ if (-not $Modos) { $Modos = @($telas.Keys | Where-Object { $_ -like 'readme_*' }
 $html = [IO.File]::ReadAllText((Join-Path $raiz 'Portal_Hiperroll_Final.html'), $utf8)
 $html = $html.Replace('<meta charset="UTF-8">', "<meta charset=""UTF-8""><base href=""$raizUrl"">")
 $html = [regex]::Replace($html, '<script src="https://cdnjs[^"]*html2pdf[^"]*"></script>', '')
-$html = $html.Replace('<script src="api/data.php"></script>', '<script src="data.js"></script><script>window.PORTAL_DATA_LOCKED = false;</script><script src="tests/api_simulada.js"></script>')
+$html = $html.Replace('<script src="api/data.php"></script>', '<script src="tests/api_simulada.js"></script><script src="data.js"></script>')
 $last = [regex]::Matches($html, '<script src="js/[^"]+"></script>') | Select-Object -Last 1
 $html = $html.Insert($last.Index + $last.Length, '<script src="tests/testes_portal.js"></script>')
 $pagina = Join-Path $saida 'pagina_prints.html'
@@ -56,7 +56,25 @@ foreach ($modo in $Modos) {
     New-Item -ItemType Directory -Force $pasta | Out-Null
     $png = Join-Path $pasta $arquivo
     $url = ([Uri]$pagina).AbsoluteUri + "?mode=$modo"
+    $largura, $altura = $janela -split ','
+    # O Edge sem janela não desenha páginas com menos de ~480 px de largura. Para a tela de celular,
+    # a página abre dentro de um quadro (iframe) da largura do celular e a imagem é recortada nela.
+    $celular = [int]$largura -lt 480
+    if ($celular) {
+        $moldura = Join-Path $saida "moldura_$modo.html"
+        [IO.File]::WriteAllText($moldura, "<!DOCTYPE html><html><body style='margin:0'><iframe src='$url' width='$largura' height='$altura' style='border:0;display:block'></iframe></body></html>", $utf8)
+        $url = ([Uri]$moldura).AbsoluteUri
+        $janela = "520,$altura"
+    }
     $edgeArgs = @('--headless=new', '--disable-gpu', '--no-first-run', "--user-data-dir=$saida\edge_print_$modo", '--allow-file-access-from-files', "--window-size=$janela", '--virtual-time-budget=15000', "--screenshot=$png", $url)
     Start-Process -FilePath $edge -ArgumentList $edgeArgs -RedirectStandardOutput "$saida\print_$modo.txt" -RedirectStandardError "$saida\print_erros_$modo.txt" -Wait -NoNewWindow
+    if ($celular -and (Test-Path $png)) {
+        Add-Type -AssemblyName System.Drawing
+        $imagem = [Drawing.Bitmap]::FromFile($png)
+        $recorte = $imagem.Clone([Drawing.Rectangle]::new(0, 0, [int]$largura, $imagem.Height), $imagem.PixelFormat)
+        $imagem.Dispose()
+        $recorte.Save($png, [Drawing.Imaging.ImageFormat]::Png)
+        $recorte.Dispose()
+    }
     "{0,-20} -> {1}" -f $modo, $png
 }

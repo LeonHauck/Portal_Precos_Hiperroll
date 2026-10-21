@@ -3,10 +3,7 @@
 
 
 async function init() {
-    orderManager.init();
     statusManager.init();
-
-    applyPricingRuleLabels();
     updateTableMarginLabels(null);
 
     try {
@@ -52,7 +49,7 @@ async function init() {
 
     // Event Listeners
     document.getElementById('productSearch').addEventListener('input', updateResults);
-    document.getElementById('stateSelect').addEventListener('change', updateResults);
+    document.getElementById('stateSelect').addEventListener('change', onStateChange);
     document.getElementById('cityType').addEventListener('change', updateResults);
     document.getElementById('weightTier').addEventListener('change', updateResults);
 

@@ -18,44 +18,58 @@ const cart = []; // Store order items
 let currentOrderMargin = 0;
 let activeDraftId = null;
 
-// ===== Regras de precificação e margem (fonte única para tela, rascunho, supervisor e PDF) =====
-const PRICING_RULES = Object.freeze({
-    DEFAULT_PRODUCT_MARGIN: X,   // produto sem margem informada na tabela
-    LEGACY_TARGET_MARGIN: X,     // só para pedidos salvos antes de a margem vir do produto
-    EARLY_PAYMENT_DISCOUNT: X,
-    FOB_FREIGHT_DISCOUNT: X,
-    MIN_JUSTIFICATION_LENGTH: 10
-});
+// ===== Regras comerciais =====
+// The numbers are NOT written here: the server sends them with the session (api/lib/pricing.php,
+// pricing_rules_for_client) and applyServerRules() fills these two objects. The screen uses them
+// only to show the calculations while the order is being built; the server recalculates to decide.
+const PRICING_RULES = {
+    DEFAULT_PRODUCT_MARGIN: 0,     // produto sem margem informada na tabela
+    EARLY_PAYMENT_DISCOUNT: 0,
+    FOB_FREIGHT_DISCOUNT: 0,
+    MIN_JUSTIFICATION_LENGTH: 0
+};
+// Modalidade da nota (Livre / Aval / Garantia): maxDiscount é o desconto total permitido contra o
+// preço de tabela; notice aparece para o representante e o gestor quando o pedido tem desconto.
+const INVOICE_MODES = {};
+let DEFAULT_INVOICE_MODE = '';
 
-// Modalidade da nota, escolhida pelo representante em cada pedido. maxDiscount é o desconto
-// total permitido contra o preço de tabela; notice aparece para o representante e para o gestor
-// sempre que o pedido tem algum desconto. Espelho: PRICING_INVOICE_MODES em api/lib/pricing.php.
-const INVOICE_MODES = Object.freeze({
-    livre: { label: '100% · Preço base (Livre)', short: 'Livre (100%)', maxDiscount: 0, notice: '' },
-    aval: { label: '50% · Aval', short: 'Aval (50%)', maxDiscount: X, notice: 'PEDIDO DEVE SER IMPLANTADO AVAL.' },
-    garantia: { label: '10% · Garantia', short: 'Garantia (10%)', maxDiscount: X, notice: 'PEDIDO DEVE SER IMPLANTADO GARANTIA.' }
-});
-const DEFAULT_INVOICE_MODE = 'livre';
-
-// Colour of a margin. Green = at (or above) the reference, i.e. the product's margin at full
-// price; yellow = reduced by discounts; red = negative. The margin is information for the
-// gestor: what blocks an order is the modality's discount range, not the margin.
-// minMargin only exists on orders saved under the old rule (a fixed minimum of 10%).
-// tone is the CSS class suffix (tone-good / tone-warn / tone-bad); color is only for the PDF.
-function getMarginStatus(margin, minMargin = null, referenceMargin = PRICING_RULES.LEGACY_TARGET_MARGIN) {
-    const floor = minMargin === null ? 0 : minMargin;
-    if (margin >= floor && margin >= referenceMargin - 0.005) {
-        return { label: 'Margem cheia', tone: 'good', color: '#15803d', description: 'Margem cheia' };
-    }
-    if (margin >= floor) {
-        return { label: 'Reduzida', tone: 'warn', color: '#b45309', description: 'Margem reduzida pelos descontos' };
-    }
-    return { label: minMargin === null ? 'Negativa' : 'Abaixo do mínimo', tone: 'bad', color: '#c53030', description: minMargin === null ? 'Margem negativa' : 'Abaixo da margem mínima' };
+function applyServerRules(rules) {
+    if (!rules) return;
+    PRICING_RULES.DEFAULT_PRODUCT_MARGIN = Number(rules.defaultProductMargin) || 0;
+    PRICING_RULES.EARLY_PAYMENT_DISCOUNT = Number(rules.earlyPaymentDiscount) || 0;
+    PRICING_RULES.FOB_FREIGHT_DISCOUNT = Number(rules.fobFreightDiscount) || 0;
+    PRICING_RULES.MIN_JUSTIFICATION_LENGTH = Number(rules.minJustificationLength) || 0;
+    Object.keys(INVOICE_MODES).forEach(key => delete INVOICE_MODES[key]);
+    (rules.invoiceModes || []).forEach(mode => {
+        INVOICE_MODES[mode.key] = {
+            name: mode.name,
+            invoiceShare: mode.invoiceShare,
+            short: `${mode.name} (${mode.invoiceShare})`,
+            maxDiscount: Number(mode.maxDiscount) || 0,
+            notice: mode.notice || ''
+        };
+    });
+    DEFAULT_INVOICE_MODE = rules.defaultInvoiceMode || Object.keys(INVOICE_MODES)[0] || '';
+    if (typeof renderInvoiceModeOptions === 'function') renderInvoiceModeOptions();
+    if (typeof applyPricingRuleLabels === 'function') applyPricingRuleLabels();
 }
 
-// Percentages are stored with each order so a later rule change never rewrites
-// what was already submitted; missing values (older orders) fall back to today's rules.
-// invoiceMode is '' on orders saved before the modalities existed: no discount range applies to them.
+// Colour of a margin. Green = at (or above) the product's margin at full price; yellow = reduced
+// by discounts; red = negative. The margin is information for the gestor: what blocks an order
+// is the modality's discount range, not the margin.
+// tone is the CSS class suffix (tone-good / tone-warn / tone-bad); color is only for the PDF.
+function getMarginStatus(margin, referenceMargin) {
+    if (margin >= referenceMargin - 0.005) {
+        return { label: 'Margem cheia', tone: 'good', color: '#15803d', description: 'Margem cheia' };
+    }
+    if (margin >= 0) {
+        return { label: 'Reduzida', tone: 'warn', color: '#b45309', description: 'Margem reduzida pelos descontos' };
+    }
+    return { label: 'Negativa', tone: 'bad', color: '#c53030', description: 'Margem negativa' };
+}
+
+// The order keeps the percentages it was sent with, so a later rule change never rewrites what
+// was already submitted; an order without them uses today's rules.
 function normalizeOrderConditions(conditions) {
     const c = conditions || {};
     const toPercent = (value, fallback) => {
@@ -69,9 +83,7 @@ function normalizeOrderConditions(conditions) {
         fobFreight: Boolean(c.fobFreight),
         earlyPaymentPercent: toPercent(c.earlyPaymentPercent, PRICING_RULES.EARLY_PAYMENT_DISCOUNT),
         fobFreightPercent: toPercent(c.fobFreightPercent, PRICING_RULES.FOB_FREIGHT_DISCOUNT),
-        // Only orders saved under the old rule carry a minimum margin; null = no minimum.
-        minMargin: toPercent(c.minMargin, null),
-        invoiceMode: Object.prototype.hasOwnProperty.call(INVOICE_MODES, c.invoiceMode) ? c.invoiceMode : '',
+        invoiceMode: Object.prototype.hasOwnProperty.call(INVOICE_MODES, c.invoiceMode) ? c.invoiceMode : DEFAULT_INVOICE_MODE,
         lowMarginJustification: String(c.lowMarginJustification || '').trim()
     };
 }
@@ -89,20 +101,18 @@ function formatMarginPercent(value) {
 }
 
 // MARGEM. Each product has a margin at full price (item.tableMargin, the "Margem" column of the
-// product spreadsheet): a sacola sold at its table price of R$ 100 has X% of margin, so R$ X is
-// what must be kept. Discounts lower the price while that R$ X stays put:
+// product spreadsheet): a product sold at its table price of R$ 100 with 8% of margin must keep
+// R$ 92. Discounts lower the price while that R$ 92 stays put:
 //
 //   margem = (preço líquido − preço de tabela × (1 − margem do produto)) ÷ valor da nota
 //
 // A discount on one item changes only that item; a discount on the order changes every item.
 // The contract % raises the invoice, but Hiperroll pays that amount out, so it lowers the margin.
-// Items saved before the product margins existed keep the old rule (lucro = líquido − FOB).
 //
 // DESCONTO E MODALIDADE. The effective discount compares what the customer pays with the table
 // price (item discounts, order discount, pagamento antecipado and frete FOB all count). Each
 // modality allows a maximum (INVOICE_MODES); above it the order can only be sent with a
-// justification and reaches the gestor flagged. The margin itself blocks nothing (the gestor
-// sees it when approving), except on old orders that still carry a fixed minimum margin.
+// justification and reaches the gestor flagged. The margin itself blocks nothing.
 function calculateOrderTotals(items, conditions) {
     const c = normalizeOrderConditions(conditions);
     const discountPercent = getOrderDiscountPercent(c);
@@ -111,7 +121,6 @@ function calculateOrderTotals(items, conditions) {
 
     const totals = { totalQty: 0, totalWeight: 0, totalFob: 0, totalGross: 0, totalNet: 0, totalInvoice: 0, totalProfit: 0, totalTable: 0 };
     let tableProfit = 0;
-    let itemsWithMargin = 0;
     const lines = (Array.isArray(items) ? items : []).map(item => {
         const qty = parseFloat(item.qty) || 0;
         const fobUnit = parseFloat(item.fob) || 0;
@@ -121,8 +130,8 @@ function calculateOrderTotals(items, conditions) {
         const invoiceUnit = netUnit * contractFactor;
 
         const productMargin = parseFloat(item.tableMargin);
-        const tableMargin = Number.isFinite(productMargin) && productMargin >= 0 ? productMargin : null;
-        const keepUnit = tableMargin !== null ? tableUnit * (1 - tableMargin / 100) : fobUnit;
+        const tableMargin = Number.isFinite(productMargin) && productMargin >= 0 ? productMargin : PRICING_RULES.DEFAULT_PRODUCT_MARGIN;
+        const keepUnit = tableUnit * (1 - tableMargin / 100);
         const profitUnit = netUnit - keepUnit;
         const marginPercent = invoiceUnit > 0 ? (profitUnit / invoiceUnit) * 100 : 0;
         const itemDiscount = tableUnit > 0 ? Math.max((1 - netUnit / tableUnit) * 100, 0) : 0;
@@ -135,37 +144,30 @@ function calculateOrderTotals(items, conditions) {
         totals.totalInvoice += invoiceUnit * qty;
         totals.totalProfit += profitUnit * qty;
         totals.totalTable += tableUnit * qty;
-        if (tableMargin !== null) {
-            tableProfit += tableUnit * (tableMargin / 100) * qty;
-            itemsWithMargin++;
-        }
+        tableProfit += tableUnit * (tableMargin / 100) * qty;
 
         return {
             item, qty, fobUnit, negotiatedUnit, tableUnit, netUnit, invoiceUnit, profitUnit, marginPercent, tableMargin,
             discountPercent: itemDiscount,
-            status: getMarginStatus(marginPercent, c.minMargin, tableMargin !== null ? tableMargin : PRICING_RULES.LEGACY_TARGET_MARGIN),
+            status: getMarginStatus(marginPercent, tableMargin),
             subtotal: invoiceUnit * qty
         };
     });
 
     const margin = totals.totalInvoice > 0 ? (totals.totalProfit / totals.totalInvoice) * 100 : 0;
-    // Margin the order would have at full table price (null on orders from before the product margins).
-    const tableMargin = itemsWithMargin === lines.length && totals.totalTable > 0 ? Math.round((tableProfit / totals.totalTable) * 1e6) / 1e4 : null;
+    // Margin the order would have at full table price (null while it is empty).
+    const tableMargin = totals.totalTable > 0 ? Math.round((tableProfit / totals.totalTable) * 1e6) / 1e4 : null;
     // Rounded to cents of a percent so float noise never turns "exactly 10%" into "above 10%".
     const effectiveDiscount = totals.totalTable > 0 ? Math.max(Math.round((1 - totals.totalNet / totals.totalTable) * 1e4) / 100, 0) : 0;
 
     const mode = INVOICE_MODES[c.invoiceMode] || null;
     const hasItems = lines.length > 0;
     const discountExceeded = hasItems && mode !== null && effectiveDiscount > mode.maxDiscount;
-    const belowMinimum = hasItems && c.minMargin !== null && margin < c.minMargin;
     const alerts = [];
     if (discountExceeded) {
         alerts.push(mode.maxDiscount === 0
             ? `Desconto de ${formatMarginPercent(effectiveDiscount)}% na modalidade ${mode.short}, que não permite desconto`
-            : `Desconto de ${formatMarginPercent(effectiveDiscount)}% acima do limite de ${mode.maxDiscount}% da modalidade ${mode.short}`);
-    }
-    if (belowMinimum) {
-        alerts.push(`Margem de ${formatPercent(margin)} abaixo do mínimo de ${formatMarginPercent(c.minMargin)}%`);
+            : `Desconto de ${formatMarginPercent(effectiveDiscount)}% acima do limite de ${formatMarginPercent(mode.maxDiscount)}% da modalidade ${mode.short}`);
     }
 
     return {
@@ -175,15 +177,13 @@ function calculateOrderTotals(items, conditions) {
         effectiveDiscount,
         lines,
         margin,
-        minMargin: c.minMargin,
         tableMargin,
         mode,
         modeNotice: hasItems && mode !== null && mode.notice && effectiveDiscount > 0 ? mode.notice : '',
         discountExceeded,
-        belowMinimum,
-        requiresJustification: discountExceeded || belowMinimum,
+        requiresJustification: discountExceeded,
         alerts,
-        status: getMarginStatus(margin, c.minMargin, tableMargin !== null ? tableMargin : PRICING_RULES.LEGACY_TARGET_MARGIN)
+        status: getMarginStatus(margin, tableMargin !== null ? tableMargin : PRICING_RULES.DEFAULT_PRODUCT_MARGIN)
     };
 }
 

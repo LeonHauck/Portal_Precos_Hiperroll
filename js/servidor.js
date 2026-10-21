@@ -98,6 +98,7 @@ const authManager = {
     async refreshSession() {
         const data = await apiRequest('session');
         this.setProfile(data.user);
+        applyServerRules(data.rules);
         return data.user;
     },
 
@@ -113,6 +114,7 @@ const authManager = {
         if (!username || !password) throw new Error('Informe usuário e senha.');
         const data = await apiRequest('login', { method: 'POST', body: { username, password } });
         this.setProfile(data.user);
+        applyServerRules(data.rules);
         this.updateUI();
         return data.user;
     },
@@ -195,44 +197,6 @@ const authManager = {
         try {
             if (typeof updateSupervisorPanel === 'function') updateSupervisorPanel();
         } catch (e) {}
-    }
-};
-
-const orderManager = {
-    meta: {
-        createdBy: null,
-        createdAt: null
-    },
-
-    init() {
-        const savedMeta = localStorage.getItem('orderMeta');
-        if (savedMeta) {
-            try {
-                this.meta = JSON.parse(savedMeta);
-            } catch (e) {
-                this.meta = { createdBy: null, createdAt: null };
-            }
-        }
-    },
-
-    save() {
-        localStorage.setItem('orderMeta', JSON.stringify(this.meta));
-    },
-
-    ensureCreator(username) {
-        if (!this.meta.createdBy && username) {
-            this.meta.createdBy = username;
-            this.meta.createdAt = new Date().toISOString();
-            this.save();
-        }
-    },
-
-    getCreatorLabel() {
-        return this.meta.createdBy || '---';
-    },
-
-    getCreatedAtLabel() {
-        return this.meta.createdAt ? new Date(this.meta.createdAt).toLocaleString('pt-BR') : '---';
     }
 };
 

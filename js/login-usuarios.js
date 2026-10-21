@@ -228,12 +228,12 @@ function renderUsersTable(users) {
             ? (user.mustChangePassword ? '<span class="chip chip--warn">Senha provisória</span>' : '<span class="chip chip--approved">Ativo</span>')
             : '<span class="chip">Desativado</span>';
         const roleCell = isAdmin && !isSelf
-            ? `<select class="input-sm user-role-select" onchange="changeUserRole(${user.id}, this.value)" aria-label="Papel">${Object.values(ROLES).map(role =>
+            ? `<select class="input-sm user-role-select" data-change="changeUserRole" data-id="${user.id}" aria-label="Papel">${Object.values(ROLES).map(role =>
                 `<option value="${role}" ${role === user.role ? 'selected' : ''}>${ROLE_LABELS[role]}</option>`).join('')}</select>`
             : escapeHtml(ROLE_LABELS[user.role] || user.role);
         const actions = manageable
-            ? `<button class="btn btn--ghost btn--sm" onclick="toggleUserActive(${user.id}, ${!user.active})">${user.active ? 'Desativar' : 'Reativar'}</button>
-               <button class="btn btn--ghost btn--sm" onclick="resetUserPassword(${user.id}, ${escapeHtml(JSON.stringify(user.displayName))})">${icon('key')}Redefinir senha</button>`
+            ? `<button class="btn btn--ghost btn--sm" data-action="toggleUserActive" data-id="${user.id}" data-active="${!user.active}">${user.active ? 'Desativar' : 'Reativar'}</button>
+               <button class="btn btn--ghost btn--sm" data-action="resetUserPassword" data-id="${user.id}" data-name="${escapeHtml(user.displayName)}">${icon('key')}Redefinir senha</button>`
             : (isSelf ? '<span class="muted">Você</span>' : '');
         return `
             <tr class="${user.active ? '' : 'user-row--inactive'}">

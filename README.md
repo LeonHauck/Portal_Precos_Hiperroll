@@ -142,7 +142,7 @@ A pasta `demo/` fica só na máquina de desenvolvimento (está no `.gitignore`, 
 2. **SSL:** em cPanel → *SSL/TLS Status*, ative o AutoSSL (gratuito). Depois descomente o bloco "forçar HTTPS" no `.htaccess` da raiz.
 3. **Arquivos:** envie para uma pasta do `public_html` (ex.: `public_html/portal/`) somente o necessário:
    `Portal_Hiperroll_Final.html`, `style.css`, `data.js`, `setup.php`, `.htaccess`, `logo.png`, `logo-hiperroll.png`, `logo-transparent.png` e as pastas `js/`, `api/` e `data/`.
-   O **`data.js` não está no repositório** (ele tem custos, fretes, preços e margens): copie-o da sua máquina para o servidor. Depois que o gestor abre a aba Tabela de Preços pela primeira vez, a tabela passa para o banco e o `data.js` pode até ser apagado do servidor.
+   O **`data.js` não está no repositório** (ele tem custos, fretes, preços e margens): copie-o da sua máquina para o servidor. O mesmo vale para **`api/regras_comerciais.php`** (limites de desconto e percentuais): envie o da sua máquina para a pasta `api/` do servidor. Sem ele o portal não calcula pedidos e o `setup.php` avisa. Depois que o gestor abre a aba Tabela de Preços pela primeira vez, a tabela passa para o banco e o `data.js` pode até ser apagado do servidor.
    Não é preciso enviar a planilha, as pastas `tests/`, `docs/`, `demo/` e `scratch/`, nem o `README.md` (o `.htaccess` bloqueia o download deles caso sejam enviados).
 4. **Banco fora da pasta pública (recomendado):** copie `api/config.local.example.php` para `api/config.local.php` e aponte `db_path` para algo como `/home/SEU_USUARIO/portal_data/portal.sqlite`.
 5. **Primeiro acesso:** abra `https://seudominio.com.br/portal/setup.php`, confira a verificação do servidor e crie as contas do gestor e do administrador. A página se desativa sozinha depois disso.
@@ -166,7 +166,9 @@ A pasta `demo/` fica só na máquina de desenvolvimento (está no `.gitignore`, 
 - Um pedido montado com uma versão antiga da tabela é recusado no envio até o representante revisar os novos preços.
 - `.htaccess` bloqueia o download do banco, da planilha, dos scripts de manutenção, dos backups e de arquivos ocultos. A pasta de dados (banco e notas fiscais) recusa qualquer acesso direto pelo navegador.
 - Todo texto digitado por alguém (cliente, observações, motivos, nomes) passa por `escapeHtml()` antes de aparecer na tela, então nunca é executado como código. Há um teste automático para isso em `tests/testes_portal.js`.
-- `api/config.local.php`, o banco `.sqlite`, a pasta `data/invoices/`, o `data.js`, as planilhas e os CSVs estão no `.gitignore`, e o `.githooks/pre-commit` recusa o commit se algum deles for adicionado.
+- **CSP (Content Security Policy)** ligado no `<meta>` do `Portal_Hiperroll_Final.html` e no `.htaccess` (as duas cópias devem ficar iguais; o `.htaccess` acrescenta `frame-ancestors`): o navegador só executa JavaScript de arquivos do próprio site e da biblioteca de PDF (cdnjs). Por isso o HTML não tem `onclick=`, `<script>` escrito dentro da página nem `style=""`: os botões usam `data-action="nomeDaAcao"`, ligado à função em `js/acoes.js`. Para criar um botão novo, acrescente a ação na lista de `js/acoes.js`.
+- `style-src` mantém `'unsafe-inline'` porque a biblioteca de PDF (html2pdf/html2canvas) aplica estilos inline; os scripts continuam totalmente restritos.
+- `api/config.local.php`, `api/regras_comerciais.php`, o banco `.sqlite`, a pasta `data/invoices/`, o `data.js`, as planilhas e os CSVs estão no `.gitignore`, e o `.githooks/pre-commit` recusa o commit se algum deles for adicionado.
 - As senhas que existiam no código até setembro de 2026 estão no histórico público do repositório e **não devem ser reutilizadas**.
 
 ## 🔄 Atualização das bases
@@ -197,7 +199,11 @@ O script funciona em qualquer máquina com Windows: os caminhos partem da pasta 
 
 ### Regras comerciais no código
 
-As regras comerciais (modalidades, limites de desconto, condições e cálculo da margem) não são descritas neste README. No código, elas existem em dois lugares que precisam andar juntos: `PRICING_RULES` e `INVOICE_MODES` em `js/regras.js` (o que a tela mostra) e `api/lib/pricing.php` (o que o servidor aceita). O mesmo vale para o cálculo dos preços: `computeItemPrices()` em `js/catalogo.js` e `server_item_prices()` em `api/lib/catalog.php`.
+As regras comerciais (modalidades, limites de desconto, condições e cálculo da margem) não são descritas neste README. Os **valores** delas ficam só em `api/regras_comerciais.php`, que **não vai para o Git** (está no `.gitignore` e o pre-commit o recusa). No repositório fica apenas o modelo `api/regras_comerciais.example.php`, com números de exemplo. Para instalar em outra máquina, copie o modelo para `api/regras_comerciais.php` e preencha os valores reais.
+
+O servidor lê esse arquivo em `pricing_rules()` (`api/lib/pricing.php`), que confere se nada está faltando. A tela recebe as regras junto com a sessão, depois do login (`pricing_rules_for_client()` → `applyServerRules()` em `js/regras.js`), e começa sem regra nenhuma até lá. Para mudar uma regra, altere apenas o `regras_comerciais.php` do servidor. Os testes automáticos usam regras fictícias (`tests/api_simulada.js`).
+
+O que continua escrito nos dois lados é a *fórmula* (não os valores), porque a tela precisa calcular na hora enquanto o pedido é montado: `calculateOrderTotals()` em `js/regras.js` × `calculate_order_totals()` em `api/lib/pricing.php`, e `computeItemPrices()` em `js/catalogo.js` × `server_item_prices()` em `api/lib/catalog.php`. Quem decide é sempre o servidor.
 
 ## 🗂️ Estrutura principal
 
@@ -206,7 +212,8 @@ Portal_Precos_Hiperroll/
 ├── Portal_Hiperroll_Final.html  # Página principal da aplicação
 ├── style.css                    # Visual: cores dos temas claro/escuro, componentes e telas
 ├── js/                          # Código da tela, um arquivo por assunto (ordem de carga no HTML):
-│   ├── regras.js                #   regras comerciais, cálculos e utilitários (formatBRL, escapeHtml, icon)
+│   ├── tema.js                  #   (no <head>) aplica o tema claro/escuro antes de a página aparecer
+│   ├── regras.js                #   regras recebidas do servidor, cálculos e utilitários (formatBRL, escapeHtml, icon)
 │   ├── servidor.js              #   apiRequest(), login/sessão e pedidos em memória
 │   ├── inicio.js                #   inicialização do portal
 │   ├── catalogo.js              #   tabela de preços em uso, FOB/CIF e revisão de preços
@@ -218,7 +225,8 @@ Portal_Precos_Hiperroll/
 │   ├── lixeira.js               #   lixeira
 │   ├── gestor.js                #   aprovações e análise do gestor
 │   ├── historico-faturamento.js #   abas, lista de pedidos e faturamento
-│   └── tabela-precos.js         #   aba Tabela de preços
+│   ├── tabela-precos.js         #   aba Tabela de preços
+│   └── acoes.js                 #   (por último) liga data-action / data-change / data-input às funções
 ├── data.js                      # Tabela inicial (fora do Git; usada só até a tabela ir para o banco)
 ├── setup.php                    # Configuração inicial (cria gestor e administrador)
 ├── .htaccess                    # Bloqueios de arquivos sensíveis no Apache
@@ -227,6 +235,7 @@ Portal_Precos_Hiperroll/
 │   ├── data.php                 # Entrega o data.js só para usuários logados
 │   ├── config.php               # Configuração padrão
 │   ├── config.local.example.php # Modelo para ajustes da hospedagem
+│   ├── regras_comerciais.example.php # Modelo das regras comerciais (o regras_comerciais.php real fica fora do Git)
 │   └── lib/                     # Banco, autenticação, pedidos, usuários, margem e tabela de preços
 ├── demo/                        # Modo demonstração local (fora do git; não publicar)
 ├── data/                        # Banco SQLite e notas fiscais anexadas (criados automaticamente; fora do git)

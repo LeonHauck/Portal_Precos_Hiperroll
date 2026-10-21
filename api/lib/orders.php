@@ -32,10 +32,9 @@ function sanitize_cart($cart): array
             'negotiatedPrice' => num_field($item['negotiatedPrice'] ?? 0),
             'unitDiscount' => num_field($item['unitDiscount'] ?? 0),
             'weight' => num_field($item['weight'] ?? 0),
-            // Margin of the product at full table price (%), the base of the item's margin. Null on
-            // items from before this rule; replaced by the price table's value in
-            // apply_catalog_prices() once the table is in the database.
-            'tableMargin' => is_numeric($item['tableMargin'] ?? null) ? min(num_field($item['tableMargin']), 100.0) : null,
+            // Margin of the product at full table price (%), the base of the item's margin; replaced
+            // by the price table's value in apply_catalog_prices() once the table is in the database.
+            'tableMargin' => is_numeric($item['tableMargin'] ?? null) ? min(num_field($item['tableMargin']), 100.0) : pricing_default_product_margin(),
             'qty' => max((int) ($item['qty'] ?? 0), 1),
             // Region the CIF was quoted for, so the price can be recalculated when the table changes.
             'uf' => preg_match('/^[A-Z]{2}$/', $uf) ? $uf : '',
@@ -238,11 +237,11 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
             $pricing = calculate_order_totals($input['cart'], $conditions);
             // Discount above the modality's limit: the order may still be sent, but only with a
             // justification, and it reaches the gestor flagged.
-            if ($pricing['requiresJustification'] && mb_strlen($conditions['lowMarginJustification'], 'UTF-8') < PRICING_MIN_JUSTIFICATION_LENGTH) {
+            if ($pricing['requiresJustification'] && mb_strlen($conditions['lowMarginJustification'], 'UTF-8') < pricing_min_justification_length()) {
                 fail(422, sprintf(
                     '%s. Informe uma justificativa com pelo menos %d caracteres para enviar.',
                     implode('. ', $pricing['alerts']),
-                    PRICING_MIN_JUSTIFICATION_LENGTH
+                    pricing_min_justification_length()
                 ));
             }
             if (!$pricing['requiresJustification']) {

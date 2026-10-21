@@ -110,7 +110,7 @@ function updateResults() {
                 <td class="num price-tag price-fob">${formatCurrency(fobPrice)}</td>
                 <td class="num price-tag price-cif">${formatCurrency(cifPrice)}</td>
                 <td class="col-action">
-                    <button class="btn btn--primary btn--sm" onclick="addToCart(this.dataset.codigo)" data-codigo="${escapeHtml(p.codigo)}">${icon('plus')}Adicionar</button>
+                    <button class="btn btn--primary btn--sm" data-action="addToCart" data-codigo="${escapeHtml(p.codigo)}">${icon('plus')}Adicionar</button>
                 </td>
             </tr>`;
     }).join('');
@@ -136,8 +136,6 @@ function addToCart(codigo) {
     const p = productsData.find(item => item.codigo === codigo);
     if (!p) return;
 
-    const currentUser = authManager.getCurrentUser();
-    orderManager.ensureCreator(currentUser);
 
     const existing = cart.find(item => item.codigo === codigo);
     if (existing) {
@@ -190,10 +188,26 @@ function setCurrentOrderConditions(conditions) {
     });
 }
 
+// The modality options (Livre / Aval / Garantia, each with its limit) come from the server rules.
+function renderInvoiceModeOptions() {
+    const fieldset = document.getElementById('orderInvoiceMode');
+    if (!fieldset) return;
+    const current = fieldset.querySelector('input:checked')?.value || DEFAULT_INVOICE_MODE;
+    const options = Object.entries(INVOICE_MODES).map(([key, mode]) => {
+        const hint = mode.maxDiscount > 0 ? `desconto até ${formatMarginPercent(mode.maxDiscount)}%` : 'sem desconto';
+        return `
+            <label class="invoice-mode-option" title="${escapeHtml(`${mode.short}: ${hint}`)}">
+                <input type="radio" name="orderInvoiceMode" value="${escapeHtml(key)}" ${key === current ? 'checked' : ''} data-change="updateOrderTable">
+                <span><strong>${escapeHtml(mode.invoiceShare)}</strong> ${escapeHtml(mode.name)}<small>${hint}</small></span>
+            </label>`;
+    }).join('');
+    fieldset.innerHTML = `<legend class="sr-only">Modalidade do pedido</legend>${options}`;
+}
+
 function applyPricingRuleLabels() {
     document.querySelectorAll('[data-pricing-rule]').forEach(el => {
         const value = PRICING_RULES[el.dataset.pricingRule];
-        if (value !== undefined) el.textContent = `${value}%`;
+        if (value !== undefined) el.textContent = `${formatMarginPercent(value)}%`;
     });
 }
 
@@ -254,18 +268,18 @@ function updateOrderTable() {
                     <span>${escapeHtml(item.descricao)}</span>
                 </td>
                 <td class="num">
-                    <input class="input-sm w-qty" type="number" value="${item.qty}" min="1" onchange="updateCartQty(${idx}, this.value)" aria-label="Quantidade">
+                    <input class="input-sm w-qty" type="number" value="${item.qty}" min="1" data-change="updateCartQty" data-index="${idx}" aria-label="Quantidade">
                     <span class="print-value">${item.qty}</span>
                 </td>
                 <td class="num">${formatBRL(item.weight * item.qty, 3)}&nbsp;kg</td>
                 <td class="num">${formatCurrency(item.fob)}</td>
                 <td class="num">${formatCurrency(item.cif)}</td>
                 <td class="num">
-                    <input class="input-sm w-money" type="number" step="0.01" min="0" value="${unitDiscount.toFixed(2)}" onchange="updateUnitDiscount(${idx}, this.value)" title="Desconto unitário em reais" aria-label="Desconto unitário">
+                    <input class="input-sm w-money" type="number" step="0.01" min="0" value="${unitDiscount.toFixed(2)}" data-change="updateUnitDiscount" data-index="${idx}" title="Desconto unitário em reais" aria-label="Desconto unitário">
                     <span class="print-value">${formatCurrency(unitDiscount)}</span>
                 </td>
                 <td class="num">
-                    <input class="input-sm w-money" type="number" step="0.01" min="0" value="${line.negotiatedUnit.toFixed(2)}" onchange="updateNegotiatedPrice(${idx}, this.value)" title="Preço negociado unitário" aria-label="Preço negociado">
+                    <input class="input-sm w-money" type="number" step="0.01" min="0" value="${line.negotiatedUnit.toFixed(2)}" data-change="updateNegotiatedPrice" data-index="${idx}" title="Preço negociado unitário" aria-label="Preço negociado">
                     <span class="print-value">${formatCurrency(line.negotiatedUnit)}</span>
                 </td>
                 <td class="num">
@@ -274,7 +288,7 @@ function updateOrderTable() {
                 </td>
                 <td class="num price-tag">${formatCurrency(line.subtotal)}</td>
                 <td class="col-action">
-                    <button onclick="removeFromCart(${idx})" class="btn btn--icon btn--ghost" title="Remover item" aria-label="Remover item">${icon('trash')}</button>
+                    <button data-action="removeFromCart" data-index="${idx}" class="btn btn--icon btn--ghost" title="Remover item" aria-label="Remover item">${icon('trash')}</button>
                 </td>
             </tr>`;
     }).join('');

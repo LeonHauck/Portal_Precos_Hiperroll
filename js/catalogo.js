@@ -211,6 +211,26 @@ function populateStateSelect() {
     select.innerHTML = '<option value="">Selecione um Estado</option>' + Object.keys(freightData).sort()
         .map(uf => `<option value="${escapeHtml(uf)}">${escapeHtml(uf)}</option>`).join('');
     if (current && freightData[current]) select.value = current;
+    updateCityTypeOptions();
+}
+
+// Only the kinds of praça that exist in the freight table for the chosen state: "Fluvial", for
+// example, only exists where the table has a river freight (today AP and PA).
+const PRACA_LABELS = Object.freeze({ Capital: 'Capital / Região Metropolitana', Interior: 'Interior', Fluvial: 'Fluvial (Norte)' });
+
+function updateCityTypeOptions() {
+    const select = document.getElementById('cityType');
+    if (!select) return;
+    const uf = document.getElementById('stateSelect')?.value || '';
+    const available = Object.keys(PRACA_LABELS).filter(type => !uf || (freightData[uf] && freightData[uf][type]));
+    const current = select.value;
+    select.innerHTML = available.map(type => `<option value="${type}">${PRACA_LABELS[type]}</option>`).join('');
+    select.value = available.includes(current) ? current : available[0];
+}
+
+function onStateChange() {
+    updateCityTypeOptions();
+    updateResults();
 }
 
 function getCurrentRegionFilters() {

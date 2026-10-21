@@ -67,7 +67,7 @@ function handle_login(array $body): void
 
     $current = current_user(true);
     audit('user.login', (string) $row['id']);
-    json_response(200, ['success' => true, 'user' => public_user($current), 'csrfToken' => csrf_token()]);
+    json_response(200, ['success' => true, 'user' => public_user($current), 'rules' => pricing_rules_for_client(), 'csrfToken' => csrf_token()]);
 }
 
 function export_backup(): void
@@ -100,6 +100,8 @@ switch ($action) {
         json_response(200, [
             'success' => true,
             'user' => $user ? public_user($user) : null,
+            // Commercial rules for the screen's calculations (api/lib/pricing.php is their only source).
+            'rules' => $user ? pricing_rules_for_client() : null,
             'csrfToken' => csrf_token(),
         ]);
         break;

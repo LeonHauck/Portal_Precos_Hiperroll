@@ -24,7 +24,7 @@ function showTrashModal() {
         return `
             <tr>
                 <td class="col-toggle">
-                    <button class="btn btn--icon btn--ghost trash-expand-btn" data-id="${id}" onclick="toggleTrashDetails('${id}')" aria-expanded="false" aria-label="Ver itens">${icon('chevron-down')}</button>
+                    <button class="btn btn--icon btn--ghost trash-expand-btn" data-id="${id}" data-action="toggleTrashDetails" aria-expanded="false" aria-label="Ver itens">${icon('chevron-down')}</button>
                 </td>
                 <td><strong>${escapeHtml(deletion.orderNumber || '—')}</strong></td>
                 <td>${escapeHtml(deletion.clientName || '—')}</td>
@@ -32,8 +32,8 @@ function showTrashModal() {
                 <td>${describeBillingProgress(deletion)}</td>
                 <td>${escapeHtml(formatDateTime(deletion.deletedAt))}<div class="muted">por ${escapeHtml(deletion.deletedBy || 'Sistema')}</div></td>
                 <td class="col-actions">
-                    <button class="btn btn--secondary btn--sm" onclick="restoreSubmission('${id}')">${icon('rotate')}Restaurar</button>
-                    <button class="btn btn--ghost btn--sm btn--danger-text" onclick="permanentlyDeleteSubmission('${id}')">${icon('trash')}Excluir</button>
+                    <button class="btn btn--secondary btn--sm" data-action="restoreSubmission" data-id="${id}">${icon('rotate')}Restaurar</button>
+                    <button class="btn btn--ghost btn--sm btn--danger-text" data-action="permanentlyDeleteSubmission" data-id="${id}">${icon('trash')}Excluir</button>
                 </td>
             </tr>
             <tr id="trash-details-${id}" class="details-row" hidden>
