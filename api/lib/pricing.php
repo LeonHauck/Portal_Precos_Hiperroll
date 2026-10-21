@@ -1,5 +1,5 @@
 <?php
-// Espelho de PRICING_RULES / INVOICE_MODES / calculateOrderTotals do script_v5.js.
+// Espelho de PRICING_RULES / INVOICE_MODES / calculateOrderTotals de js/regras.js.
 // O navegador calcula para mostrar na tela; o servidor recalcula para decidir.
 // Se mudar uma regra aqui, mude também no JavaScript (e vice-versa).
 

@@ -16,3 +16,16 @@ users.json
 
 # Modo demonstração local (simula o servidor no navegador; não vai para o repositório)
 /demo/
+
+# Dados comerciais (custos, fretes, preços e margens): ficam só na máquina e no servidor.
+# O data.js e a planilha são copiados para a HostGator à mão (ver README).
+/data.js
+*.xlsx
+*.xls
+*.csv
+/data.json
+*_backup.*
+
+# Ambiente Python local e resultados dos testes
+/.venv/
+/tests/resultados/

@@ -783,7 +783,7 @@ function bulk_adjust(array $user, $input): array
 
 // ---------- Preços calculados no servidor para os pedidos ----------
 
-// Same formulas as computeItemPrices() in script_v5.js:
+// Same formulas as computeItemPrices() in js/catalogo.js:
 // FOB = preço 100% NF × peso; CIF = (custos + frete) ÷ (custos ÷ preço 100% NF) × peso.
 // A product with an individual price uses price ÷ weight as its "preço 100% NF", so its CIF
 // keeps the line's proportion between freight and cost.

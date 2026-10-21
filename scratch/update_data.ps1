@@ -13,7 +13,7 @@
 #
 # Lê a primeira aba, acha a linha de cabeçalho (a que tem "Cod. Produto") e grava cabeçalho +
 # produtos. O portal localiza as colunas pelo NOME do cabeçalho (ver buildLegacyCatalog no
-# script_v5.js), então colunas novas ou em outra ordem não quebram nada. Colunas que o portal usa:
+# js/catalogo.js), então colunas novas ou em outra ordem não quebram nada. Colunas que o portal usa:
 # Margem, Linha, Categoria, Cod. Produto, Descrição - Nota Fiscal, Peso Caixa/Frd (o último, líquido), NCM.
 # Só o bloco PRODUTOS_CSV muda: custos (BLENDAS_CSV) e frete (FRETE_CSV) ficam como estão.
 $ErrorActionPreference = 'Stop'

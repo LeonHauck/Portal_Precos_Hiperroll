@@ -19,266 +19,303 @@
             } catch (e) { /* localStorage indisponível: mantém tema claro padrão */ }
         }());
     </script>
-    <link rel="stylesheet" href="style.css?v=11">
+    <link rel="stylesheet" href="style.css?v=20261021a">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body class="login-locked">
+    <!-- Ícones de linha (traço simples). Uso: <svg class="icon"><use href="#i-nome"></use></svg>, ou icon('nome') no JavaScript. -->
+    <svg class="icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+            <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
+            <symbol id="i-map-pin" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></symbol>
+            <symbol id="i-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+            <symbol id="i-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></symbol>
+            <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></symbol>
+            <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></symbol>
+            <symbol id="i-send" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
+            <symbol id="i-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
+            <symbol id="i-check-circle" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></symbol>
+            <symbol id="i-x" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+            <symbol id="i-x-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></symbol>
+            <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+            <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></symbol>
+            <symbol id="i-pin" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></symbol>
+            <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+            <symbol id="i-rotate" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></symbol>
+            <symbol id="i-package" viewBox="0 0 24 24"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></symbol>
+            <symbol id="i-cart" viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></symbol>
+            <symbol id="i-list" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></symbol>
+            <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+            <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></symbol>
+            <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
+            <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+            <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+            <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></symbol>
+            <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></symbol>
+            <symbol id="i-printer" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></symbol>
+            <symbol id="i-save" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></symbol>
+            <symbol id="i-refresh" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></symbol>
+            <symbol id="i-repeat" viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></symbol>
+            <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
+            <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
+            <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></symbol>
+            <symbol id="i-truck" viewBox="0 0 24 24"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></symbol>
+            <symbol id="i-trending" viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></symbol>
+            <symbol id="i-chevron-down" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></symbol>
+            <symbol id="i-dollar" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></symbol>
+        </defs>
+    </svg>
+
     <div class="container">
-        <header>
-            <div class="header-inner">
-                <div class="header-brand-section">
-                    <div class="logo-container">
-                        <img class="site-logo" src="logo-transparent.png" alt="Hiper Roll">
-                    </div>
-                    <div class="brand">
-                        <h1>Portal de Preços</h1>
-                        <p>Hiperroll • Calculadora CIF & FOB</p>
-                    </div>
+        <header class="app-header">
+            <div class="app-header__brand">
+                <img class="app-header__logo" src="logo-transparent.png" alt="Hiper Roll">
+                <div>
+                    <h1 class="app-header__title">Portal de Preços</h1>
+                    <p class="app-header__subtitle">Calculadora CIF &amp; FOB</p>
                 </div>
-                
-                <div class="header-info-section">
-                    <div class="info-box">
-                        <div class="info-label">Nº do Pedido</div>
-                        <div class="info-value" id="headerOrderNumber">---</div>
-                    </div>
-                    <div class="info-box">
-                        <div class="info-label">Data</div>
-                        <div class="info-value" id="headerOrderDate">--</div>
-                    </div>
-                    <div class="info-box info-box--margin">
-                        <div class="info-label" title="Margem do pedido atual vendido no preço de tabela, sem descontos">Margem tabela</div>
-                        <div class="margin-value-line">
-                            <div class="info-value" id="marginThreshold">10</div>
-                            <div class="margin-percent">%</div>
-                        </div>
-                    </div>
+            </div>
+
+            <dl class="app-header__info">
+                <div class="info-box">
+                    <dt class="info-label">Pedido</dt>
+                    <dd class="info-value" id="headerOrderNumber">---</dd>
                 </div>
-                
-                <div class="header-user-section">
-                    <button id="themeToggleBtn" onclick="toggleTheme()" class="header-btn header-btn-theme" title="Alternar tema claro/escuro" aria-label="Alternar tema claro/escuro">🌙</button>
-                    <div id="currentUser" style="display:none;">
-                        <div class="user-info">
-                            <span style="font-size:0.85rem; color: rgba(255,255,255,0.8);">Usuário</span>
-                            <div style="font-weight: 700; color:#fff;" id="currentUserName">--</div>
-                        </div>
-                        <button id="supervisorBtn" onclick="showSupervisorPanel()" class="header-btn header-btn-success" style="display:none;">🧑‍💼 Aprovações</button>
-                        <button id="usersBtn" onclick="showUsersModal()" class="header-btn header-btn-ghost" style="display:none;">👥 Usuários</button>
-                        <button onclick="showChangePasswordModal(false)" class="header-btn header-btn-ghost" title="Alterar minha senha">🔑 Senha</button>
-                        <button onclick="logoutUser()" class="header-btn header-btn-danger">Sair</button>
-                    </div>
-                    <button id="loginBtn" onclick="showLoginModal()" class="header-btn header-btn-primary">Entrar</button>
+                <div class="info-box">
+                    <dt class="info-label">Data</dt>
+                    <dd class="info-value" id="headerOrderDate">--</dd>
                 </div>
+                <div class="info-box info-box--margin" title="Margem do pedido atual vendido no preço de tabela, sem descontos">
+                    <dt class="info-label">Margem tabela</dt>
+                    <dd class="info-value" id="marginThreshold">—</dd>
+                </div>
+            </dl>
+
+            <div class="app-header__user">
+                <button id="themeToggleBtn" onclick="toggleTheme()" class="btn btn--icon btn--ghost" title="Alternar tema claro/escuro" aria-label="Alternar tema claro/escuro"><svg class="icon"><use href="#i-moon"></use></svg></button>
+                <div id="currentUser" class="user-menu" hidden>
+                    <div class="user-info">
+                        <strong id="currentUserName">--</strong>
+                        <span id="currentUserRole"></span>
+                    </div>
+                    <button id="supervisorBtn" onclick="showSupervisorPanel()" class="btn btn--success btn--sm" hidden><svg class="icon"><use href="#i-check-circle"></use></svg>Aprovações</button>
+                    <button id="usersBtn" onclick="showUsersModal()" class="btn btn--ghost btn--sm" hidden><svg class="icon"><use href="#i-users"></use></svg>Usuários</button>
+                    <button onclick="showChangePasswordModal(false)" class="btn btn--ghost btn--sm" title="Alterar minha senha"><svg class="icon"><use href="#i-key"></use></svg>Senha</button>
+                    <button onclick="logoutUser()" class="btn btn--ghost btn--sm" title="Sair"><svg class="icon"><use href="#i-logout"></use></svg>Sair</button>
+                </div>
+                <button id="loginBtn" onclick="showLoginModal()" class="btn btn--primary btn--sm">Entrar</button>
             </div>
         </header>
 
         <!-- Navegação de Abas -->
-        <nav class="app-tabs">
-            <button class="tab-btn active" onclick="switchTab('tab-order')" id="btn-tab-order">📦 Novo Pedido</button>
-            <button class="tab-btn" onclick="switchTab('tab-history')" id="btn-tab-history">📋 Histórico e Entregas</button>
-            <button class="tab-btn" onclick="switchTab('tab-pricing')" id="btn-tab-pricing" style="display:none;">💲 Tabela de Preços</button>
+        <nav class="app-tabs" aria-label="Seções do portal">
+            <button class="tab-btn active" onclick="switchTab('tab-order')" id="btn-tab-order"><svg class="icon"><use href="#i-cart"></use></svg>Novo pedido</button>
+            <button class="tab-btn" onclick="switchTab('tab-history')" id="btn-tab-history"><svg class="icon"><use href="#i-list"></use></svg>Pedidos e entregas</button>
+            <button class="tab-btn" onclick="switchTab('tab-pricing')" id="btn-tab-pricing" hidden><svg class="icon"><use href="#i-tag"></use></svg>Tabela de preços</button>
         </nav>
 
         <div id="tab-order" class="tab-content active">
-        <main class="dashboard">
-
-            <!-- Sidebar: Filters -->
+            <!-- Busca de produtos -->
             <section class="card">
-                <h2><span class="card-icon">🔍</span> Filtros</h2>
-
-                <div class="form-group">
-                    <label for="productSearch">Pesquisar Produto (Nome ou Código)</label>
-                    <input type="text" id="productSearch" placeholder="Ex: BOBINA PIC ou P-09695">
+                <div class="card__header">
+                    <h2 class="card__title"><svg class="icon"><use href="#i-search"></use></svg>Produtos</h2>
                 </div>
-
-                <div class="form-group">
-                    <label for="stateSelect">Estado (UF)</label>
-                    <select id="stateSelect">
-                        <option value="">Selecione um Estado</option>
-                    </select>
+                <div class="filters">
+                    <div class="field field--grow">
+                        <label for="productSearch">Pesquisar produto (nome ou código)</label>
+                        <input type="text" id="productSearch" placeholder="Ex.: BOBINA PIC ou P-09695">
+                    </div>
+                    <div class="field">
+                        <label for="stateSelect">Estado (UF)</label>
+                        <select id="stateSelect">
+                            <option value="">Selecione um estado</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="cityType">Tipo de praça</label>
+                        <select id="cityType">
+                            <option value="Capital">Capital / Região Metropolitana</option>
+                            <option value="Interior">Interior</option>
+                            <option value="Fluvial">Fluvial (Norte)</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="weightTier">Faixa de peso</label>
+                        <select id="weightTier">
+                            <option value="tier1">De 150 a 199 kg</option>
+                            <option value="tier2" selected>Acima de 200 kg</option>
+                        </select>
+                    </div>
                 </div>
-
-                <div class="form-group">
-                    <label for="cityType">Tipo de Praça</label>
-                    <select id="cityType">
-                        <option value="Capital">Capital / Região Metropolitana</option>
-                        <option value="Interior">Interior</option>
-                        <option value="Fluvial">Fluvial (Norte)</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="weightTier">Faixa de Peso</label>
-                    <select id="weightTier">
-                        <option value="tier1">De 150 a 199 Kg</option>
-                        <option value="tier2" selected>Acima de 200 Kg</option>
-                    </select>
+                <div id="resultsContainer" class="table-wrap table-wrap--scroll">
+                    <div class="empty-state">Selecione um estado para ver os preços.</div>
                 </div>
             </section>
 
-            <!-- Main: Results -->
-            <section class="card">
-                <h2><span class="card-icon">📊</span> Resultados</h2>
-                <div id="resultsContainer" class="results-table-container">
-                    <div class="empty-state">
-                        Selecione um produto e um estado para ver os cálculos.
+            <!-- Pedido em montagem -->
+            <section class="card" id="orderSection">
+                <div class="card__header">
+                    <h2 class="card__title"><svg class="icon"><use href="#i-cart"></use></svg>Pedido</h2>
+                    <div class="card__actions">
+                        <span id="orderStatusChip"></span>
+                        <button class="btn btn--ghost btn--sm" onclick="showStatusHistory()"><svg class="icon"><use href="#i-clock"></use></svg>Histórico</button>
                     </div>
                 </div>
+
+                <div id="orderTableContainer" class="table-wrap">
+                    <div class="empty-state empty-state--compact">Nenhum item no pedido.</div>
+                </div>
+
+                <div id="orderSummary" class="order-summary" hidden>
+                    <div class="order-grid">
+                        <div class="panel">
+                            <h3 class="panel__title">Dados do pedido</h3>
+                            <div class="form-grid">
+                                <div class="field">
+                                    <label for="orderNumberHiperroll">Nº Hiper Roll</label>
+                                    <input type="text" id="orderNumberHiperroll" placeholder="Automático" readonly>
+                                </div>
+                                <div class="field">
+                                    <label for="loadedDraftNumber">Pedido carregado</label>
+                                    <input type="text" id="loadedDraftNumber" placeholder="—" readonly>
+                                </div>
+                                <div class="field">
+                                    <label for="orderNumberClient">Nº do pedido do cliente</label>
+                                    <input type="text" id="orderNumberClient" placeholder="Ex.: 2026-001" oninput="updateHeaderInfo()">
+                                </div>
+                                <div class="field">
+                                    <label for="proposalValidity">Validade da proposta</label>
+                                    <input type="text" id="proposalValidity" placeholder="Ex.: 30 dias" inputmode="numeric" onchange="formatProposalValidityInput(this)">
+                                </div>
+                                <div class="field field--wide">
+                                    <label for="clientName">Cliente</label>
+                                    <input type="text" id="clientName" placeholder="Nome do cliente" oninput="updateHeaderInfo()">
+                                </div>
+                                <div class="field field--wide">
+                                    <label for="representativeName">Representante</label>
+                                    <input type="text" id="representativeName" placeholder="Nome do representante" oninput="updateHeaderInfo()">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="panel">
+                            <h3 class="panel__title">Condições</h3>
+                            <!-- Modalidade da nota: define o desconto máximo do pedido (regras em INVOICE_MODES, js/regras.js) -->
+                            <fieldset class="invoice-mode" id="orderInvoiceMode">
+                                <legend class="sr-only">Modalidade do pedido</legend>
+                                <label class="invoice-mode-option" title="Preço de tabela, sem desconto">
+                                    <input type="radio" name="orderInvoiceMode" value="livre" checked onchange="updateOrderTable()">
+                                    <span><strong>100%</strong> Livre<small>sem desconto</small></span>
+                                </label>
+                                <label class="invoice-mode-option" title="Permite até X% de desconto sobre o preço de tabela">
+                                    <input type="radio" name="orderInvoiceMode" value="aval" onchange="updateOrderTable()">
+                                    <span><strong>50%</strong> Aval<small>desconto até X%</small></span>
+                                </label>
+                                <label class="invoice-mode-option" title="Permite até X% de desconto sobre o preço de tabela">
+                                    <input type="radio" name="orderInvoiceMode" value="garantia" onchange="updateOrderTable()">
+                                    <span><strong>10%</strong> Garantia<small>desconto até X%</small></span>
+                                </label>
+                            </fieldset>
+                            <div class="form-grid form-grid--2">
+                                <div class="field">
+                                    <label for="orderDiscount">Desconto do pedido (%)</label>
+                                    <input type="number" id="orderDiscount" value="0" min="0" max="100" oninput="updateOrderTable()">
+                                </div>
+                                <div class="field">
+                                    <label for="orderContract" title="Acréscimo no pedido para cobrir um custo pago pela Hiperroll (ex.: percentual logístico). Aumenta o valor da nota e reduz a margem %.">Contrato (%)</label>
+                                    <input type="number" id="orderContract" value="0" min="0" max="100" oninput="updateOrderTable()">
+                                </div>
+                            </div>
+                            <div class="toggle-row">
+                                <label class="order-condition-toggle" for="orderEarlyPayment">
+                                    <input type="checkbox" id="orderEarlyPayment" onchange="updateOrderTable()">
+                                    <span>Pagamento antecipado</span>
+                                    <span class="order-condition-badge">−<span data-pricing-rule="EARLY_PAYMENT_DISCOUNT">X%</span></span>
+                                </label>
+                                <label class="order-condition-toggle" for="orderFobFreight">
+                                    <input type="checkbox" id="orderFobFreight" onchange="updateOrderTable()">
+                                    <span>Frete FOB</span>
+                                    <span class="order-condition-badge">−<span data-pricing-rule="FOB_FREIGHT_DISCOUNT">X%</span></span>
+                                </label>
+                            </div>
+                            <div id="orderDiscountBreakdown" class="order-discount-breakdown"></div>
+                            <div id="orderModeNotice" class="alert alert--warn" hidden></div>
+                            <div id="orderMinMarginWarning" class="alert alert--danger" hidden></div>
+                            <div class="print-values">
+                                <div>Desconto (total): <strong id="printDiscount">0%</strong></div>
+                                <div>Contrato (total): <strong id="printContract">0%</strong></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="totalsPriceContainer" class="totals-bar">
+                        <div class="total">
+                            <span class="total__label">Peso total</span>
+                            <span class="total__value"><span id="totalWeight">0</span> kg</span>
+                        </div>
+                        <div class="total">
+                            <span class="total__label">Total FOB</span>
+                            <span class="total__value">R$&nbsp;<span id="totalFob">0,00</span></span>
+                        </div>
+                        <div class="total total--main">
+                            <span class="total__label">Total CIF</span>
+                            <span class="total__value">R$&nbsp;<span id="totalCif">0,00</span></span>
+                        </div>
+                        <div class="total">
+                            <span class="total__label">Margem do pedido</span>
+                            <span class="total__value"><span id="marginPercentage">0,00%</span></span>
+                            <span class="margin-min-hint" title="Margem deste pedido se fosse vendido no preço de tabela, sem descontos">no preço de tabela: <span id="orderTableMargin">—</span></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="order-actions-row">
+                    <button class="btn btn--ghost btn-export" onclick="exportPdfControlled()"><svg class="icon"><use href="#i-printer"></use></svg>PDF</button>
+                    <span class="spacer"></span>
+                    <button class="btn btn--secondary" onclick="saveDraftCurrentOrder()"><svg class="icon"><use href="#i-save"></use></svg>Salvar rascunho</button>
+                    <button class="btn btn--primary" onclick="showSubmitOrderModal()"><svg class="icon"><use href="#i-send"></use></svg>Enviar pedido</button>
+                </div>
+
+                <details class="drafts-panel">
+                    <summary>
+                        <span class="drafts-panel__title"><svg class="icon"><use href="#i-folder"></use></svg>Meus rascunhos</span>
+                        <span id="draftsPanelBadge" class="chip">0 rascunho(s)</span>
+                        <svg class="icon drafts-panel__chevron"><use href="#i-chevron-down"></use></svg>
+                    </summary>
+                    <p class="muted">Rascunhos ficam só com você; o gestor só vê o pedido depois do envio.</p>
+                    <div id="draftsPanelContent" class="drafts-list"></div>
+                </details>
             </section>
-        </main>
+        </div> <!-- fim da aba Novo pedido -->
 
-        </main>
-
-        <!-- Order Summary Section: Full Width -->
-        <section class="card" style="margin-top: 30px;" id="orderSection">
-            <h2><span class="card-icon">🛒</span> Resumo do Pedido</h2>
-            
-            <!-- Summary totals at top (visible always, emphasized in print) -->
-            <div id="orderTableContainer" class="results-table-container">
-                <div class="empty-state">Nenhum item no pedido.</div>
-            </div>
-
-            <div id="orderSummary" class="order-summary-print" style="display: none; margin-top: 20px; padding: 15px; background: var(--surface-1); border: 2px solid var(--border); border-radius: 8px;">
-                <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 18px;">
-                    <div style="flex: 1; min-width: 220px;">
-                        <label for="orderNumberHiperroll">Nº do Pedido Hiper Roll</label>
-                        <input type="text" id="orderNumberHiperroll" placeholder="Auto-gerado: 00001" readonly style="background: var(--bg-secondary); color: var(--text-tertiary); cursor: not-allowed;">
-                    </div>
-                    <div style="flex: 1; min-width: 220px;">
-                        <label for="loadedDraftNumber">Nº do pedido carregado</label>
-                        <input type="text" id="loadedDraftNumber" placeholder="—" readonly style="background: var(--surface-1); color: var(--text-tertiary); cursor:default; border:1px solid var(--border);">
-                    </div>
-                    <div style="flex: 1; min-width: 220px;">
-                        <label for="orderNumberClient">Nº do Pedido (cliente)</label>
-                        <input type="text" id="orderNumberClient" placeholder="Ex: 2026-001" oninput="updateHeaderInfo()">
-                    </div>
-                    <div style="flex: 1; min-width: 300px;">
-                        <label for="orderStatus">Status do Pedido</label>
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <select id="orderStatus" onchange="changeOrderStatus(this.value)" class="status-select" style="flex: 1; min-width: 200px;">
-                                <option value="rascunho">📝 Rascunho</option>
-                                <option value="analise">🔍 Em Análise</option>
-                                <option value="aprovado">✅ Aprovado</option>
-                                <option value="rejeitado">❌ Rejeitado</option>
-                            </select>
-                            <button onclick="showStatusHistory()" style="padding: 10px 14px; background: var(--secondary); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: all 0.3s; white-space: nowrap;">📋 Histórico</button>
+        <!-- Aba: Pedidos e entregas -->
+        <div id="tab-history" class="tab-content">
+            <section class="card">
+                <div class="card__header">
+                    <h2 class="card__title"><svg class="icon"><use href="#i-list"></use></svg>Pedidos</h2>
+                    <div class="card__actions">
+                        <div class="search-field">
+                            <svg class="icon"><use href="#i-search"></use></svg>
+                            <input type="search" id="historySearchInput" placeholder="Buscar por número, cliente ou representante" oninput="renderHistoryTab()" aria-label="Buscar pedidos">
                         </div>
-                    </div>
-                    <div style="flex: 1; min-width: 220px;">
-                        <label for="clientName">Cliente</label>
-                        <input type="text" id="clientName" placeholder="Nome do Cliente" oninput="updateHeaderInfo()">
-                    </div>
-                    <div style="flex: 1; min-width: 220px;">
-                        <label for="representativeName">Representante</label>
-                        <input type="text" id="representativeName" placeholder="Nome do Representante" oninput="updateHeaderInfo()">
-                    </div>
-                    <div style="flex: 1; min-width: 220px;">
-                        <label for="proposalValidity">Validade da Proposta</label>
-                        <input type="text" id="proposalValidity" placeholder="Ex: 30 dias" oninput="formatProposalValidityInput(this); updateHeaderInfo()" inputmode="numeric">
+                        <button class="btn btn--ghost btn--sm" onclick="reloadOrders()"><svg class="icon"><use href="#i-refresh"></use></svg>Atualizar</button>
+                        <button class="btn btn--ghost btn--sm" id="trashButton" onclick="showTrashModal()"><svg class="icon"><use href="#i-trash"></use></svg>Lixeira</button>
                     </div>
                 </div>
-                <div style="display: flex; gap: 30px; flex-wrap: wrap;">
-                    <div id="totalsPriceContainer" class="totals-price-container" style="flex: 1; min-width: 250px;">
-                        <p>Peso Total: <strong id="totalWeight">0.00</strong>&nbsp;Kg</p>
-                        <p>Total (FOB): R$&nbsp;<strong id="totalFob">0.00</strong></p>
-                        <p>Total (CIF): R$&nbsp;<strong id="totalCif" style="color: var(--primary); font-size: 1.2rem;">0.00</strong></p>
-                        <p style="margin-top: 10px; font-size: 0.9rem;">
-                            Margem do Pedido: <strong id="marginPercentage" style="color: var(--primary);">0.00%</strong>
-                            <span class="margin-min-hint" title="Margem deste pedido se fosse vendido no preço de tabela, sem descontos">(no preço de tabela: <span id="orderTableMargin">—</span>)</span>
-                        </p>
-                    </div>
-                    <div style="flex: 1; min-width: 250px; display: flex; flex-direction: column; gap: 8px; justify-content: center;">
-                        <!-- Modalidade da nota: define o desconto máximo do pedido (regras em INVOICE_MODES, script_v5.js) -->
-                        <fieldset class="invoice-mode" id="orderInvoiceMode">
-                            <legend>Modalidade do pedido</legend>
-                            <label class="invoice-mode-option" title="Preço de tabela, sem desconto">
-                                <input type="radio" name="orderInvoiceMode" value="livre" checked onchange="updateOrderTable()">
-                                <span><strong>100%</strong> Preço base (Livre)<small>sem desconto</small></span>
-                            </label>
-                            <label class="invoice-mode-option" title="Permite até X% de desconto sobre o preço de tabela">
-                                <input type="radio" name="orderInvoiceMode" value="aval" onchange="updateOrderTable()">
-                                <span><strong>50%</strong> Aval<small>desconto até X%</small></span>
-                            </label>
-                            <label class="invoice-mode-option" title="Permite até X% de desconto sobre o preço de tabela">
-                                <input type="radio" name="orderInvoiceMode" value="garantia" onchange="updateOrderTable()">
-                                <span><strong>10%</strong> Garantia<small>desconto até X%</small></span>
-                            </label>
-                        </fieldset>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <label for="orderDiscount" style="margin-bottom: 0; min-width: 100px;">Desconto (%):</label>
-                            <input type="number" id="orderDiscount" value="0" min="0" max="100" style="width: 80px;" oninput="updateOrderTable()">
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <label for="orderContract" style="margin-bottom: 0; min-width: 100px;" title="Acréscimo no pedido para cobrir um custo pago pela Hiperroll (ex.: percentual logístico). Aumenta o valor da nota e reduz a margem %.">Contrato (%):</label>
-                            <input type="number" id="orderContract" value="0" min="0" max="100" style="width: 80px;" oninput="updateOrderTable()">
-                        </div>
-                        <label class="order-condition-toggle" for="orderEarlyPayment">
-                            <input type="checkbox" id="orderEarlyPayment" onchange="updateOrderTable()">
-                            <span>Pagamento antecipado</span>
-                            <span class="order-condition-badge">−<span data-pricing-rule="EARLY_PAYMENT_DISCOUNT">X%</span></span>
-                        </label>
-                        <label class="order-condition-toggle" for="orderFobFreight">
-                            <input type="checkbox" id="orderFobFreight" onchange="updateOrderTable()">
-                            <span>Frete FOB</span>
-                            <span class="order-condition-badge">−<span data-pricing-rule="FOB_FREIGHT_DISCOUNT">X%</span></span>
-                        </label>
-                        <div id="orderDiscountBreakdown" class="order-discount-breakdown"></div>
-                        <div id="orderModeNotice" class="order-mode-notice" hidden></div>
-                        <div id="orderMinMarginWarning" class="order-min-margin-warning" hidden></div>
-                        <div class="print-values" style="display:none; flex-direction:column; gap:6px; font-size:0.95rem;">
-                            <div>Desconto (total): <strong id="printDiscount">0%</strong></div>
-                            <div>Contrato (total): <strong id="printContract">0%</strong></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="drafts-management-panel" style="margin-top: 20px; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: linear-gradient(180deg, var(--surface-1) 0%, var(--card-bg) 100%);">
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
-                    <div>
-                        <h3 style="margin:0; font-size:1.05rem;">🗂️ Rascunhos e Pedidos</h3>
-                        <p style="margin:4px 0 0; color:var(--text-secondary); font-size:0.95rem;">Salve, carregue e envie seus pedidos de forma organizada.</p>
-                        <p style="margin:6px 0 0; color:var(--text-secondary); font-size:0.85rem; max-width:480px; line-height:1.35;">Rascunhos são rascunhos internos. O supervisor só analisa o pedido após o envio ao sistema.</p>
-                    </div>
-                    <div id="draftsPanelBadge" style="background:var(--bg-hover); color:var(--text); padding:6px 10px; border-radius:999px; font-weight:700; font-size:0.9rem;">0 rascunho(s)</div>
-                </div>
-                <div id="draftsPanelContent" style="display:grid; gap:10px;"></div>
-            </div>
-
-            <!-- Action buttons at bottom -->
-            <div class="order-actions-row">
-                <button class="btn-action btn-action-ghost" onclick="switchTab('tab-history')">📋 Ver Meus Pedidos</button>
-                <div class="action-divider"></div>
-                <button class="btn-action btn-action-accent btn-export" onclick="exportPdfControlled()">🖨️ PDF</button>
-                <button class="btn-action btn-action-secondary" onclick="saveDraftCurrentOrder()">💾 Salvar Rascunho</button>
-                <button class="btn-action btn-action-primary" onclick="showSubmitOrderModal()">📤 Enviar Pedido ao Sistema</button>
-            </div>
-        </section>
-        </div> <!-- End of tab-order -->
-
-        <!-- Tab: Histórico e Faturamento -->
-        <div id="tab-history" class="tab-content" style="display: none;">
-            <section class="card" style="margin-top: 20px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom: 20px;">
-                    <h2><span class="card-icon">📋</span> Meus Pedidos</h2>
-                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                        <input type="text" id="historySearchInput" placeholder="Buscar por Nº do Pedido, Cliente ou Comprador..." style="padding: 10px; border: 1px solid #ccc; border-radius: 6px; width: 280px;" oninput="renderHistoryTab()">
-                        <button onclick="reloadOrders()" style="padding:10px 15px; background:#0054A6; color:white; border:none; border-radius:6px; cursor:pointer;">Atualizar</button>
-                        <button onclick="showTrashModal()" style="padding:10px 15px; background:#dc2626; color:white; border:none; border-radius:6px; cursor:pointer;">🗑️ Lixeira</button>
-                    </div>
-                </div>
-
-                <div id="historyTabContent" style="display: flex; flex-direction: column; gap: 15px;">
+                <div id="historyTabContent" class="order-list">
                     <!-- Preenchido via JavaScript -->
                 </div>
             </section>
         </div>
 
-        <!-- Tab: Tabela de Preços (gestor edita; administrador importa e consulta) -->
-        <div id="tab-pricing" class="tab-content" style="display: none;">
-            <section class="card" style="margin-top: 20px;">
-                <h2><span class="card-icon">💲</span> Tabela de Preços</h2>
+        <!-- Aba: Tabela de Preços (gestor edita; administrador importa e consulta) -->
+        <div id="tab-pricing" class="tab-content">
+            <section class="card">
+                <div class="card__header">
+                    <h2 class="card__title"><svg class="icon"><use href="#i-tag"></use></svg>Tabela de preços</h2>
+                </div>
                 <div id="pricingTabContent">
                     <!-- Preenchido via JavaScript -->
                 </div>
@@ -288,21 +325,20 @@
         <footer class="site-footer">
             Desenvolvido por <a href="https://www.linkedin.com/in/leon-hauck/" target="_blank" rel="noopener noreferrer">Leon Hauck</a>
         </footer>
-
     </div>
 
-    <!-- Modal: Histórico do Pedido (aberto pelo resumo do pedido e pelos cartões da aba Histórico) -->
-    <div id="statusHistoryModal" class="modal-backdrop" style="display: none; position: fixed; z-index: 1004;">
+    <!-- Modal: Histórico do Pedido (aberto pelo resumo do pedido e pelos cartões da aba Pedidos) -->
+    <div id="statusHistoryModal" class="modal-backdrop">
         <div class="modal-panel modal-panel--sm">
             <div class="modal-header">
                 <div class="modal-header-title">
-                    <div class="modal-icon-badge">📋</div>
+                    <span class="modal-icon"><svg class="icon"><use href="#i-clock"></use></svg></span>
                     <div>
-                        <h3 class="modal-title">Histórico do Pedido</h3>
+                        <h3 class="modal-title">Histórico do pedido</h3>
                         <p id="statusHistoryOrder" class="modal-subtitle"></p>
                     </div>
                 </div>
-                <button onclick="closeStatusHistory()" class="modal-close-btn" aria-label="Fechar">✕</button>
+                <button onclick="closeStatusHistory()" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
             </div>
             <div id="statusHistoryList" class="modal-body">
                 <!-- Preenchido por JavaScript -->
@@ -310,171 +346,173 @@
         </div>
     </div>
 
-    <!-- Modal: Enviar Pedido ao Sistema -->
-    <div id="submitOrderModal" class="modal-backdrop" style="display:none; position: fixed; z-index:1003;">
+    <!-- Modal: Enviar Pedido -->
+    <div id="submitOrderModal" class="modal-backdrop">
         <div class="modal-panel modal-panel--sm">
             <div class="modal-header">
                 <div class="modal-header-title">
-                    <div class="modal-icon-badge">📤</div>
+                    <span class="modal-icon"><svg class="icon"><use href="#i-send"></use></svg></span>
                     <div>
-                        <h3 class="modal-title">Enviar Pedido ao Sistema</h3>
-                        <p class="modal-subtitle">Envie para aprovação do supervisor.</p>
+                        <h3 class="modal-title">Enviar pedido</h3>
+                        <p class="modal-subtitle">Depois do envio, os itens não podem mais ser alterados.</p>
                     </div>
                 </div>
-                <button onclick="closeSubmitOrderModal()" class="modal-close-btn" aria-label="Fechar">✕</button>
+                <button onclick="closeSubmitOrderModal()" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
             </div>
             <div class="modal-body">
-                <p style="color:var(--text-secondary); margin-bottom:18px; font-size:0.92rem; line-height:1.5;">Seu pedido será enviado para aprovação do supervisor. Após essa ação, não será possível modificar os itens. Se quiser, você também pode salvar um rascunho antes de enviar.</p>
-                <div style="margin-bottom:16px;">
-                    <label for="submitDraftSelect">Selecione o pedido a enviar</label>
+                <div class="field">
+                    <label for="submitDraftSelect">Pedido a enviar</label>
                     <select id="submitDraftSelect">
                         <option value="__new__">Enviar como novo pedido</option>
                     </select>
-                    <div id="submitDraftHint" style="margin-top:8px; font-size:0.87rem; color:var(--text-secondary);">Escolha um rascunho salvo para enviar diretamente ou deixe como novo pedido.</div>
+                    <p id="submitDraftHint" class="field-hint">Escolha um rascunho salvo ou envie como novo pedido.</p>
                 </div>
-                <div id="submitSummaryBox" class="modal-success-box">
-                    <strong id="submitSummaryTitle">✓ Pedido está pronto para envio</strong>
-                    <div class="modal-success-details">
-                        <div>Número: <strong id="submitOrderNumber">---</strong></div>
-                        <div>Cliente: <strong id="submitClientName">---</strong></div>
-                        <div>Itens: <strong id="submitItemCount">0</strong></div>
-                        <div>Modalidade: <strong id="submitMode">—</strong></div>
-                        <div>Desconto: <strong id="submitDiscounts">0.00%</strong></div>
-                        <div>Total CIF: <strong id="submitTotalCif">R$ 0.00</strong></div>
-                        <div>Margem do pedido: <strong id="submitMargin">0.00%</strong></div>
-                    </div>
+                <div id="submitSummaryBox" class="summary-box">
+                    <strong id="submitSummaryTitle" class="summary-box__title">Pedido pronto para envio</strong>
+                    <dl class="summary-box__details">
+                        <div><dt>Número</dt><dd id="submitOrderNumber">---</dd></div>
+                        <div><dt>Cliente</dt><dd id="submitClientName">---</dd></div>
+                        <div><dt>Itens</dt><dd id="submitItemCount">0</dd></div>
+                        <div><dt>Modalidade</dt><dd id="submitMode">—</dd></div>
+                        <div><dt>Desconto</dt><dd id="submitDiscounts">0,00%</dd></div>
+                        <div><dt>Total CIF</dt><dd id="submitTotalCif">R$ 0,00</dd></div>
+                        <div><dt>Margem</dt><dd id="submitMargin">0,00%</dd></div>
+                    </dl>
                 </div>
-                <div id="submitModeNotice" class="order-mode-notice" hidden></div>
-                <div id="submitLowMarginBlock" class="low-margin-justification" hidden>
+                <div id="submitModeNotice" class="alert alert--warn" hidden></div>
+                <div id="submitLowMarginBlock" class="field low-margin-justification" hidden>
                     <label for="submitLowMarginJustification">Justificativa *</label>
                     <textarea id="submitLowMarginJustification" rows="3" placeholder="Ex.: cliente estratégico, volume elevado, ação comercial combinada com a supervisão..."></textarea>
-                    <small>O pedido chegará ao gestor com o alerta acima e esta justificativa.</small>
+                    <p class="field-hint">O pedido chega ao gestor com o alerta acima e esta justificativa.</p>
                 </div>
                 <div id="submitOrderMessage" class="modal-msg"></div>
             </div>
             <div class="modal-footer">
-                <button onclick="closeSubmitOrderModal()" class="btn-modal btn-modal-ghost">Cancelar</button>
-                <button onclick="submitOrder()" class="btn-modal btn-modal-danger">Enviar Pedido</button>
+                <button onclick="closeSubmitOrderModal()" class="btn btn--ghost">Cancelar</button>
+                <button onclick="submitOrder()" class="btn btn--primary btn-submit-order"><svg class="icon"><use href="#i-send"></use></svg>Enviar pedido</button>
             </div>
         </div>
     </div>
 
-    <!-- Supervisor Modal (fora das abas para funcionar independentemente) -->
-    <div id="supervisorModal" class="modal-backdrop" style="display:none; position: fixed; z-index:1002;">
+    <!-- Modal: Aprovações do gestor -->
+    <div id="supervisorModal" class="modal-backdrop">
         <div class="modal-panel modal-panel--md">
             <div class="modal-header">
                 <div class="modal-header-title">
-                    <div class="modal-icon-badge">🧑‍💼</div>
+                    <span class="modal-icon"><svg class="icon"><use href="#i-check-circle"></use></svg></span>
                     <div>
                         <h3 class="modal-title">Aprovações</h3>
-                        <p class="modal-subtitle">Pedidos dos representantes aguardando a decisão do gestor.</p>
+                        <p class="modal-subtitle">Pedidos dos representantes aguardando decisão.</p>
                     </div>
                 </div>
-                <button onclick="closeSupervisorPanel()" class="modal-close-btn" aria-label="Fechar">✕</button>
+                <button onclick="closeSupervisorPanel()" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
             </div>
             <div class="modal-body">
-                <h4 class="modal-section-title">📤 Pedidos Enviados para Aprovação</h4>
-                <div id="supervisorPendingOrdersList" style="max-height:420px; overflow-y:auto;">
+                <div id="supervisorPendingOrdersList" class="pending-list">
                     <!-- Preenchido por JavaScript -->
                 </div>
             </div>
         </div>
     </div>
 
-    <div id="orderHistoryModal" style="display:none;"></div>
+    <div id="orderHistoryModal" hidden></div>
 
-    <!-- Trash Modal -->
-    <div id="trashModal" class="modal-backdrop" style="display:none; position:fixed; z-index:1001;">
+    <!-- Modal: Lixeira -->
+    <div id="trashModal" class="modal-backdrop">
         <div class="modal-panel modal-panel--lg">
             <div class="modal-header">
                 <div class="modal-header-title">
-                    <div class="modal-icon-badge">🗑️</div>
+                    <span class="modal-icon"><svg class="icon"><use href="#i-trash"></use></svg></span>
                     <div>
                         <h3 class="modal-title">Lixeira</h3>
                         <p class="modal-subtitle">Pedidos excluídos, com opção de restaurar.</p>
                     </div>
                 </div>
-                <button onclick="closeTrashModal()" class="modal-close-btn" aria-label="Fechar">✕</button>
+                <button onclick="closeTrashModal()" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
             </div>
-            <div id="trashContent" class="modal-body" style="max-height: 520px; overflow-y: auto;">
+            <div id="trashContent" class="modal-body">
                 <!-- Preenchido por JavaScript -->
             </div>
             <div class="modal-footer">
-                <button onclick="closeTrashModal()" class="btn-modal btn-modal-ghost">Fechar</button>
-                <button onclick="emptyTrash()" class="btn-modal btn-modal-danger">Esvaziar Lixeira</button>
+                <button onclick="closeTrashModal()" class="btn btn--ghost">Fechar</button>
+                <button onclick="emptyTrash()" class="btn btn--danger"><svg class="icon"><use href="#i-trash"></use></svg>Esvaziar lixeira</button>
             </div>
         </div>
     </div>
 
-    <!-- Full screen login page prior to app access -->
+    <!-- Tela de login (antes de qualquer acesso) -->
     <div id="loginScreen" class="login-screen active">
         <div class="login-panel">
             <div class="login-header">
-                <div class="login-logo"><img src="logo-transparent.png" alt="Hiper Roll"></div>
-                <h2>Portal de Preços Hiperroll</h2>
-                <p>Faça login para acessar o sistema.</p>
+                <img class="login-logo" src="logo-transparent.png" alt="Hiper Roll">
+                <h2>Portal de Preços</h2>
+                <p>Entre com seu usuário para continuar.</p>
             </div>
             <div class="login-body">
-                <input id="loginUsername" placeholder="Usuário" autocomplete="username">
-                <input id="loginPassword" type="password" placeholder="Senha" autocomplete="current-password">
-                <div class="login-actions">
-                    <button type="button" id="loginUserButton">Entrar</button>
+                <div class="field">
+                    <label for="loginUsername">Usuário</label>
+                    <input id="loginUsername" placeholder="seu.usuario" autocomplete="username">
                 </div>
-                <div class="login-note">As contas são criadas pelo gestor. Esqueceu a senha? Peça ao gestor para redefini-la.</div>
+                <div class="field">
+                    <label for="loginPassword">Senha</label>
+                    <input id="loginPassword" type="password" placeholder="Sua senha" autocomplete="current-password">
+                </div>
+                <button type="button" id="loginUserButton" class="btn btn--primary btn--block">Entrar</button>
+                <p class="login-note">As contas são criadas pelo gestor. Esqueceu a senha? Peça ao gestor para redefini-la.</p>
                 <div id="loginMessage" class="login-message"></div>
             </div>
         </div>
     </div>
 
-    <!-- Usuários (gestor e administrador) -->
-    <div id="usersModal" class="modal-backdrop" style="display:none; position:fixed; z-index:1004;">
+    <!-- Modal: Usuários (gestor e administrador) -->
+    <div id="usersModal" class="modal-backdrop">
         <div class="modal-panel modal-panel--lg">
             <div class="modal-header">
                 <div class="modal-header-title">
-                    <div class="modal-icon-badge">👥</div>
+                    <span class="modal-icon"><svg class="icon"><use href="#i-users"></use></svg></span>
                     <div>
                         <h3 class="modal-title">Usuários</h3>
                         <p class="modal-subtitle">Crie as contas dos representantes e controle quem tem acesso.</p>
                     </div>
                 </div>
-                <button onclick="closeUsersModal()" class="modal-close-btn" aria-label="Fechar">✕</button>
+                <button onclick="closeUsersModal()" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
             </div>
             <div class="modal-body">
                 <form id="newUserForm" class="new-user-form" onsubmit="submitNewUser(event)" autocomplete="off">
-                    <div>
+                    <div class="field">
                         <label for="newUserName">Nome</label>
                         <input id="newUserName" placeholder="Ex.: João da Silva" required maxlength="80">
                     </div>
-                    <div>
+                    <div class="field">
                         <label for="newUserLogin">Login</label>
                         <input id="newUserLogin" placeholder="Ex.: joao.silva" required pattern="[A-Za-z0-9._\-]{3,40}" title="3 a 40 caracteres: letras, números, ponto, hífen ou sublinhado">
                     </div>
-                    <div>
+                    <div class="field">
                         <label for="newUserRole">Papel</label>
                         <select id="newUserRole"></select>
                     </div>
-                    <div>
+                    <div class="field">
                         <label for="newUserPassword">Senha provisória</label>
                         <input id="newUserPassword" type="text" placeholder="Mínimo 8 caracteres" required minlength="8" autocomplete="new-password">
                     </div>
-                    <button type="submit" class="btn-modal btn-modal-primary">Criar usuário</button>
+                    <button type="submit" class="btn btn--secondary"><svg class="icon"><use href="#i-plus"></use></svg>Criar usuário</button>
                 </form>
                 <div id="usersMessage" class="modal-msg"></div>
-                <div id="usersTableContainer" class="users-table-container"></div>
+                <div id="usersTableContainer" class="table-wrap users-table-container"></div>
             </div>
             <div class="modal-footer">
-                <button onclick="exportPortalBackup()" class="btn-modal btn-modal-ghost" style="margin-right:auto;">⬇️ Baixar backup</button>
-                <button onclick="closeUsersModal()" class="btn-modal btn-modal-primary">Fechar</button>
+                <button onclick="exportPortalBackup()" class="btn btn--ghost modal-footer__start"><svg class="icon"><use href="#i-download"></use></svg>Baixar backup</button>
+                <button onclick="closeUsersModal()" class="btn btn--secondary">Fechar</button>
             </div>
         </div>
     </div>
 
     <!-- Revisão de preços: aparece quando o pedido aberto foi montado com uma versão anterior da tabela -->
-    <div id="repriceModal" class="modal-backdrop" style="display:none; position:fixed; z-index:1005;">
+    <div id="repriceModal" class="modal-backdrop">
         <div class="modal-panel modal-panel--lg">
             <div class="modal-header">
                 <div class="modal-header-title">
-                    <div class="modal-icon-badge">💲</div>
+                    <span class="modal-icon"><svg class="icon"><use href="#i-tag"></use></svg></span>
                     <div>
                         <h3 class="modal-title">Preços atualizados</h3>
                         <p id="repriceReason" class="modal-subtitle">A tabela de preços mudou.</p>
@@ -482,56 +520,74 @@
                 </div>
             </div>
             <div class="modal-body">
-                <p style="color:var(--text-secondary); margin-bottom:14px; font-size:0.92rem; line-height:1.5;">Estes itens do pedido mudaram de preço. Escolha como seguir: manter os preços que você negociou (a margem é recalculada com o novo FOB) ou aplicar a nova tabela mantendo o mesmo desconto em R$ que cada item tinha.</p>
+                <p class="muted">Estes itens mudaram de preço. Você pode manter os preços que negociou (a margem é recalculada com o novo FOB) ou aplicar a nova tabela mantendo o mesmo desconto em R$ de cada item.</p>
                 <div id="repriceModalBody"></div>
             </div>
             <div class="modal-footer reprice-footer">
-                <button onclick="resolveRepriceModal('keep')" class="btn-modal btn-modal-ghost">Manter meus preços negociados <small>margem: <span id="repriceKeepMargin">—</span></small></button>
-                <button onclick="resolveRepriceModal('table')" class="btn-modal btn-modal-primary">Usar os novos preços de tabela <small>margem: <span id="repriceTableMargin">—</span></small></button>
+                <button onclick="resolveRepriceModal('keep')" class="btn btn--ghost">Manter meus preços negociados <small>margem: <span id="repriceKeepMargin">—</span></small></button>
+                <button onclick="resolveRepriceModal('table')" class="btn btn--secondary">Usar os novos preços de tabela <small>margem: <span id="repriceTableMargin">—</span></small></button>
             </div>
         </div>
     </div>
 
     <!-- Alterar senha (fica acima da tela de login para o primeiro acesso) -->
-    <div id="changePasswordModal" class="modal-backdrop" style="display:none; position:fixed; z-index:10001;">
+    <div id="changePasswordModal" class="modal-backdrop">
         <div class="modal-panel modal-panel--sm">
             <div class="modal-header">
                 <div class="modal-header-title">
-                    <div class="modal-icon-badge">🔑</div>
+                    <span class="modal-icon"><svg class="icon"><use href="#i-key"></use></svg></span>
                     <div>
                         <h3 class="modal-title">Alterar senha</h3>
                         <p id="changePasswordSubtitle" class="modal-subtitle">Informe a senha atual e escolha uma nova.</p>
                     </div>
                 </div>
-                <button id="changePasswordCloseBtn" onclick="closeChangePasswordModal()" class="modal-close-btn" aria-label="Fechar">✕</button>
+                <button id="changePasswordCloseBtn" onclick="closeChangePasswordModal()" class="modal-close-btn" aria-label="Fechar"><svg class="icon"><use href="#i-x"></use></svg></button>
             </div>
-            <div class="modal-body">
-                <label for="currentPasswordInput">Senha atual</label>
-                <input id="currentPasswordInput" type="password" autocomplete="current-password">
-                <label for="newPasswordInput" style="margin-top:12px;">Nova senha (mínimo 8 caracteres)</label>
-                <input id="newPasswordInput" type="password" autocomplete="new-password">
-                <label for="confirmPasswordInput" style="margin-top:12px;">Repita a nova senha</label>
-                <input id="confirmPasswordInput" type="password" autocomplete="new-password">
+            <div class="modal-body form-stack">
+                <div class="field">
+                    <label for="currentPasswordInput">Senha atual</label>
+                    <input id="currentPasswordInput" type="password" autocomplete="current-password">
+                </div>
+                <div class="field">
+                    <label for="newPasswordInput">Nova senha (mínimo 8 caracteres)</label>
+                    <input id="newPasswordInput" type="password" autocomplete="new-password">
+                </div>
+                <div class="field">
+                    <label for="confirmPasswordInput">Repita a nova senha</label>
+                    <input id="confirmPasswordInput" type="password" autocomplete="new-password">
+                </div>
                 <div id="changePasswordMessage" class="modal-msg"></div>
             </div>
             <div class="modal-footer">
-                <button id="changePasswordCancelBtn" onclick="closeChangePasswordModal()" class="btn-modal btn-modal-ghost">Cancelar</button>
-                <button onclick="submitChangePassword()" class="btn-modal btn-modal-primary">Salvar nova senha</button>
+                <button id="changePasswordCancelBtn" onclick="closeChangePasswordModal()" class="btn btn--ghost">Cancelar</button>
+                <button onclick="submitChangePassword()" class="btn btn--secondary">Salvar nova senha</button>
             </div>
         </div>
     </div>
 
-    <!-- html2pdf for controlled PDF export -->
+    <!-- html2pdf para gerar o PDF da proposta -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js"></script>
     <!-- Tabelas de preço/custo: entregues pelo servidor somente para usuários logados -->
     <script src="api/data.php"></script>
-    <script src="script_v5.js?v=20261006b"></script>
+    <!-- Código do portal, na ordem em que precisa carregar (cada arquivo cuida de um assunto) -->
+    <script src="js/regras.js?v=20261021a"></script>
+    <script src="js/servidor.js?v=20261021a"></script>
+    <script src="js/inicio.js?v=20261021a"></script>
+    <script src="js/catalogo.js?v=20261021a"></script>
+    <script src="js/pedido.js?v=20261021a"></script>
+    <script src="js/pdf.js?v=20261021a"></script>
+    <script src="js/historico-pedido.js?v=20261021a"></script>
+    <script src="js/login-usuarios.js?v=20261021a"></script>
+    <script src="js/rascunhos-envio.js?v=20261021a"></script>
+    <script src="js/lixeira.js?v=20261021a"></script>
+    <script src="js/gestor.js?v=20261021a"></script>
+    <script src="js/historico-faturamento.js?v=20261021a"></script>
+    <script src="js/tabela-precos.js?v=20261021a"></script>
     <script>
         window.addEventListener('load', function () {
             if (typeof window.loginUser !== 'function') {
                 var message = document.getElementById('loginMessage');
                 if (message) {
-                    message.style.display = 'block';
                     message.textContent = 'O sistema não carregou o módulo de login. Reabra esta página ou use um servidor local.';
                 }
             }

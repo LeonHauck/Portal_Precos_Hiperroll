@@ -3,7 +3,8 @@
 # Ativar uma vez em cada clone do repositório:  git config core.hooksPath .githooks
 # (Funciona também pelo GitHub Desktop.)
 
-blocked_paths='(^|/)\.env($|\.)|\.sqlite3?(-journal|-wal|-shm)?$|(^|/)api/config\.local\.php$|(^|/)users\.json$|\.bundle$'
+# Também barra os dados comerciais (custos, fretes, preços, margens): data.js, planilhas e CSVs.
+blocked_paths='(^|/)\.env($|\.)|\.sqlite3?(-journal|-wal|-shm)?$|(^|/)api/config\.local\.php$|(^|/)users\.json$|\.bundle$|^data\.js$|(^|/)data\.json$|\.(xlsx|xls|csv)$|_backup\.|(^|/)data/invoices/'
 
 # Palavras como PASSWORD/SENHA/TOKEN seguidas de um valor literal entre aspas.
 # (Nunca liste senhas reais aqui: este arquivo também vai para o repositório público.)
