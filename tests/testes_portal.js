@@ -88,10 +88,12 @@
                 if (mode === 'readme_pedido' || mode === 'layout_dark') {
                     $('stateSelect').value = 'MG';
                     updateResults();
+                    // Products picked by the order of the table's margins (lowest, second lowest): no real number here.
+                    const margins = [...new Set(productsData.map(p => p.tableMargin))].sort((a, b) => a - b);
                     const pick = margin => productsData.filter(p => p.tableMargin === margin);
-                    addToCart(pick(5)[0].codigo);
-                    addToCart(pick(10)[0].codigo);
-                    addToCart(pick(10)[5].codigo);
+                    addToCart(pick(margins[0])[0].codigo);
+                    addToCart(pick(margins[1])[0].codigo);
+                    addToCart(pick(margins[1])[5].codigo);
                     cart[0].qty = 40; cart[1].qty = 25; cart[2].qty = 12;
                     $('clientName').value = 'Mercado Exemplo';
                     $('proposalValidity').value = '30 dias';
@@ -153,8 +155,9 @@
                 const noAnim2 = document.createElement('style'); noAnim2.textContent = '*,*::before,*::after{animation:none!important;transition:none!important}'; document.head.appendChild(noAnim2);
                 await waitFor(() => window.__mockCalls.some(c => c.action === 'orders.list') && productsData.length > 0);
                 $('stateSelect').value = 'MG';
-                addToCart(productsData.find(p => p.tableMargin === X).codigo);
-                addToCart(productsData.find(p => p.tableMargin === X).codigo);
+                const shotMargins = [...new Set(productsData.map(p => p.tableMargin))].sort((a, b) => a - b);
+                addToCart(productsData.find(p => p.tableMargin === shotMargins[0]).codigo);
+                addToCart(productsData.find(p => p.tableMargin === shotMargins[1]).codigo);
                 document.querySelector('input[name="orderInvoiceMode"][value="aval"]').checked = true;
                 $('orderDiscount').value = '4';
                 updateOrderTable();

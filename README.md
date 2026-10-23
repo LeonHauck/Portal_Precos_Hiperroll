@@ -143,7 +143,7 @@ A pasta `demo/` fica só na máquina de desenvolvimento (está no `.gitignore`, 
 3. **Arquivos:** envie para uma pasta do `public_html` (ex.: `public_html/portal/`) somente o necessário:
    `Portal_Hiperroll_Final.html`, `style.css`, `data.js`, `setup.php`, `.htaccess`, `logo.png`, `logo-hiperroll.png`, `logo-transparent.png` e as pastas `js/`, `api/` e `data/`.
    O **`data.js` não está no repositório** (ele tem custos, fretes, preços e margens): copie-o da sua máquina para o servidor. O mesmo vale para **`api/regras_comerciais.php`** (limites de desconto e percentuais): envie o da sua máquina para a pasta `api/` do servidor. Sem ele o portal não calcula pedidos e o `setup.php` avisa. Depois que o gestor abre a aba Tabela de Preços pela primeira vez, a tabela passa para o banco e o `data.js` pode até ser apagado do servidor.
-   Não é preciso enviar a planilha, as pastas `tests/`, `docs/`, `demo/` e `scratch/`, nem o `README.md` (o `.htaccess` bloqueia o download deles caso sejam enviados).
+   Não é preciso enviar a planilha, as pastas `tests/`, `docs/`, `demo/`, `scratch/` e `arquivo_planilhas/` (planilhas antigas, só locais), nem o `README.md` (o `.htaccess` bloqueia o download deles caso sejam enviados).
 4. **Banco fora da pasta pública (recomendado):** copie `api/config.local.example.php` para `api/config.local.php` e aponte `db_path` para algo como `/home/SEU_USUARIO/portal_data/portal.sqlite`.
 5. **Primeiro acesso:** abra `https://seudominio.com.br/portal/setup.php`, confira a verificação do servidor e crie as contas do gestor e do administrador. A página se desativa sozinha depois disso.
 6. **Representantes:** o gestor entra no portal → **👥 Usuários** → cria cada representante com uma senha provisória.

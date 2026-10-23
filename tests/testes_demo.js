@@ -122,7 +122,8 @@
 
             // ----- modalidade e faixa de desconto, conferidas pelo "servidor" -----
             cart.length = 0;
-            addToCart(productsData.find(p => p.tableMargin === X).codigo);
+            const marginsDesc = [...new Set(productsData.map(p => p.tableMargin))].sort((a, b) => b - a);
+            addToCart(productsData.find(p => p.tableMargin === marginsDesc[1]).codigo);   // second highest margin
             const send = (mode, discount, extra = {}) => {
                 const order = buildCurrentOrderInput({ invoiceMode: mode, manualDiscount: discount, ...extra });
                 return apiRequest('orders.submit', { method: 'POST', body: { id: null, order } });
@@ -145,7 +146,7 @@
             const okDiscount = avalMax - 2;
             const okAval = await send('aval', okDiscount);
             check('demo: Aval dentro do limite é aceito sem justificativa e guarda a modalidade', okAval.order.status === 'analise' && okAval.order.conditions.invoiceMode === 'aval' && okAval.order.pricingSnapshot.effectiveDiscount === okDiscount && okAval.order.conditions.lowMarginJustification === '');
-            const okOver = await send('garantia', X, { lowMarginJustification: 'Cliente estratégico, volume alto' });
+            const okOver = await send('garantia', garantiaMax + 5, { lowMarginJustification: 'Cliente estratégico, volume alto' });
             check('demo: acima da faixa é aceito com justificativa e fica sinalizado', okOver.order.status === 'analise' && okOver.order.pricingSnapshot.discountExceeded === true && okOver.order.conditions.lowMarginJustification.length > 10);
             cart.length = 0;
 
