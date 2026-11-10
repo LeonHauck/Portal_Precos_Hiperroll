@@ -14,6 +14,8 @@ function createPdfExportNode() {
     const proposalValidity = normalizeProposalValidity(field('proposalValidity')) || '—';
     const dateStr = formatDateTime(new Date());
     const status = ORDER_STATUS[statusManager.currentStatus] || ORDER_STATUS.rascunho;
+    // Margins only in the gestor's/admin's PDF; the representative's has no margin at all.
+    const showMargin = canSeeMargins();
 
     const rowsHtml = pricing.lines.map(line => {
         const item = line.item;
@@ -27,7 +29,7 @@ function createPdfExportNode() {
                 <td class="pdf-num">${formatCurrency(item.cif)}</td>
                 <td class="pdf-num">${formatCurrency(Math.max(item.unitDiscount || 0, 0))}</td>
                 <td class="pdf-num">${formatCurrency(line.negotiatedUnit)}</td>
-                <td class="pdf-num">${formatPercent(line.marginPercent)}</td>
+                ${showMargin ? `<td class="pdf-num">${formatPercent(line.marginPercent)}</td>` : ''}
                 <td class="pdf-num">${formatCurrency(line.subtotal)}</td>
             </tr>`;
     }).join('');
@@ -90,19 +92,19 @@ function createPdfExportNode() {
             <div><span>Peso total</span><strong>${formatBRL(pricing.totalWeight, 3)} kg</strong></div>
             <div><span>Total FOB</span><strong>${formatCurrency(pricing.totalFob)}</strong></div>
             <div><span>Total CIF</span><strong>${formatCurrency(totalCif)}</strong></div>
-            <div><span>Margem do pedido</span><strong>${formatPercent(pricing.margin)}</strong></div>
+            ${showMargin ? `<div><span>Margem do pedido</span><strong>${formatPercent(pricing.margin)}</strong></div>` : ''}
         </div>
 
         <table>
             <colgroup>
-                <col width="8%"><col width="36%"><col width="5%"><col width="7%"><col width="8%">
-                <col width="8%"><col width="7%"><col width="8%"><col width="5%"><col width="8%">
+                <col width="8%"><col width="${showMargin ? 36 : 41}%"><col width="5%"><col width="7%"><col width="8%">
+                <col width="8%"><col width="7%"><col width="8%">${showMargin ? '<col width="5%">' : ''}<col width="8%">
             </colgroup>
             <thead>
                 <tr>
                     <th>Cód.</th><th>Descrição</th><th class="pdf-num">Qtd</th><th class="pdf-num">Peso</th>
                     <th class="pdf-num">FOB unit.</th><th class="pdf-num">CIF unit.</th><th class="pdf-num">Desc. unit.</th>
-                    <th class="pdf-num">Preço neg.</th><th class="pdf-num">Margem</th><th class="pdf-num">Subtotal</th>
+                    <th class="pdf-num">Preço neg.</th>${showMargin ? '<th class="pdf-num">Margem</th>' : ''}<th class="pdf-num">Subtotal</th>
                 </tr>
             </thead>
             <tbody>${rowsHtml}</tbody>

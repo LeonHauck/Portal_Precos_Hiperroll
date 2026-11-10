@@ -21,7 +21,7 @@ function showSubmissionDetails(submissionId) {
 Cliente: ${submission.clientName}
 Representante: ${describeOrderAuthor(submission)}
 Status: ${status.label}
-Descontos: ${discountParts.length ? `${formatPercent(pricing.discountPercent)} (${discountParts.join(' + ')})` : 'Nenhum'}
+Descontos: ${discountParts.length ? describeDiscountBreakdown(pricing) : 'Nenhum'}
 Margem do pedido: ${formatPercent(pricing.margin)} (${pricing.status.label})
 Valor total do pedido: ${formatCurrency(pricing.totalInvoice)}
 ${pricing.requiresJustification ? `Alerta: ${pricing.alerts.join('. ')}\nJustificativa: ${pricing.conditions.lowMarginJustification || '(não informada)'}\n` : ''}${submission.status === 'rascunho' ? 'Salvo em' : 'Enviado em'}: ${formatDateTime(timestamp)}
@@ -180,11 +180,19 @@ function renderPendingOrder(submission) {
     if (pricing.requiresJustification) {
         // Hover shows what broke the rule and the representative's justification.
         const title = `${pricing.alerts.join('. ')}. Justificativa: ${pricing.conditions.lowMarginJustification || 'sem justificativa'}`;
-        const label = pricing.discountExceeded ? `Desconto ${formatPercent(pricing.effectiveDiscount)}` : `Margem ${formatPercent(pricing.margin)}`;
+        const label = pricing.discountExceeded ? `Desconto ${formatPercent(pricing.negotiatedDiscount)}` : `Margem ${formatPercent(pricing.margin)}`;
         chips.push(`<span class="chip chip--rejected low-margin-badge" title="${escapeHtml(title)}">${icon('alert')}${label}</span>`);
+    }
+    if (pricing.status.tone === 'critical') {
+        chips.push(`<span class="chip chip--critical margin-critical-badge" title="Margem abaixo do ponto de alerta das regras comerciais">${icon('alert')}Margem crítica ${formatPercent(pricing.margin)}</span>`);
     }
     if (pricing.modeNotice) {
         chips.push(`<span class="chip chip--warn mode-notice-badge" title="${escapeHtml(pricing.modeNotice)}">${icon('pin')}${escapeHtml(pricing.mode.short)}</span>`);
+    }
+    // Why it didn't go through on its own (details in "Detalhes").
+    const reasons = (submission.approvalCheck && submission.approvalCheck.reasons) || [];
+    if (reasons.length) {
+        chips.push(`<span class="chip chip--info approval-reasons-badge" title="${escapeHtml(reasons.join('\n'))}">${icon('info')}${reasons.length === 1 ? '1 motivo' : `${reasons.length} motivos`} para análise</span>`);
     }
     return `
         <div class="pending-item">
@@ -194,7 +202,7 @@ function renderPendingOrder(submission) {
                 <div class="pending-item__meta">${describeOrderOrigin(submission)} · ${totalItems} item(ns)</div>
                 <div class="pending-item__figures">
                     <span>Total <strong>${formatCurrency(pricing.totalInvoice)}</strong></span>
-                    <span>Desconto <strong>${formatPercent(pricing.effectiveDiscount)}</strong></span>
+                    <span>Desconto negociado <strong>${formatPercent(pricing.negotiatedDiscount)}</strong></span>
                     <span>Margem <strong class="tone-${pricing.status.tone}">${formatPercent(pricing.margin)}</strong></span>
                 </div>
             </div>

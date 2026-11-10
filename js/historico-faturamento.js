@@ -47,6 +47,7 @@ function renderOrderRow(submission, isGestor) {
     const showBilling = submission.status === 'aprovado' || Boolean(submission.billedQuantities && Object.keys(submission.billedQuantities).length);
 
     const chips = [renderStatusChip(submission.status)];
+    if (isAutoApproved(submission)) chips.push(`<span class="chip chip--approved auto-approved-chip">${icon('check-circle')}Automático</span>`);
     if (billingStatus) chips.push(renderBillingChip(billingStatus));
     if (forecast) {
         chips.push(forecast.overdue
@@ -74,7 +75,12 @@ function renderOrderRow(submission, isGestor) {
     const actions = [];
     if (isDraft && isOwnOrder) {
         actions.push(`<button data-action="loadDraft" data-id="${id}" class="btn btn--secondary btn--sm">${icon('edit')}Continuar rascunho</button>`);
-    } else if (!isDraft) {
+    }
+    // Returned by the gestor: corrected and sent again as the same order, keeping its prices.
+    if (submission.status === 'rejeitado' && isOwnOrder) {
+        actions.push(`<button data-action="correctReturnedOrder" data-id="${id}" class="btn btn--secondary btn--sm">${icon('edit')}Corrigir e reenviar</button>`);
+    }
+    if (!isDraft) {
         actions.push(`<button data-action="repeatOrder" data-id="${id}" class="btn btn--ghost btn--sm">${icon('repeat')}Repetir pedido</button>`);
     }
     actions.push(`<button data-action="showStatusHistory" data-id="${id}" class="btn btn--ghost btn--sm">${icon('clock')}Histórico</button>`);

@@ -13,7 +13,7 @@
 
 ## 📋 Visão Geral
 
-O Portal de Preços Hiperroll é uma aplicação web para apoiar a equipe comercial na formação de preços, montagem de pedidos e negociação com clientes. A aplicação cruza produtos, custos, pesos e regras de frete para calcular valores **FOB** e **CIF** conforme o estado, o tipo de praça e a faixa de peso selecionados.
+O Portal de Preços Hiperroll é uma aplicação web para apoiar a equipe comercial na formação de preços, montagem de pedidos e negociação com clientes. A aplicação cruza produtos, custos, pesos e regras de frete para calcular valores **FOB** e **CIF** conforme o estado, o tipo de praça e a faixa de peso (escolhida pelo peso total do pedido).
 
 Além da calculadora, o portal oferece um fluxo de negociação com preço unitário editável, descontos, contratos, acompanhamento de margem, rascunhos, envio para análise, aprovação ou rejeição por usuários autorizados e exportação de pedidos em PDF.
 
@@ -24,12 +24,12 @@ Capturas feitas com usuários e clientes de exemplo. Preços, descontos e margen
 | Login | Consulta de preços |
 | :---: | :---: |
 | <img src="docs/screenshots/01-login.png" alt="Tela de login do portal" width="420" /> | <img src="docs/screenshots/02-consulta-de-precos.png" alt="Pesquisa de produtos com preços FOB e CIF" width="420" /> |
-| Cada pessoa entra com o próprio usuário. | Produto, estado, tipo de praça e faixa de peso definem o preço. |
+| Cada pessoa entra com o próprio usuário. | Produto, estado, tipo de praça e peso do pedido definem o preço. |
 
 | Montagem do pedido | Histórico do pedido |
 | :---: | :---: |
 | <img src="docs/screenshots/03-pedido.png" alt="Resumo do pedido com itens, cliente e condições" width="420" /> | <img src="docs/screenshots/04-historico-do-pedido.png" alt="Linha do tempo de um pedido" width="420" /> |
-| Itens, preço negociado, condições e margem em tempo real. | Quem salvou, enviou, aprovou, rejeitou e faturou, com data e hora. |
+| Itens, preço negociado, condições e totais em tempo real. | Quem salvou, enviou, aprovou, rejeitou e faturou, com data e hora. |
 
 | Tabela de preços (tema escuro) |
 | :---: |
@@ -51,7 +51,8 @@ Capturas feitas com usuários e clientes de exemplo. Preços, descontos e margen
 ### 💰 Precificação
 
 - Pesquisa de produtos por descrição, código e categoria.
-- Seleção de UF, tipo de praça e faixa de peso.
+- Seleção de UF e tipo de praça (Capital, Interior, Fluvial ou uma cidade com frete próprio, mostrada pelo nome).
+- **Faixa de peso automática:** o frete segue o peso total do pedido; quando ele passa da faixa mínima, os preços do pedido mudam sozinhos. Pedido abaixo dela mostra um aviso e vai para análise do gestor.
 - Cálculo dos preços **FOB** e **CIF** de cada produto a partir da tabela de preços, do peso e do frete da região.
 - Exibição de peso, preço FOB e preço CIF por item.
 - **💲 Tabela de Preços (aba do gestor):** custos e preço por kg de cada **grupo de preço** (a "linha de produto" da planilha de custos), tabela de frete, cadastro de produtos (grupo, peso, ativo/inativo), **preço próprio por produto**, ações por **categoria** (reajuste %, mover de grupo, voltar ao preço do grupo), reajuste percentual em lote com pré-visualização e histórico "de → para" de cada alteração. Mudanças valem imediatamente para todos.
@@ -63,28 +64,31 @@ Capturas feitas com usuários e clientes de exemplo. Preços, descontos e margen
 - Inclusão de produtos em um pedido com quantidade ajustável.
 - Alteração do preço negociado por item, com sincronização entre preço negociado e desconto unitário.
 - Condições comerciais do pedido: modalidade, desconto, contrato, forma de pagamento e frete.
-- Acompanhamento em tempo real do desconto sobre a tabela e da margem, por item e por pedido.
+- Acompanhamento em tempo real do desconto negociado, com o pagamento antecipado e o frete FOB mostrados à parte.
+- **Margem só para o gestor e o administrador:** o representante não vê margem na tela, no PDF nem nos dados que recebe do servidor. O gestor vê a margem por item e por pedido, com destaque forte quando ela cai abaixo do ponto de alerta.
 - Avisos automáticos conforme a modalidade escolhida, exibidos ao representante e ao gestor.
-- Pedidos fora da política comercial só são enviados com justificativa e chegam sinalizados ao gestor.
-- **Preços atualizados:** ao abrir um rascunho, repetir um pedido ou enviar depois que o gestor mudou a tabela, o portal mostra o que mudou e o representante escolhe entre manter os preços negociados ou aplicar a nova tabela.
+- Pedidos fora da política comercial só são enviados com justificativa e chegam sinalizados ao gestor; acima do desconto máximo o envio é bloqueado.
+- **Preços atualizados:** pedido em montagem e rascunho sempre passam para a tabela em vigor (o portal mostra o que mudou e mantém o desconto em R$ de cada item). Pedido já enviado não muda.
+- **Pedido devolvido:** quando o gestor rejeita um pedido, o representante usa "Corrigir e reenviar"; os itens que já estavam nele mantêm o preço, e o pedido volta com o mesmo número.
 
 Os percentuais, limites e margens da política comercial não são descritos neste README.
 
 ### 🧾 Pedidos e workflow comercial
 
-- Geração automática do número interno Hiperroll com cinco dígitos.
+- Geração automática do número interno Hiperroll com cinco dígitos. No dia da migração, o administrador informa o próximo número do sistema antigo (na janela Usuários) e a numeração continua dele.
 - Registro de cliente, representante, validade da proposta e número do pedido do cliente.
 - Salvamento e carregamento de rascunhos.
 - Envio de pedidos para o status **Em Análise**.
 - **Histórico do pedido** (botão "📋 Histórico" no resumo do pedido e em cada cartão da aba Histórico e Entregas): rascunho salvo, envio, aprovação ou rejeição com o motivo, faturamento, lixeira e restauração, com data e usuário. Vem do registro de auditoria do servidor, então o representante e o gestor veem a mesma linha do tempo em qualquer computador.
 - Consulta dos pedidos do usuário na aba **Histórico e Entregas**.
-- Aprovação ou rejeição com justificativa e observação do supervisor.
+- **Aprovação automática:** o pedido é aprovado sozinho quando está dentro da faixa de desconto, tem peso suficiente e não piorou preço nem margem em relação ao último pedido aprovado do cliente (ou, sem ele, ao último pedido do sistema com o mesmo produto). Senão, vai para o gestor com os motivos e a comparação produto a produto.
+- Aprovação ou rejeição com justificativa e observação do supervisor. Pode haver mais de um gestor: o administrador cria outra conta com esse papel.
 - Previsão de faturamento calculada após a aprovação.
 - Exclusão de registros armazenados localmente quando necessário.
 
 ### 🖨️ Exportação
 
-- Geração de proposta comercial em PDF com os dados do pedido, itens, valores, descontos, contrato e margem.
+- Geração de proposta comercial em PDF com os dados do pedido, itens, valores, descontos e contrato (a margem só aparece no PDF do gestor e do administrador).
 - Exportação controlada pelo `html2pdf.js`, carregado via CDN no HTML principal.
 
 ## 🎨 Interface e experiência
@@ -104,6 +108,8 @@ Cada representante tem o próprio login. As permissões são verificadas **no se
 | Criar rascunhos e enviar os próprios pedidos | ✓ | ✓ | ✓ |
 | Ver pedidos | só os próprios | **todos** | só os próprios |
 | Aprovar, rejeitar e registrar faturamento | — | **✓ (exclusivo)** | — |
+| Ver margens (produto e pedido) | — | ✓ | ✓ |
+| Definir o próximo número de pedido (migração) | — | — | ✓ |
 | Lixeira | dos próprios pedidos | de todos | dos próprios pedidos |
 | Excluir definitivamente | só rascunhos/rejeitados próprios | qualquer pedido | só rascunhos/rejeitados próprios |
 | Criar, desativar e redefinir senha de usuários | — | representantes | todas as contas |

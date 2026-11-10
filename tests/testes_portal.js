@@ -88,12 +88,8 @@
                 if (mode === 'readme_pedido' || mode === 'layout_dark') {
                     $('stateSelect').value = 'MG';
                     updateResults();
-                    // Products picked by the order of the table's margins (lowest, second lowest): no real number here.
-                    const margins = [...new Set(productsData.map(p => p.tableMargin))].sort((a, b) => a - b);
-                    const pick = margin => productsData.filter(p => p.tableMargin === margin);
-                    addToCart(pick(margins[0])[0].codigo);
-                    addToCart(pick(margins[1])[0].codigo);
-                    addToCart(pick(margins[1])[5].codigo);
+                    // Three fixed products from the table (the representative's screen has no margins).
+                    [0, 40, 45].forEach(i => addToCart(productsData[i].codigo));
                     cart[0].qty = 40; cart[1].qty = 25; cart[2].qty = 12;
                     $('clientName').value = 'Mercado Exemplo';
                     $('proposalValidity').value = '30 dias';
@@ -269,15 +265,38 @@
                 closeStatusHistory();
                 check('rep: tabelas de produto carregadas', productsData.length > 100, productsData.length);
 
-                check('rep: usa data.js antes da importação', pricingCatalog.source === 'legacy', pricingCatalog.source);
+                check('rep: preços vêm do banco, nunca do data.js', pricingCatalog.source === 'server', pricingCatalog.source);
+                check('rep: tabela chega sem a margem dos produtos', pricingCatalog.products.length > 100 && pricingCatalog.products.every(p => !('tableMargin' in p)));
+                check('rep: regras chegam sem margem padrão nem ponto de alerta', PRICING_RULES.DEFAULT_PRODUCT_MARGIN === 0 && PRICING_RULES.MARGIN_ALERT_BELOW === null && PRICING_RULES.MAX_NEGOTIATED_DISCOUNT === RULES.maxNegotiatedDiscount);
                 check('rep: aba de preços oculta', !visible($('btn-tab-pricing')));
                 check('rep: UFs carregadas (inclui TO)', $('stateSelect').options.length > 20 && Boolean(freightData.TO), $('stateSelect').options.length);
+
+                // ----- Juazeiro: praça própria da BA; o Interior da BA usa a linha "Interior" -----
+                $('stateSelect').value = 'BA';
+                onStateChange();
+                const pracasBA = [...$('cityType').options].map(o => [o.value, o.textContent]);
+                check('rep: BA oferece Juazeiro como praça própria', pracasBA.some(([v, t]) => v === 'Especial' && t === 'Juazeiro') && pracasBA.some(([v]) => v === 'Interior'), JSON.stringify(pracasBA));
+                check('rep: BA Interior usa o frete do Interior, não o de Juazeiro', freightData.BA.Interior.label === 'Interior' && freightData.BA.Interior.tier1 !== freightData.BA.Especial.tier1);
+                check('rep: outros estados sem praça especial', !freightData.MG.Especial && !freightData.SP.Especial);
+
                 $('stateSelect').value = 'MG';
-                updateResults();
+                onStateChange();
                 check('rep: resultados com preço CIF', $('resultsContainer').querySelectorAll('button[data-codigo]').length > 100);
                 addToCart(productsData[0].codigo);
-                check('rep: item guarda a região', cart[0].uf === 'MG' && cart[0].cityType === 'Capital' && cart[0].weightTier === 'tier2', JSON.stringify([cart[0].uf, cart[0].cityType, cart[0].weightTier]));
+                check('rep: item guarda a região; faixa pelo peso (1 unidade fica abaixo de 200 kg)', cart[0].uf === 'MG' && cart[0].cityType === 'Capital' && cart[0].weightTier === 'tier1', JSON.stringify([cart[0].uf, cart[0].cityType, cart[0].weightTier]));
                 check('rep: CIF > FOB com frete', cart[0].cif > cart[0].fob, `${cart[0].fob.toFixed(2)} / ${cart[0].cif.toFixed(2)}`);
+
+                // ----- margem: o representante não vê -----
+                check('rep: carrinho sem coluna de margem', !/Margem/.test($('orderTableContainer').querySelector('thead').textContent), $('orderTableContainer').querySelector('thead').textContent.replace(/\s+/g, ' '));
+                check('rep: margem do pedido e do cabeçalho escondidas', !visible($('marginPercentage').closest('.total')) && !visible($('marginThreshold').closest('.info-box')));
+
+                // ----- faixa de peso automática -----
+                check('rep: faixa informada e aviso de pedido abaixo de 200 kg', $('weightTierInfo').textContent.includes('150 a 199') && !$('orderWeightWarning').hidden && $('orderWeightWarning').textContent.includes('abaixo de 200 kg'), $('weightTierInfo').textContent);
+                const cifTier1 = cart[0].cif;
+                updateCartQty(0, Math.ceil(200 / cart[0].weight));
+                check('rep: a partir de 200 kg a faixa muda sozinha e o CIF cai', cart[0].weightTier === 'tier2' && cart[0].cif < cifTier1 && $('orderWeightWarning').hidden && $('weightTierInfo').textContent.includes('acima de 200'), `${cifTier1.toFixed(2)} → ${cart[0].cif.toFixed(2)}`);
+                updateCartQty(0, 1);
+                check('rep: abaixo de 200 kg volta para 150 a 199', cart[0].weightTier === 'tier1' && Math.abs(cart[0].cif - cifTier1) < 1e-9);
                 await saveDraftCurrentOrder();
                 check('rep: rascunho salvo no servidor', activeDraftId === 'order_1', activeDraftId);
                 check('rep: POST com token CSRF', window.__mockCalls.filter(c => c.method === 'POST').every(c => c.csrf === 'tok123'));
@@ -319,13 +338,87 @@
                 await restoreSubmission('order_1');
                 check('rep: restaurado como rascunho', orderSubmissionManager.getById('order_1')?.status === 'rascunho');
 
-                // ----- margem do produto, desconto e modalidade (100% Livre / 50% Aval / 10% Garantia) -----
+                // ----- aprovação automática: compara com o último pedido aprovado do cliente -----
                 resetCurrentOrderForm();
-                check('rep: 207 produtos, sem código repetido', productsData.length === 207 && new Set(productsData.map(p => p.codigo)).size === 207, productsData.length);
+                const ordersOf = client => Object.values(window.__mockOrders).filter(o => o.clientName === client).sort((a, b) => a.hiperrollNumber.localeCompare(b.hiperrollNumber));
+                const lastAlert = () => window.__alerts[window.__alerts.length - 1] || '';
+                $('stateSelect').value = 'MG';
+                onStateChange();
+                addToCart(productsData[2].codigo);
+                updateCartQty(0, Math.ceil(200 / cart[0].weight));
+                $('clientName').value = 'Mercado Automático';
+                showSubmitOrderModal();
+                check('rep: janela de envio sem margem, com o peso', !visible($('submitMargin').parentElement) && $('submitWeight').textContent.includes('kg') && $('submitWeightNotice').hidden);
+                await submitOrder();
+                const firstAuto = ordersOf('Mercado Automático')[0];
+                check('rep: primeiro pedido do cliente vai para análise (nada para comparar)', firstAuto && firstAuto.status === 'analise' && firstAuto.approvalCheck.reasons.some(r => r.includes('Ainda não há pedido aprovado')) && lastAlert().includes('Aguardando aprovação'), lastAlert());
+                check('rep: representante não recebe a comparação nem a margem', !('approvalCheck' in orderSubmissionManager.getById(firstAuto.id)) && orderSubmissionManager.getById(firstAuto.id).cart.every(item => !('tableMargin' in item)));
+                window.__mockApprove(firstAuto.id);
+                await loadServerData();
+                await repeatOrder(firstAuto.id);
+                showSubmitOrderModal();
+                await submitOrder();
+                const secondAuto = ordersOf('Mercado Automático')[1];
+                check('rep: mesmo pedido, mesmo preço: aprovado sozinho', secondAuto && secondAuto.status === 'aprovado' && secondAuto.approvalBy === AUTO_APPROVER && lastAlert().includes('aprovado automaticamente'), lastAlert());
+                renderHistoryTab();
+                check('rep: cartão mostra "Automático"', Boolean($('historyTabContent').querySelector(`[id="historyCard_${secondAuto.id}"] .auto-approved-chip`)));
+                await repeatOrder(firstAuto.id);
+                const setModeRep = value => { const radio = document.querySelector(`input[name="orderInvoiceMode"][value="${value}"]`); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); };
+                setModeRep('aval');
+                $('orderDiscount').value = '2';
+                updateOrderTable();
+                showSubmitOrderModal();
+                await submitOrder();
+                const thirdAuto = ordersOf('Mercado Automático')[2];
+                check('rep: preço menor que no último pedido vai para o gestor', thirdAuto && thirdAuto.status === 'analise' && thirdAuto.approvalCheck.reasons.some(r => r.includes('preço e margem menor que no pedido')), thirdAuto && JSON.stringify(thirdAuto.approvalCheck.reasons));
+
+                // ----- teto do desconto negociado -----
+                await repeatOrder(firstAuto.id);
+                setModeRep('garantia');
+                $('orderDiscount').value = String(RULES.maxNegotiatedDiscount + 1);
+                updateOrderTable();
+                check('rep: acima do teto aparece "não pode ser enviado"', !$('orderMinMarginWarning').hidden && $('orderMinMarginWarning').textContent.includes('não pode ser enviado'), $('orderMinMarginWarning').textContent);
+                showSubmitOrderModal();
+                check('rep: acima do teto o botão de envio trava e não pede justificativa', document.querySelector('#submitOrderModal .btn-submit-order').disabled && $('submitLowMarginBlock').hidden);
+                closeSubmitOrderModal();
+                $('orderDiscount').value = '0';
+                updateOrderTable();
+                check('rep: abaixo do teto o botão volta', (showSubmitOrderModal(), !document.querySelector('#submitOrderModal .btn-submit-order').disabled));
+                closeSubmitOrderModal();
+
+                // ----- pedido devolvido pelo gestor: corrigir e reenviar mantém os preços -----
+                resetCurrentOrderForm();
+                window.__mockReject(thirdAuto.id);
+                await loadServerData();
+                renderHistoryTab();
+                check('rep: pedido devolvido tem "Corrigir e reenviar"', Boolean($('historyTabContent').querySelector(`[data-action="correctReturnedOrder"][data-id="${thirdAuto.id}"]`)));
+                const lockedCif = thirdAuto.cart[0].cif;
+                const lockedNegotiated = thirdAuto.cart[0].negotiatedPrice;
+                window.__mockBumpVersion();
+                await refreshPricingCatalog();
+                await correctReturnedOrder(thirdAuto.id);
+                check('rep: tabela mudou, mas o pedido devolvido não abre revisão de preços', !visible($('repriceModal')) && cart.length === 1 && cart[0].priceLocked === true);
+                check('rep: item do pedido devolvido mantém o preço', Math.abs(cart[0].cif - lockedCif) < 1e-9 && Math.abs(cart[0].negotiatedPrice - lockedNegotiated) < 1e-9 && $('orderTableContainer').textContent.includes('preço mantido'));
+                addToCart(productsData[3].codigo);
+                check('rep: item novo na correção usa a tabela atual', cart[1].priceLocked !== true && Math.abs(cart[1].cif - computeItemPrices(productsData[3], cart[1]).cif) < 1e-9);
+                showSubmitOrderModal();
+                check('rep: envio da correção aponta para o mesmo pedido', $('submitDraftSelect').value === thirdAuto.id);
+                await submitOrder();
+                const resent = window.__mockOrders[thirdAuto.id];
+                check('rep: reenviado com o mesmo número e o preço mantido', resent.status !== 'rejeitado' && resent.hiperrollNumber === thirdAuto.hiperrollNumber && resent.cart.length === 2 && Math.abs(resent.cart[0].cif - lockedCif) < 1e-9, `${resent.status} ${resent.cart.length}`);
+                resetCurrentOrderForm();
+            }
+
+            if (mode === 'pedido') {
+                // ----- margem do produto, desconto e modalidade (100% Livre / 50% Aval / 10% Garantia) -----
+                // O gestor monta o pedido: ele vê as margens (o representante, não).
+                await waitFor(() => window.__mockCalls.some(c => c.action === 'orders.list') && productsData.length > 0 && $('orderNumberHiperroll').value);
+                resetCurrentOrderForm();
+                check('pedido: 207 produtos, sem código repetido', productsData.length === 207 && new Set(productsData.map(p => p.codigo)).size === 207, productsData.length);
                 const tableMargins = [...new Set(productsData.map(p => p.tableMargin))].sort((a, b) => a - b);
-                check('rep: margens da planilha carregadas', tableMargins.length >= 3 && productsData.every(p => p.tableMargin > 0 && p.tableMargin < 100), tableMargins.length);
-                check('rep: cabeçalho sem margem com pedido vazio', $('marginThreshold').textContent === '—');
-                check('rep: modalidade padrão é 100% Livre', getCurrentOrderConditions().invoiceMode === 'livre' && document.querySelectorAll('input[name="orderInvoiceMode"]').length === 3);
+                check('pedido: margens da planilha carregadas', tableMargins.length >= 3 && productsData.every(p => p.tableMargin > 0 && p.tableMargin < 100), tableMargins.length);
+                check('pedido: cabeçalho sem margem com pedido vazio', $('marginThreshold').textContent === '—');
+                check('pedido: modalidade padrão é 100% Livre', getCurrentOrderConditions().invoiceMode === 'livre' && document.querySelectorAll('input[name="orderInvoiceMode"]').length === 3);
                 const setMode = value => { const radio = document.querySelector(`input[name="orderInvoiceMode"][value="${value}"]`); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); };
                 const setDiscount = value => { $('orderDiscount').value = String(value); updateOrderTable(); };
                 const totalsNow = () => calculateOrderTotals(cart, getCurrentOrderConditions());
@@ -337,40 +430,55 @@
                 $('stateSelect').value = 'MG';
                 addToCart(sac.codigo);
                 let mt = totalsNow();
-                check('rep: no preço de tabela a margem é a do produto', Math.abs(mt.margin - marginA) < 1e-9 && mt.tableMargin === marginA && $('marginThreshold').textContent === pct(marginA) && mt.status.tone === 'good', mt.margin);
-                check('rep: item guarda a margem do produto e o pedido a envia', cart[0].tableMargin === marginA && buildCurrentOrderInput().cart[0].tableMargin === marginA && buildCurrentOrderInput().conditions.invoiceMode === 'livre');
-                check('rep: Livre sem desconto: sem aviso e sem justificativa', !mt.requiresJustification && mt.modeNotice === '' && mt.effectiveDiscount === 0 && $('orderModeNotice').hidden && $('orderMinMarginWarning').hidden);
+                check('pedido: no preço de tabela a margem é a do produto', Math.abs(mt.margin - marginA) < 1e-9 && mt.tableMargin === marginA && $('marginThreshold').textContent === pct(marginA) && mt.status.tone === 'good', mt.margin);
+                check('pedido: item guarda a margem do produto e o pedido a envia', cart[0].tableMargin === marginA && buildCurrentOrderInput().cart[0].tableMargin === marginA && buildCurrentOrderInput().conditions.invoiceMode === 'livre');
+                check('pedido: Livre sem desconto: sem aviso e sem justificativa', !mt.requiresJustification && mt.modeNotice === '' && mt.effectiveDiscount === 0 && $('orderModeNotice').hidden && $('orderMinMarginWarning').hidden);
 
                 setDiscount(2);
                 mt = totalsNow();
-                check('rep: 2% no pedido reduz a margem pelo valor', Math.abs(mt.margin - marginAfter(marginA, 2)) < 1e-9 && mt.effectiveDiscount === 2 && mt.status.tone === 'warn', mt.margin.toFixed(4));
-                check('rep: Livre com desconto exige justificativa', mt.discountExceeded && mt.requiresJustification && mt.alerts[0].includes('não permite desconto') && !$('orderMinMarginWarning').hidden, mt.alerts[0]);
-                check('rep: Livre não mostra aviso de implantação', mt.modeNotice === '');
+                check('pedido: 2% no pedido reduz a margem pelo valor', Math.abs(mt.margin - marginAfter(marginA, 2)) < 1e-9 && mt.effectiveDiscount === 2 && mt.status.tone === 'warn', mt.margin.toFixed(4));
+                check('pedido: Livre com desconto exige justificativa', mt.discountExceeded && mt.requiresJustification && mt.alerts[0].includes('não permite desconto') && !$('orderMinMarginWarning').hidden, mt.alerts[0]);
+                check('pedido: Livre não mostra aviso de implantação', mt.modeNotice === '');
 
                 setMode('aval');
                 mt = totalsNow();
-                check('rep: Aval com 2% é permitido e mostra o aviso', !mt.requiresJustification && mt.modeNotice === 'PEDIDO DEVE SER IMPLANTADO AVAL.' && !$('orderModeNotice').hidden && $('orderModeNotice').textContent.includes('PEDIDO DEVE SER IMPLANTADO AVAL.') && $('orderMinMarginWarning').hidden);
+                check('pedido: Aval com 2% é permitido e mostra o aviso', !mt.requiresJustification && mt.modeNotice === 'PEDIDO DEVE SER IMPLANTADO AVAL.' && !$('orderModeNotice').hidden && $('orderModeNotice').textContent.includes('PEDIDO DEVE SER IMPLANTADO AVAL.') && $('orderMinMarginWarning').hidden);
                 setDiscount(0);
-                check('rep: Aval sem desconto não mostra aviso', totalsNow().modeNotice === '' && $('orderModeNotice').hidden);
+                check('pedido: Aval sem desconto não mostra aviso', totalsNow().modeNotice === '' && $('orderModeNotice').hidden);
                 setDiscount(AVAL_MAX);
                 mt = totalsNow();
-                check('rep: Aval aceita exatamente o limite', !mt.discountExceeded && mt.effectiveDiscount === AVAL_MAX, mt.effectiveDiscount);
-                check('rep: margem negativa fica vermelha, mas quem trava é a faixa', mt.margin < 0 && mt.status.tone === 'bad' && !mt.requiresJustification, mt.margin.toFixed(2));
+                check('pedido: Aval aceita exatamente o limite', !mt.discountExceeded && mt.effectiveDiscount === AVAL_MAX && mt.negotiatedDiscount === AVAL_MAX, mt.effectiveDiscount);
+                check('pedido: margem negativa fica vermelha, mas quem trava é a faixa', mt.margin < 0 && ['bad', 'critical'].includes(mt.status.tone) && !mt.requiresJustification, mt.margin.toFixed(2));
                 setDiscount(AVAL_MAX + 0.5);
                 mt = totalsNow();
-                check('rep: Aval acima do limite exige justificativa', mt.discountExceeded && mt.alerts[0].includes(`acima do limite de ${pct(AVAL_MAX)}`), mt.alerts[0]);
+                check('pedido: Aval acima do limite exige justificativa', mt.discountExceeded && mt.alerts[0].includes(`acima do limite de ${pct(AVAL_MAX)}`), mt.alerts[0]);
 
                 setMode('garantia');
                 mt = totalsNow();
-                check('rep: Garantia aceita acima do limite do Aval e mostra o aviso', !mt.requiresJustification && mt.modeNotice === 'PEDIDO DEVE SER IMPLANTADO GARANTIA.' && $('orderModeNotice').textContent.includes('GARANTIA'));
+                check('pedido: Garantia aceita acima do limite do Aval e mostra o aviso', !mt.requiresJustification && mt.modeNotice === 'PEDIDO DEVE SER IMPLANTADO GARANTIA.' && $('orderModeNotice').textContent.includes('GARANTIA'));
                 setDiscount(GARANTIA_MAX);
-                check('rep: Garantia aceita exatamente o limite', !totalsNow().discountExceeded);
+                check('pedido: Garantia aceita exatamente o limite', !totalsNow().discountExceeded);
                 setDiscount(GARANTIA_MAX + 1);
                 mt = totalsNow();
-                check('rep: Garantia acima do limite exige justificativa', mt.discountExceeded && mt.requiresJustification && mt.alerts[0].includes(`acima do limite de ${pct(GARANTIA_MAX)}`), mt.alerts[0]);
+                check('pedido: Garantia acima do limite exige justificativa', mt.discountExceeded && mt.requiresJustification && mt.alerts[0].includes(`acima do limite de ${pct(GARANTIA_MAX)}`), mt.alerts[0]);
                 showSubmitOrderModal();
-                check('rep: modal de envio mostra modalidade, aviso e pede justificativa', $('submitMode').textContent === 'Garantia (10%)' && $('submitModeNotice').textContent.includes('GARANTIA') && !$('submitLowMarginBlock').hidden && $('submitSummaryTitle').textContent.includes(`acima do limite de ${pct(GARANTIA_MAX)}`), $('submitSummaryTitle').textContent);
+                check('pedido: modal de envio mostra modalidade, aviso e pede justificativa', $('submitMode').textContent === 'Garantia (10%)' && $('submitModeNotice').textContent.includes('GARANTIA') && !$('submitLowMarginBlock').hidden && $('submitSummaryTitle').textContent.includes(`acima do limite de ${pct(GARANTIA_MAX)}`), $('submitSummaryTitle').textContent);
+                check('pedido: gestor vê a margem na janela de envio', visible($('submitMargin').parentElement) && $('submitMargin').textContent.includes('%'));
                 closeSubmitOrderModal();
+
+                // margem abaixo do ponto de alerta das regras: destaque forte para o gestor
+                const criticalMargin = marginAfter(marginA, GARANTIA_MAX + 1);
+                check('pedido: margem abaixo do ponto de alerta fica "Crítica"', criticalMargin < RULES.marginAlertBelow ? (mt.status.tone === 'critical' && $('totalsPriceContainer').classList.contains('margin-critical') && renderOrderConditionsSummary({ cart, conditions: getCurrentOrderConditions() }).includes('margin-critical-alert')) : mt.status.tone === 'bad', `${mt.margin.toFixed(2)} / alerta ${RULES.marginAlertBelow}`);
+
+                // teto do desconto negociado: acima dele não envia nem com justificativa
+                setDiscount(RULES.maxNegotiatedDiscount + 0.5);
+                mt = totalsNow();
+                check('pedido: acima do teto o pedido não pode ser enviado', mt.discountBlocked && mt.alerts[0].includes(`acima do máximo de ${pct(RULES.maxNegotiatedDiscount)}`), mt.alerts[0]);
+                showSubmitOrderModal();
+                check('pedido: acima do teto o envio trava', document.querySelector('#submitOrderModal .btn-submit-order').disabled && $('submitLowMarginBlock').hidden);
+                closeSubmitOrderModal();
+                setDiscount(RULES.maxNegotiatedDiscount);
+                check('pedido: exatamente no teto ainda envia (com justificativa)', !totalsNow().discountBlocked && totalsNow().requiresJustification);
 
                 // desconto em um item × desconto no pedido inteiro
                 setDiscount(0);
@@ -380,28 +488,34 @@
                 const bobTable = cart[1].cif;
                 updateUnitDiscount(0, sacTable * 0.02); // 2% só na sacola
                 mt = totalsNow();
-                check('rep: desconto só em um item muda só a margem dele', Math.abs(mt.lines[0].marginPercent - marginAfter(marginA, 2)) < 1e-9 && Math.abs(mt.lines[1].marginPercent - marginB) < 1e-9, `${mt.lines[0].marginPercent.toFixed(2)} / ${mt.lines[1].marginPercent.toFixed(2)}`);
+                check('pedido: desconto só em um item muda só a margem dele', Math.abs(mt.lines[0].marginPercent - marginAfter(marginA, 2)) < 1e-9 && Math.abs(mt.lines[1].marginPercent - marginB) < 1e-9, `${mt.lines[0].marginPercent.toFixed(2)} / ${mt.lines[1].marginPercent.toFixed(2)}`);
                 const itemOnly = Math.round(sacTable * 0.02 / (sacTable + bobTable) * 1e4) / 100;
-                check('rep: 2% em um item pesa menos que 2% no pedido', mt.effectiveDiscount === itemOnly && mt.effectiveDiscount < 2, mt.effectiveDiscount);
-                check('rep: carrinho mostra a margem de tabela de cada item', $('orderTableContainer').textContent.includes(`tabela ${pct(marginA)}`) && $('orderTableContainer').textContent.includes(`tabela ${pct(marginB)}`));
-                check('rep: margem de tabela do pedido é ponderada', Math.abs(mt.tableMargin - (sacTable * marginA + bobTable * marginB) / (sacTable + bobTable)) < 1e-3 && $('orderTableMargin').textContent === `${formatMarginPercent(mt.tableMargin)}%`, mt.tableMargin);
+                check('pedido: 2% em um item pesa menos que 2% no pedido', mt.effectiveDiscount === itemOnly && mt.effectiveDiscount < 2, mt.effectiveDiscount);
+                check('pedido: carrinho mostra a margem de tabela de cada item', $('orderTableContainer').textContent.includes(`tabela ${pct(marginA)}`) && $('orderTableContainer').textContent.includes(`tabela ${pct(marginB)}`));
+                check('pedido: margem de tabela do pedido é ponderada', Math.abs(mt.tableMargin - (sacTable * marginA + bobTable * marginB) / (sacTable + bobTable)) < 1e-3 && $('orderTableMargin').textContent === `${formatMarginPercent(mt.tableMargin)}%`, mt.tableMargin);
                 updateUnitDiscount(0, 0);
                 setDiscount(2);
                 mt = totalsNow();
-                check('rep: 2% no pedido afeta todos os itens', Math.abs(mt.lines[1].marginPercent - marginAfter(marginB, 2)) < 1e-9 && mt.effectiveDiscount === 2, mt.lines[1].marginPercent.toFixed(2));
+                check('pedido: 2% no pedido afeta todos os itens', Math.abs(mt.lines[1].marginPercent - marginAfter(marginB, 2)) < 1e-9 && mt.effectiveDiscount === 2, mt.lines[1].marginPercent.toFixed(2));
 
-                // antecipado e frete FOB também contam como desconto; contrato reduz a margem
+                // antecipado e frete FOB baixam o preço, mas ficam à parte do limite; contrato reduz a margem
                 setDiscount(0);
                 $('orderEarlyPayment').checked = true;
                 $('orderFobFreight').checked = true;
                 updateOrderTable();
-                check('rep: antecipado + frete FOB contam como desconto', Math.abs(totalsNow().effectiveDiscount - (RULES.earlyPaymentDiscount + RULES.fobFreightDiscount)) < 1e-9, totalsNow().effectiveDiscount);
+                mt = totalsNow();
+                check('pedido: antecipado + frete FOB entram no total sobre a tabela', Math.abs(mt.effectiveDiscount - (RULES.earlyPaymentDiscount + RULES.fobFreightDiscount)) < 1e-9 && mt.margin < mt.tableMargin, mt.effectiveDiscount);
+                check('pedido: antecipado + frete FOB não contam no limite da modalidade', mt.negotiatedDiscount === 0 && !mt.requiresJustification, mt.negotiatedDiscount);
+                setMode('livre');
+                check('pedido: no Livre, marcar só o antecipado não pede justificativa', !totalsNow().requiresJustification && $('orderMinMarginWarning').hidden);
+                check('pedido: tela mostra o negociado e, à parte, antecipado e FOB', $('orderDiscountBreakdown').textContent.includes('Desconto negociado') && $('orderDiscountBreakdown').textContent.includes('À parte') && describeDiscountBreakdown(totalsNow()).includes('antecipado'), $('orderDiscountBreakdown').textContent);
+                setMode('aval');
                 $('orderEarlyPayment').checked = false;
                 $('orderFobFreight').checked = false;
                 $('orderContract').value = '5';
                 updateOrderTable();
                 mt = totalsNow();
-                check('rep: contrato reduz a margem sem contar como desconto', mt.effectiveDiscount === 0 && Math.abs(mt.margin - mt.tableMargin / 1.05) < 1e-3, mt.margin.toFixed(2));
+                check('pedido: contrato reduz a margem sem contar como desconto', mt.effectiveDiscount === 0 && Math.abs(mt.margin - mt.tableMargin / 1.05) < 1e-3, mt.margin.toFixed(2));
                 $('orderContract').value = '0';
 
                 // pedido salvo e recarregado mantém a modalidade
@@ -409,9 +523,9 @@
                 await saveDraftCurrentOrder();
                 const modeDraft = activeDraftId;
                 resetCurrentOrderForm();
-                check('rep: pedido novo volta para 100% Livre', getCurrentOrderConditions().invoiceMode === 'livre');
+                check('pedido: pedido novo volta para 100% Livre', getCurrentOrderConditions().invoiceMode === 'livre');
                 await loadDraftToCurrentOrder(modeDraft, true);
-                check('rep: rascunho recarregado mantém a modalidade', getCurrentOrderConditions().invoiceMode === 'garantia' && cart.length === 2);
+                check('pedido: rascunho recarregado mantém a modalidade', getCurrentOrderConditions().invoiceMode === 'garantia' && cart.length === 2);
 
                 cart.length = 0;
                 resetCurrentOrderForm();
@@ -426,6 +540,15 @@
                 check('gestor: pedido do representante na fila', listHtml.includes('00007'));
                 check('gestor: selo de margem baixa', listHtml.includes('low-margin-badge'));
                 check('gestor: justificativa escapada (sem <script>)', !listHtml.includes('<script>x'));
+                check('gestor: fila mostra quantos motivos levaram o pedido à análise', listHtml.includes('approval-reasons-badge') && listHtml.includes('2 motivos'));
+
+                // Por que o pedido não foi aprovado sozinho, e a comparação com o pedido de referência.
+                showPendingOrderDetails('order_seed');
+                const detailsEl = $('detailsModalBackdrop');
+                check('gestor: detalhes explicam por que veio para análise', detailsEl.textContent.includes('Veio para sua análise porque') && detailsEl.textContent.includes('abaixo de 200 kg'));
+                check('gestor: motivo vindo do servidor aparece como texto', detailsEl.textContent.includes('<b>preço e margem</b>') && !detailsEl.querySelector('.approval-reasons b'));
+                check('gestor: comparação produto a produto com o pedido de referência', detailsEl.querySelector('.approval-check table') && detailsEl.textContent.includes('Preço antes') && detailsEl.textContent.includes('00003') && detailsEl.querySelectorAll('.approval-check td.tone-bad').length === 2);
+                detailsEl.remove();
 
                 // O que o gestor vê em um pedido com modalidade: selo, aviso de implantação e alerta.
                 const avalItem = { codigo: 'T-1', descricao: 'Teste', fob: 80, cif: 100, negotiatedPrice: 100, tableMargin: 10, qty: 2 };
@@ -433,6 +556,8 @@
                 const overHtml = renderOrderConditionsSummary({ cart: [avalItem], conditions: { invoiceMode: 'aval', manualDiscount: overDiscount, lowMarginJustification: 'Cliente estratégico' } });
                 check('gestor: resumo mostra modalidade e aviso de implantação', overHtml.includes('Modalidade: Aval (50%)') && overHtml.includes('PEDIDO DEVE SER IMPLANTADO AVAL.'));
                 check('gestor: resumo alerta desconto acima da faixa, com a justificativa', overHtml.includes(`acima do limite de ${pct(AVAL_MAX)} da modalidade Aval (50%)`) && overHtml.includes('Cliente estratégico') && overHtml.includes(formatPercent(overDiscount)));
+                const extrasHtml = renderOrderConditionsSummary({ cart: [avalItem], conditions: { invoiceMode: 'aval', manualDiscount: 2, earlyPayment: true, fobFreight: true } });
+                check('gestor: resumo separa o negociado do antecipado e do frete FOB', extrasHtml.includes(`Desconto negociado ${formatPercent(2)} + antecipado ${formatPercent(RULES.earlyPaymentDiscount)} + frete FOB ${formatPercent(RULES.fobFreightDiscount)}`) && !extrasHtml.includes('low-margin-alert'));
                 const okHtml = renderOrderConditionsSummary({ cart: [avalItem], conditions: { invoiceMode: 'garantia', manualDiscount: GARANTIA_MAX - 1 } });
                 check('gestor: dentro da faixa mostra só o aviso, sem alerta', okHtml.includes('PEDIDO DEVE SER IMPLANTADO GARANTIA.') && !okHtml.includes('low-margin-alert'));
                 const livreHtml = renderOrderConditionsSummary({ cart: [avalItem], conditions: { invoiceMode: 'livre' } });
@@ -527,11 +652,13 @@
                 check('gestor: não gerencia a conta do admin', adminRow && !adminRow.querySelector('button'));
                 check('gestor: gerencia o representante', repRow && repRow.querySelectorAll('button').length === 2);
                 check('gestor: só pode criar representante', $('newUserRole').options.length === 1 && $('newUserRole').value === 'representante');
+                check('gestor: não mexe na numeração dos pedidos (só o admin)', !visible($('nextNumberForm')));
                 closeUsersModal();
 
                 // ----- Tabela de preços: importação, edição, revisão do carrinho, lote, produtos, histórico -----
                 check('gestor: aba Tabela de Preços visível', visible($('btn-tab-pricing')));
-                const region = { uf: 'MG', cityType: 'Capital', weightTier: 'tier2' };
+                // One unit weighs less than 200 kg, so the item uses the 150-199 kg freight.
+                const region = { uf: 'MG', cityType: 'Capital', weightTier: 'tier1' };
                 const sample = productsData.find(p => p.costLineKey === 'bobina estrela (cx branca)');
                 const before = computeItemPrices(sample, region);
                 $('stateSelect').value = 'MG';
@@ -542,7 +669,7 @@
                 await waitFor(() => pricingCatalog.source === 'server' && Boolean(document.querySelector('tr[data-line-key]')));
                 check('gestor: tabela carregada ao abrir a aba (versão 1)', pricingCatalog.source === 'server' && pricingCatalog.version === 1, `${pricingCatalog.source} v${pricingCatalog.version}`);
                 const readyMsg = $('pricingMessage').textContent;
-                check('gestor: mensagem com contagens e aviso de Juazeiro', readyMsg.includes('14 grupos de preço') && readyMsg.includes('207 produtos') && readyMsg.includes('Juazeiro'), readyMsg.slice(0, 90));
+                check('gestor: mensagem com contagens, sem aviso de praça repetida (Juazeiro tem praça própria)', readyMsg.includes('14 grupos de preço') && readyMsg.includes('207 produtos') && !readyMsg.includes('Juazeiro') && pricingCatalog.freight.some(f => f.uf === 'BA' && f.pracaType === 'Especial' && f.label === 'Juazeiro'), readyMsg.slice(0, 120));
                 check('gestor: uma única importação', window.__mockCalls.filter(c => c.action === 'pricing.import').length === 1);
                 const costCell = document.querySelector('tr[data-line-key] td.col-cost');
                 check('gestor: custos ocultos na visão simples', getComputedStyle(costCell).display === 'none');
@@ -570,7 +697,7 @@
                 await waitFor(() => visible($('repriceModal')));
                 check('gestor: modal de revisão abriu', visible($('repriceModal')));
                 check('gestor: modal lista o item alterado', $('repriceModalBody').innerHTML.includes(escapeHtml(sample.codigo)));
-                check('gestor: modal mostra margens das duas opções', /%$/.test($('repriceKeepMargin').textContent) && /%$/.test($('repriceTableMargin').textContent), `${$('repriceKeepMargin').textContent} / ${$('repriceTableMargin').textContent}`);
+                check('gestor: modal só avisa e atualiza (um botão, sem "manter preço antigo")', document.querySelectorAll('#repriceModal [data-action="resolveReprice"]').length === 1 && !$('repriceModal').textContent.includes('Manter'));
                 resolveRepriceModal('table');
                 await savePromise;
                 const expected = computeItemPrices(productsData.find(p => p.codigo === sample.codigo), region);
@@ -598,15 +725,15 @@
                 await previewBulkAdjust();
                 check('gestor: prévia do reajuste', $('bulkPreview').innerHTML.includes('MG · Capital') && !$('bulkPreview').innerHTML.includes('SP ·'));
                 check('gestor: aplicar liberado após prévia', !$('bulkApplyBtn').disabled);
-                const negotiatedBeforeBulk = cart[0].negotiatedPrice;
+                updateUnitDiscount(0, 1); // R$ 1,00 de desconto no item
+                const cifBeforeBulk = cart[0].cif;
                 const freightBeforeBulk = freightData.MG.Capital.tier2;
                 const applyPromise = applyBulkAdjust();
                 await waitFor(() => visible($('repriceModal')));
-                resolveRepriceModal('keep');
+                resolveRepriceModal('table');
                 await applyPromise;
                 check('gestor: frete MG +10% (centavos)', Math.abs(freightData.MG.Capital.tier2 - Math.round(freightBeforeBulk * 1.1 * 100) / 100) < 1e-9);
-                check('gestor: "manter" preserva o preço negociado', Math.abs(cart[0].negotiatedPrice - negotiatedBeforeBulk) < 1e-9);
-                check('gestor: "manter" recalcula o desconto', Math.abs(cart[0].unitDiscount - Math.max(cart[0].cif - cart[0].negotiatedPrice, 0)) < 1e-9 && cart[0].unitDiscount > 0, cart[0].unitDiscount);
+                check('gestor: pedido aberto passa para a tabela nova, mantendo o desconto em R$', cart[0].cif > cifBeforeBulk && Math.abs(cart[0].unitDiscount - 1) < 1e-9 && Math.abs(cart[0].negotiatedPrice - (cart[0].cif - 1)) < 1e-9, `${cifBeforeBulk.toFixed(2)} → ${cart[0].cif.toFixed(2)}`);
 
                 // ----- preço de um produto só: digita R$ 50 e Enter -----
                 switchPricingSection('products');
@@ -625,7 +752,7 @@
                 const ownPrices = computeItemPrices(own, region);
                 const ownLine = costsData[own.costLineKey];
                 check('gestor: FOB do produto = R$ 50,00', Math.abs(ownPrices.fob - 50) < 1e-9, ownPrices.fob);
-                check('gestor: CIF mantém a proporção frete/custo', Math.abs(ownPrices.cif - 50 * (ownLine.costs + freightData.MG.Capital.tier2) / ownLine.costs) < 1e-9, ownPrices.cif.toFixed(2));
+                check('gestor: CIF mantém a proporção frete/custo', Math.abs(ownPrices.cif - 50 * (ownLine.costs + freightData.MG.Capital.tier1) / ownLine.costs) < 1e-9, ownPrices.cif.toFixed(2));
                 check('gestor: pedido aberto usa o novo preço (mesmo desconto em R$)', Math.abs(cart[0].fob - 50) < 1e-9 && Math.abs(cart[0].cif - ownPrices.cif) < 1e-9 && Math.abs(cart[0].negotiatedPrice - (ownPrices.cif - cart[0].unitDiscount)) < 1e-9, `desconto ${cart[0].unitDiscount.toFixed(2)}`);
                 priceRow = findRow(sample.codigo);
                 check('gestor: selo "preço próprio"', priceRow.querySelector('.price-note').textContent.includes('preço próprio'));
@@ -634,7 +761,7 @@
                 const lineBefore = own.priceOverride;
                 const resetP = resetPricingProductPrice(findRow(sample.codigo).querySelector('.pricing-link-btn'));
                 await waitFor(() => visible($('repriceModal')));
-                resolveRepriceModal('keep');
+                resolveRepriceModal('table');
                 await resetP;
                 check('gestor: "usar linha" remove o preço próprio', lineBefore === 50 && productsData.find(p => p.codigo === sample.codigo).priceOverride === null);
 
@@ -696,7 +823,7 @@
                 const deactivate = savePricingProducts();
                 await waitFor(() => visible($('repriceModal')));
                 check('gestor: produto desativado é avisado no modal', $('repriceModalBody').innerHTML.includes('serão retirados'));
-                resolveRepriceModal('keep');
+                resolveRepriceModal('table');
                 await deactivate;
                 check('gestor: produto desativado sai do carrinho', cart.length === 0, cart.length);
                 $('productSearch').value = sample.codigo;
@@ -729,7 +856,7 @@
                 check('repcat: tabela desatualizada no envio abre a revisão', visible($('repriceModal')));
                 resolveRepriceModal('table');
                 await submitPromise;
-                check('repcat: modal de envio reaberto com aviso', visible($('submitOrderModal')) && $('submitOrderMessage').textContent.includes('revisados'), $('submitOrderMessage').textContent);
+                check('repcat: modal de envio reaberto com aviso', visible($('submitOrderModal')) && $('submitOrderMessage').textContent.includes('atualizados para a tabela nova'), $('submitOrderMessage').textContent);
                 check('repcat: versão atualizada no front', pricingCatalog.version === 2);
                 await submitOrder();
                 check('repcat: reenvio aceito', window.__alerts.some(a => a.includes('enviado com sucesso')), window.__alerts[window.__alerts.length - 1]);
@@ -737,7 +864,7 @@
                 addToCart(productsData[1].codigo);
                 await saveDraftCurrentOrder();
                 const savedDraftId = activeDraftId;
-                const negotiatedInDraft = cart[0].negotiatedPrice;
+                const cifInDraft = cart[0].cif;
                 resetCurrentOrderForm();
                 window.__mockBumpVersion();
                 await refreshPricingCatalog();
@@ -745,9 +872,9 @@
                 const loadPromise = loadDraftToCurrentOrder(savedDraftId, true);
                 await waitFor(() => visible($('repriceModal')));
                 check('repcat: rascunho antigo abre a revisão', visible($('repriceModal')));
-                resolveRepriceModal('keep');
+                resolveRepriceModal('table');
                 await loadPromise;
-                check('repcat: "manter" preserva o preço do rascunho', Math.abs(cart[0].negotiatedPrice - negotiatedInDraft) < 1e-9);
+                check('repcat: rascunho passa para a tabela nova (mesmo desconto em R$)', cart[0].cif > cifInDraft && Math.abs(cart[0].negotiatedPrice - cart[0].cif) < 1e-9, `${cifInDraft.toFixed(2)} → ${cart[0].cif.toFixed(2)}`);
                 check('repcat: FOB atualizado para a tabela nova', Math.abs(cart[0].fob - computeItemPrices(productsData[1], cart[0]).fob) < 1e-9);
 
                 // ----- atualização automática -----
@@ -761,14 +888,14 @@
                 const watchPromise = checkPricingVersion();
                 await waitFor(() => visible($('repriceModal')));
                 check('repcat: mudança detectada sozinha abre a revisão', visible($('repriceModal')));
-                resolveRepriceModal('keep');
+                resolveRepriceModal('table');
                 check('repcat: vigia atualizou', (await watchPromise) === true && pricingCatalog.version === 4, pricingCatalog.version);
                 check('repcat: baixou a tabela uma vez', window.__mockCalls.filter(c => c.action === 'pricing.get').length === getsBefore + 1);
                 check('repcat: busca mostra o preço novo', $('resultsContainer').querySelector('.price-cif').textContent !== cifShownBefore, `${cifShownBefore} → ${$('resultsContainer').querySelector('.price-cif').textContent}`);
             }
 
             if (mode === 'admincat') {
-                await waitFor(() => window.__mockCalls.some(c => c.action === 'orders.list'));
+                await waitFor(() => window.__mockCalls.some(c => c.action === 'orders.list') && $('orderNumberHiperroll').value);
                 check('admin: aba de preços visível', visible($('btn-tab-pricing')));
                 switchTab('tab-pricing');
                 const html = $('pricingTabContent').innerHTML;
@@ -776,6 +903,26 @@
                 check('admin: campos desabilitados', [...document.querySelectorAll('#pricingSectionBody [data-field]')].length > 20 && [...document.querySelectorAll('#pricingSectionBody [data-field]')].every(i => i.disabled));
                 switchPricingSection('bulk');
                 check('admin: sem reajuste em lote', $('pricingSectionBody').textContent.includes('feito pelo gestor'));
+                check('admin: vê as margens (como o gestor)', document.body.classList.contains('can-see-margins'));
+
+                // ----- numeração: continua do sistema de pedidos antigo -----
+                switchTab('tab-order');
+                await showUsersModal();
+                check('admin: campo do próximo número de pedido', visible($('nextNumberForm')) && $('nextOrderNumber').value === '1');
+                $('nextOrderNumber').value = '1500';
+                await submitNextNumber(new Event('submit', { cancelable: true }));
+                check('admin: próximo pedido passa a ser 01500', $('orderNumberHiperroll').value === '01500' && $('usersMessage').textContent.includes('01500'), $('usersMessage').textContent);
+                $('nextOrderNumber').value = '10';
+                await submitNextNumber(new Event('submit', { cancelable: true }));
+                check('admin: numeração não volta para trás', $('usersMessage').textContent.includes('não pode ser menor') && $('orderNumberHiperroll').value === '01500', $('usersMessage').textContent);
+                closeUsersModal();
+            }
+
+            if (mode === 'repnocat') {
+                await waitFor(() => window.__mockCalls.some(c => c.action === 'orders.list'));
+                check('repnocat: representante não usa o data.js (custos e margens)', pricingCatalog.source === 'legacy' && productsData.length === 0 && Object.keys(freightData).length === 0);
+                updateResults();
+                check('repnocat: avisa que a tabela ainda não foi liberada', $('resultsContainer').textContent.includes('ainda não foi liberada'), $('resultsContainer').textContent.trim());
             }
         } catch (e) {
             results.push('ERROR | ' + e.message + ' | ' + (e.stack || '').split('\n').slice(0, 3).join(' / '));

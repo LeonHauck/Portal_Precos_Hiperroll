@@ -67,10 +67,13 @@ function load_order_row(string $id): ?array
     return $row ?: null;
 }
 
-function order_to_client(array $row): array
+// $viewer = who will receive the order. A representative gets it without any margin (product
+// margins in the items, the order margin and the gestor's comparison). Without a viewer (the
+// backup) the order goes out complete.
+function order_to_client(array $row, ?array $viewer = null): array
 {
     $payload = json_decode($row['payload'], true) ?: [];
-    return array_merge($payload, [
+    $order = array_merge($payload, [
         'id' => $row['id'],
         'ownerId' => (int) $row['owner_id'],
         'status' => $row['status'],
@@ -78,6 +81,25 @@ function order_to_client(array $row): array
         'deletedAt' => $row['deleted_at'],
         'deletedBy' => $row['deleted_by'],
     ]);
+    return $viewer !== null && !can_see_margins($viewer) ? strip_order_margins($order) : $order;
+}
+
+function strip_order_margins(array $order): array
+{
+    unset($order['approvalCheck']);
+    if (isset($order['pricingSnapshot']) && is_array($order['pricingSnapshot'])) {
+        unset($order['pricingSnapshot']['margin']);
+    }
+    foreach (['cart', 'lockedPrices'] as $list) {
+        if (isset($order[$list]) && is_array($order[$list])) {
+            foreach ($order[$list] as $key => $item) {
+                if (is_array($item)) {
+                    unset($order[$list][$key]['tableMargin']);
+                }
+            }
+        }
+    }
+    return $order;
 }
 
 function can_view_order(array $row, array $user): bool
@@ -122,6 +144,25 @@ function reserve_hiperroll_number(): string
     return format_hiperroll_number($value);
 }
 
+// The admin types the next number to use (the one the old web system would give next). It can
+// only move forward, so a number already given to an order is never handed out again.
+function set_next_hiperroll_number($value): string
+{
+    $next = filter_var($value, FILTER_VALIDATE_INT);
+    if ($next === false || $next < 1 || $next > 99999999) {
+        fail(422, 'Informe o próximo número de pedido: um número inteiro maior que zero.');
+    }
+    $pdo = db();
+    $pdo->exec("INSERT OR IGNORE INTO counters (name, value) VALUES ('hiperroll_order', 0)");
+    $stmt = $pdo->prepare("UPDATE counters SET value = ? WHERE name = 'hiperroll_order' AND value <= ?");
+    $stmt->execute([$next - 1, $next - 1]);
+    if ($stmt->rowCount() === 0) {
+        fail(422, 'O próximo número não pode ser menor que ' . peek_next_hiperroll_number() . ': números já usados não voltam.');
+    }
+    audit('order.set_next_number', null, ['nextNumber' => $next]);
+    return peek_next_hiperroll_number();
+}
+
 function list_orders(array $user): array
 {
     if (is_gestor($user)) {
@@ -135,9 +176,9 @@ function list_orders(array $user): array
     $trash = [];
     foreach ($stmt->fetchAll() as $row) {
         if ($row['deleted_at'] === null) {
-            $orders[] = order_to_client($row);
+            $orders[] = order_to_client($row, $user);
         } else {
-            $trash[] = order_to_client($row);
+            $trash[] = order_to_client($row, $user);
         }
     }
     return ['orders' => $orders, 'trash' => $trash];
@@ -180,6 +221,47 @@ function clear_decision_fields(array $payload): array
     return $payload;
 }
 
+// PEDIDO DEVOLVIDO: when the gestor rejects an order, the prices of its items are kept in
+// payload.lockedPrices. If the representative corrects and resends that same order, those items
+// keep their prices even if the table changed meanwhile (decision of 2026-11-10); items added
+// during the correction use the table in force. Key: product + region.
+function locked_price_key(array $item): string
+{
+    return ($item['codigo'] ?? '') . '|' . ($item['uf'] ?? '') . '|' . ($item['cityType'] ?? '');
+}
+
+function lock_order_prices(array $cart): array
+{
+    $locked = [];
+    foreach ($cart as $item) {
+        if (!is_array($item) || !isset($item['codigo'])) {
+            continue;
+        }
+        $locked[locked_price_key($item)] = [
+            'fob' => (float) ($item['fob'] ?? 0),
+            'cif' => (float) ($item['cif'] ?? 0),
+            'weight' => (float) ($item['weight'] ?? 0),
+            'tableMargin' => (float) ($item['tableMargin'] ?? pricing_default_product_margin()),
+            'weightTier' => (string) ($item['weightTier'] ?? ''),
+        ];
+    }
+    return $locked;
+}
+
+// Only the owner's own draft, or own order returned by the gestor, is updated in place; anything
+// else (under analysis, approved, in the trash, someone else's) becomes a new order.
+function editable_order_row($id, array $user): ?array
+{
+    if (!is_string($id) || $id === '') {
+        return null;
+    }
+    $row = load_order_row($id);
+    if ($row && $row['deleted_at'] === null && (int) $row['owner_id'] === (int) $user['id'] && in_array($row['status'], ['rascunho', 'rejeitado'], true)) {
+        return $row;
+    }
+    return null;
+}
+
 function save_order(array $user, $id, $orderInput, bool $submit): array
 {
     $input = sanitize_order_input($orderInput);
@@ -187,27 +269,28 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
         fail(422, $submit ? 'Adicione itens ao pedido antes de enviar.' : 'Adicione itens antes de salvar o rascunho.');
     }
 
-    // The representative must see the new prices before sending: the front reloads the
-    // table, shows what changed and lets them choose, then submits again.
+    $existing = editable_order_row($id, $user);
+    $existingPayload = $existing ? (json_decode($existing['payload'], true) ?: []) : [];
+    $locked = is_array($existingPayload['lockedPrices'] ?? null) ? $existingPayload['lockedPrices'] : [];
+    $hasUnlockedItems = false;
+    foreach ($input['cart'] as $item) {
+        if (!isset($locked[locked_price_key($item)])) {
+            $hasUnlockedItems = true;
+        }
+    }
+
+    // The representative must see the new prices before sending: the front reloads the table,
+    // shows what changed (new orders and drafts always move to the table in force), then submits
+    // again. Items with locked prices don't depend on the table, so they never block.
     $currentPricingVersion = pricing_version();
-    if ($submit && catalog_is_imported() && $input['pricingVersion'] !== $currentPricingVersion) {
+    if ($submit && $hasUnlockedItems && catalog_is_imported() && $input['pricingVersion'] !== $currentPricingVersion) {
         fail(409, 'A tabela de preços foi atualizada pelo gestor. Confira os novos valores antes de enviar.', 'pricing_outdated');
     }
-    $input['cart'] = apply_catalog_prices($input['cart'], $submit);
+    $input['cart'] = apply_catalog_prices($input['cart'], $submit, $locked);
 
     $pdo = db();
     $pdo->beginTransaction();
     try {
-        $existing = null;
-        if (is_string($id) && $id !== '') {
-            $row = load_order_row($id);
-            // Only the owner's own active draft is updated in place; anything else
-            // (already submitted, in the trash, someone else's) becomes a new order.
-            if ($row && $row['deleted_at'] === null && (int) $row['owner_id'] === (int) $user['id'] && $row['status'] === 'rascunho') {
-                $existing = $row;
-            }
-        }
-
         $now = now_iso();
         if ($existing) {
             $orderId = $existing['id'];
@@ -233,8 +316,13 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
         ]);
 
         $status = 'rascunho';
+        $autoApproved = false;
         if ($submit) {
             $pricing = calculate_order_totals($input['cart'], $conditions);
+            // Above the ceiling the order is never sent, justification or not.
+            if ($pricing['discountBlocked']) {
+                fail(422, implode('. ', $pricing['alerts']) . '. Reduza o desconto para enviar.');
+            }
             // Discount above the modality's limit: the order may still be sent, but only with a
             // justification, and it reaches the gestor flagged.
             if ($pricing['requiresJustification'] && mb_strlen($conditions['lowMarginJustification'], 'UTF-8') < pricing_min_justification_length()) {
@@ -252,14 +340,28 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
                 'margin' => $pricing['margin'],
                 'discountPercent' => $pricing['discountPercent'],
                 'effectiveDiscount' => $pricing['effectiveDiscount'],
+                'negotiatedDiscount' => $pricing['negotiatedDiscount'],
                 'invoiceMode' => $conditions['invoiceMode'],
                 'totalNet' => $pricing['totalNet'],
                 'totalInvoice' => $pricing['totalInvoice'],
+                'totalWeight' => $pricing['totalWeight'],
                 'discountExceeded' => $pricing['discountExceeded'],
             ];
             $payload['submittedAt'] = $now;
             $payload['submittedBy'] = $user['username'];
-            $status = 'analise';
+
+            // Approved on its own when nothing needs the gestor's eyes (see check_auto_approval).
+            $check = check_auto_approval($input['cart'], $conditions, $pricing, $existing ? $orderId : '', $input['clientName']);
+            $payload['approvalCheck'] = $check;
+            $autoApproved = $check['auto'];
+            if ($autoApproved) {
+                $payload['approvalAt'] = $now;
+                $payload['approvalBy'] = AUTO_APPROVER;
+                $payload['predictedBillingDate'] = gmdate('Y-m-d\TH:i:s\Z', time() + 8 * 86400);
+                $status = 'aprovado';
+            } else {
+                $status = 'analise';
+            }
         } else {
             $conditions['lowMarginJustification'] = '';
         }
@@ -280,7 +382,172 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
     }
 
     audit($submit ? 'order.submit' : 'order.save_draft', $orderId, $submit ? ['margin' => round($payload['pricingSnapshot']['margin'], 2)] : []);
-    return order_to_client(load_order_row($orderId));
+    if ($autoApproved) {
+        audit('order.auto_approve', $orderId);
+    }
+    return order_to_client(load_order_row($orderId), $user);
+}
+
+// ---------- Aprovação automática (decisão de 2026-11-10) ----------
+// An order is approved on its own when ALL of these hold; otherwise it goes to the gestor with
+// the reasons and the comparison:
+//  - the negotiated discount is within the modality's limit (no justification needed);
+//  - it weighs at least FREIGHT_TIER2_MIN_KG (lighter orders are analysed by the gestor);
+//  - compared with the reference order, neither the order's margin nor any product's margin
+//    or price got worse. Reference = the client's last approved order; for a product that
+//    order doesn't have (or a client with no orders yet), the last approved order in the
+//    system that has it. Prices are only compared within the same region and weight band.
+// The comparison leaves out the pagamento antecipado and the frete FOB, which are apart from the
+// negotiation (same reason they count in no limit).
+
+const AUTO_APPROVER = 'Aprovação automática';
+
+// Client names are typed freely, so "Mercado São José" and "mercado sao  jose" are the same.
+function client_key(string $name): string
+{
+    $name = mb_strtolower(trim($name), 'UTF-8');
+    $name = strtr($name, [
+        'á' => 'a', 'à' => 'a', 'â' => 'a', 'ã' => 'a', 'ä' => 'a', 'é' => 'e', 'ê' => 'e', 'è' => 'e', 'ë' => 'e',
+        'í' => 'i', 'î' => 'i', 'ì' => 'i', 'ï' => 'i', 'ó' => 'o', 'ô' => 'o', 'õ' => 'o', 'ò' => 'o', 'ö' => 'o',
+        'ú' => 'u', 'û' => 'u', 'ù' => 'u', 'ü' => 'u', 'ç' => 'c', 'ñ' => 'n',
+    ]);
+    return (string) preg_replace('/\s+/u', ' ', $name);
+}
+
+function comparison_conditions(array $conditions): array
+{
+    $conditions['earlyPayment'] = false;
+    $conditions['fobFreight'] = false;
+    return $conditions;
+}
+
+// Approved orders still active, newest first.
+function approved_reference_orders(string $excludeId): array
+{
+    $orders = [];
+    foreach (db()->query("SELECT id, hiperroll_number, payload FROM orders WHERE status = 'aprovado' AND deleted_at IS NULL")->fetchAll() as $row) {
+        if ($row['id'] === $excludeId) {
+            continue;
+        }
+        $payload = json_decode($row['payload'], true) ?: [];
+        if (empty($payload['cart']) || !is_array($payload['cart'])) {
+            continue;
+        }
+        $orders[] = [
+            'id' => $row['id'],
+            'number' => (string) ($payload['orderNumber'] ?? $row['hiperroll_number']),
+            'clientName' => (string) ($payload['clientName'] ?? ''),
+            'client' => client_key((string) ($payload['clientName'] ?? '')),
+            'at' => (string) ($payload['submittedAt'] ?? ''),
+            'cart' => $payload['cart'],
+            'conditions' => $payload['conditions'] ?? [],
+        ];
+    }
+    usort($orders, fn (array $a, array $b) => strcmp($b['at'], $a['at']));
+    return $orders;
+}
+
+function check_auto_approval(array $cart, array $conditions, array $pricing, string $orderId, string $clientName): array
+{
+    $reasons = [];
+    if ($pricing['requiresJustification']) {
+        $reasons[] = 'Desconto negociado acima do limite da modalidade (com justificativa)';
+    }
+    if ($pricing['totalWeight'] < FREIGHT_TIER2_MIN_KG) {
+        $reasons[] = sprintf('Pedido com %s kg, abaixo de %d kg', number_format($pricing['totalWeight'], 1, ',', '.'), FREIGHT_TIER2_MIN_KG);
+    }
+
+    $refs = approved_reference_orders($orderId);
+    $key = client_key($clientName);
+    $clientRef = null;
+    foreach ($refs as $ref) {
+        if ($key !== '' && $ref['client'] === $key) {
+            $clientRef = $ref;
+            break;
+        }
+    }
+    $orderRef = $clientRef ?? ($refs[0] ?? null);
+
+    // Totals of each reference order, computed only when needed and once.
+    $cache = [];
+    $totalsOf = function (array $ref) use (&$cache): array {
+        if (!isset($cache[$ref['id']])) {
+            $cache[$ref['id']] = calculate_order_totals($ref['cart'], comparison_conditions(normalize_order_conditions($ref['conditions'])));
+        }
+        return $cache[$ref['id']];
+    };
+
+    $current = calculate_order_totals($cart, comparison_conditions($conditions));
+    $check = [
+        'auto' => false,
+        'checkedAt' => now_iso(),
+        'margin' => $current['margin'],
+        'reference' => null,
+        'items' => [],
+        'reasons' => [],
+    ];
+
+    if ($orderRef === null) {
+        $reasons[] = 'Ainda não há pedido aprovado para comparar';
+    } else {
+        $refTotals = $totalsOf($orderRef);
+        $check['reference'] = [
+            'orderNumber' => $orderRef['number'],
+            'clientName' => $orderRef['clientName'],
+            'sameClient' => $clientRef !== null,
+            'margin' => $refTotals['margin'],
+        ];
+        if ($current['margin'] < $refTotals['margin'] - 0.005) {
+            $reasons[] = sprintf('Margem do pedido menor que a do pedido %s', $orderRef['number']);
+        }
+    }
+
+    $candidates = $clientRef ? array_merge([$clientRef], $refs) : $refs;
+    foreach ($current['lines'] as $line) {
+        $entry = [
+            'codigo' => $line['codigo'],
+            'unitPrice' => $line['unitPrice'],
+            'margin' => $line['margin'],
+            'refOrderNumber' => null,
+            'refUnitPrice' => null,
+            'refMargin' => null,
+            'samePlace' => false,
+            'worse' => '',
+        ];
+        $found = null;
+        foreach ($candidates as $ref) {
+            foreach ($totalsOf($ref)['lines'] as $refLine) {
+                if ($refLine['codigo'] === $line['codigo']) {
+                    $found = [$ref, $refLine];
+                    break 2;
+                }
+            }
+        }
+        if ($found === null) {
+            $reasons[] = "Produto {$line['codigo']} sem pedido aprovado para comparar";
+        } else {
+            [$ref, $refLine] = $found;
+            $samePlace = $line['uf'] === $refLine['uf'] && $line['cityType'] === $refLine['cityType'] && $line['weightTier'] === $refLine['weightTier'];
+            $lowerMargin = $line['margin'] < $refLine['margin'] - 0.005;
+            $lowerPrice = $samePlace && $line['unitPrice'] < $refLine['unitPrice'] - 0.005;
+            $worse = $lowerPrice && $lowerMargin ? 'preço e margem' : ($lowerPrice ? 'preço' : ($lowerMargin ? 'margem' : ''));
+            $entry = array_merge($entry, [
+                'refOrderNumber' => $ref['number'],
+                'refUnitPrice' => $refLine['unitPrice'],
+                'refMargin' => $refLine['margin'],
+                'samePlace' => $samePlace,
+                'worse' => $worse,
+            ]);
+            if ($worse !== '') {
+                $reasons[] = sprintf('Produto %s com %s menor que no pedido %s', $line['codigo'], $worse, $ref['number']);
+            }
+        }
+        $check['items'][] = $entry;
+    }
+
+    $check['reasons'] = $reasons;
+    $check['auto'] = !$reasons;
+    return $check;
 }
 
 function decide_orders(array $user, $ids, string $decision, string $reason, string $note): array
@@ -311,11 +578,14 @@ function decide_orders(array $user, $ids, string $decision, string $reason, stri
             $payload['rejectionReason'] = $reason;
             $payload['rejectionBy'] = $user['username'];
             $payload['rejectionAt'] = $now;
+            // Returned to the representative: if they correct and resend this same order, these
+            // items keep the prices they had (see locked_price_key).
+            $payload['lockedPrices'] = lock_order_prices($payload['cart'] ?? []);
             $status = 'rejeitado';
         }
         write_order($row, $payload, $status);
         audit($decision === 'approve' ? 'order.approve' : 'order.reject', $id, $decision === 'reject' ? ['reason' => $reason] : []);
-        $updated[] = order_to_client(load_order_row($id));
+        $updated[] = order_to_client(load_order_row($id), $user);
     }
     return ['orders' => $updated, 'skipped' => $skipped];
 }
@@ -366,7 +636,8 @@ function restore_order(array $user, string $id): array
         $payload[$field] = '';
     }
     $droppedInvoices = $payload['invoices'] ?? [];
-    unset($payload['billedQuantities'], $payload['billingHistory'], $payload['invoices'], $payload['pricingSnapshot']);
+    // A restored order is an ordinary draft again: its prices follow the table in force.
+    unset($payload['billedQuantities'], $payload['billingHistory'], $payload['invoices'], $payload['pricingSnapshot'], $payload['approvalCheck'], $payload['lockedPrices']);
     $payload['savedAt'] = now_iso();
     $payload['savedBy'] = $user['username'];
 
@@ -374,7 +645,7 @@ function restore_order(array $user, string $id): array
         ->execute([json_encode($payload, JSON_UNESCAPED_UNICODE), 'rascunho', now_iso(), $id]);
     delete_invoice_files($droppedInvoices);
     audit('order.restore', $id);
-    return order_to_client(load_order_row($id));
+    return order_to_client(load_order_row($id), $user);
 }
 
 // Representatives may only permanently delete their own drafts/rejected orders:

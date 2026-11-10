@@ -165,11 +165,23 @@ const authManager = {
         return [ROLES.GESTOR, ROLES.ADMIN].includes(this.getCurrentUserRole());
     },
 
+    // Margins (of products and orders) are only for the gestor and the admin; the server doesn't
+    // even send them to a representative (can_see_margins in api/lib/pricing.php).
+    canSeeMargins() {
+        return [ROLES.GESTOR, ROLES.ADMIN].includes(this.getCurrentUserRole());
+    },
+
+    isAdmin() {
+        return this.getCurrentUserRole() === ROLES.ADMIN;
+    },
+
     mustChangePassword() {
         return Boolean(this.profile && this.profile.mustChangePassword);
     },
 
     updateUI() {
+        // Everything marked .margin-only in the HTML shows up only for who may see margins.
+        document.body.classList.toggle('can-see-margins', Boolean(this.currentUser && this.canSeeMargins()));
         const loginBtn = document.getElementById('loginBtn');
         const currentUserDiv = document.getElementById('currentUser');
         const currentUserName = document.getElementById('currentUserName');
@@ -258,6 +270,13 @@ const orderSubmissionManager = {
         const data = await apiRequest('orders.trash', { method: 'POST', body: { ids } });
         await loadServerData();
         return data.trashed;
+    },
+
+    // Admin only, on the day the numbering moves over from the old web system.
+    async setNextNumber(nextNumber) {
+        const data = await apiRequest('orders.setNextNumber', { method: 'POST', body: { nextNumber } });
+        hiperrollOrderNumberManager.setPreview(data.nextNumber);
+        return data.nextNumber;
     },
 
     async registerBilling(submissionId, billedItemsMap, invoiceDataUrl, invoiceName) {
@@ -386,6 +405,7 @@ function buildCurrentOrderInput(extraConditions = {}) {
         })),
         conditions: { ...getCurrentOrderConditions(), ...extraConditions },
         // The server refuses a submit priced on an older table version (see reviewCartPrices).
+        // It also decides the weight band and, for an order the gestor returned, keeps its prices.
         pricingVersion: pricingCatalog.version
     };
 }

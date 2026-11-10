@@ -37,6 +37,7 @@ const CLICK_ACTIONS = {
     prepareDraftForSubmission: el => prepareDraftForSubmission(el.dataset.id),
     showDraftModal: el => showDraftModal(el.dataset.id),
     repeatOrder: el => repeatOrder(el.dataset.id),
+    correctReturnedOrder: el => correctReturnedOrder(el.dataset.id),
     deleteSubmission: el => deleteSubmission(el.dataset.id),
     openEmbeddedInvoice: el => openEmbeddedInvoice(el.dataset.id, Number(el.dataset.index)),
     reloadOrders: () => reloadOrders(),
@@ -118,7 +119,8 @@ const INPUT_ACTIONS = {
 };
 
 const SUBMIT_ACTIONS = {
-    submitNewUser: (el, event) => submitNewUser(event)
+    submitNewUser: (el, event) => submitNewUser(event),
+    submitNextNumber: (el, event) => submitNextNumber(event)
 };
 
 function bindUiActions(eventName, attribute, actions) {

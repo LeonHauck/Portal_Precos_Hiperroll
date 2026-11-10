@@ -31,9 +31,10 @@ async function init() {
         console.warn('Tabela de preços do servidor indisponível; usando data.js.', e);
     }
 
-    // api/data.php only delivers data.js to a logged-in session, so a session created after the
-    // page loaded needs one reload. The flag prevents a reload loop. Not needed after the import.
-    const needsDataJs = !(serverCatalog && serverCatalog.imported);
+    // api/data.php only delivers data.js to a logged-in gestor/admin (who take it to the database),
+    // so a session created after the page loaded needs one reload. The flag prevents a reload
+    // loop. Not needed after the import, and never for a representative (no data.js for them).
+    const needsDataJs = !(serverCatalog && serverCatalog.imported) && authManager.canViewPricingAdmin();
     if (needsDataJs && (window.PORTAL_DATA_LOCKED !== false || typeof PRODUTOS_CSV === 'undefined')) {
         if (!sessionStorage.getItem('hr_data_reload')) {
             sessionStorage.setItem('hr_data_reload', '1');
@@ -51,7 +52,6 @@ async function init() {
     document.getElementById('productSearch').addEventListener('input', updateResults);
     document.getElementById('stateSelect').addEventListener('change', onStateChange);
     document.getElementById('cityType').addEventListener('change', updateResults);
-    document.getElementById('weightTier').addEventListener('change', updateResults);
 
     try {
         await loadServerData();

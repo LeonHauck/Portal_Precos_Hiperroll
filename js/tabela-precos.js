@@ -29,7 +29,8 @@ const PRICING_FIELD_LABELS = Object.freeze({
     removido: 'Praça removida'
 });
 const PRICING_MONEY_FIELDS = ['custo_base', 'desp_com', 'desp_adm', 'price100', 'tier1', 'tier2', 'price_override'];
-const PRACA_OPTIONS = ['Capital', 'Interior', 'Fluvial'];
+// "Especial" = a city with its own freight inside a state (today Juazeiro/BA); its name goes in "Descrição".
+const PRACA_OPTIONS = ['Capital', 'Interior', 'Fluvial', 'Especial'];
 
 let pricingTabSection = 'lines';
 let pricingProductFilter = '';

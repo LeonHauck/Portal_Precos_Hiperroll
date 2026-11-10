@@ -8,6 +8,7 @@ const ORDER_HISTORY_EVENTS = Object.freeze({
     save_draft: { label: 'Rascunho salvo', icon: 'edit', tone: 'draft' },
     submit: { label: 'Enviado para análise', icon: 'send', tone: 'review' },
     approve: { label: 'Aprovado', icon: 'check-circle', tone: 'approved' },
+    auto_approve: { label: 'Aprovado automaticamente (dentro da faixa e sem piora em relação ao pedido anterior)', icon: 'check-circle', tone: 'approved' },
     reject: { label: 'Rejeitado', icon: 'x-circle', tone: 'rejected' },
     billing: { label: 'Faturamento registrado', icon: 'package', tone: 'approved' },
     note: { label: 'Observação do gestor atualizada', icon: 'message', tone: 'neutral' },

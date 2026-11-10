@@ -35,7 +35,9 @@
             await waitFor(() => $('orderNumberHiperroll').value && productsData.length > 0);
             check('demo: barra de demonstração', Boolean($('demoBar')) && $('demoBar').textContent.includes('Gabriel Ferreira'));
             check('demo: representante logado sem servidor', authManager.getCurrentUser() === 'Rep.Demo' && !$('loginScreen').classList.contains('active'), authManager.getCurrentUser());
-            check('demo: 207 produtos do data.js', productsData.length === 207 && pricingCatalog.source === 'legacy');
+            // A demonstração começa com a tabela já no "banco": o representante nunca usa o data.js.
+            check('demo: 207 produtos vindos do banco simulado', productsData.length === 207 && pricingCatalog.source === 'server');
+            check('demo: representante não recebe margens', pricingCatalog.products.every(p => !('tableMargin' in p)) && PRICING_RULES.MARGIN_ALERT_BELOW === null);
             check('demo: representante não vê aprovações nem preços', !visible($('supervisorBtn')) && !visible($('btn-tab-pricing')));
 
             $('stateSelect').value = 'MG';
@@ -94,7 +96,7 @@
             switchTab('tab-pricing');
             await importPricingCatalog();
             check('demo: tabela importada (versão 1, 14 grupos)', pricingCatalog.source === 'server' && pricingCatalog.version === 1 && pricingCatalog.costLines.length === 14, pricingCatalog.costLines.length);
-            const importedPrices = computeItemPrices(productsData[0], { uf: 'MG', cityType: 'Capital', weightTier: 'tier2' });
+            const importedPrices = computeItemPrices(productsData[0], { uf: 'MG', cityType: 'Capital', weightTier: 'tier1' });
             check('demo: depois da importação o CIF continua maior que o FOB', importedPrices.rate > 0 && Math.abs(importedPrices.fob - mgPrices.fob) < 1e-9 && Math.abs(importedPrices.cif - mgPrices.cif) < 1e-9, `${importedPrices.fob.toFixed(2)} / ${importedPrices.cif.toFixed(2)}`);
             const target = pricingCatalog.products[0];
             await sendPricingChange('pricing.saveProduct', { product: { ...target, priceOverride: 50 }, note: 'teste' });
@@ -122,8 +124,7 @@
 
             // ----- modalidade e faixa de desconto, conferidas pelo "servidor" -----
             cart.length = 0;
-            const marginsDesc = [...new Set(productsData.map(p => p.tableMargin))].sort((a, b) => b - a);
-            addToCart(productsData.find(p => p.tableMargin === marginsDesc[1]).codigo);   // second highest margin
+            addToCart(productsData[5].codigo);
             const send = (mode, discount, extra = {}) => {
                 const order = buildCurrentOrderInput({ invoiceMode: mode, manualDiscount: discount, ...extra });
                 return apiRequest('orders.submit', { method: 'POST', body: { id: null, order } });
@@ -137,21 +138,30 @@
             const aval = await rejects(send('aval', avalMax + 2));
             check('demo: servidor recusa Aval acima do limite sem justificativa', aval?.status === 422 && aval.message.includes(limitText(avalMax)), aval?.message);
             const garantia = await rejects(send('garantia', garantiaMax + 1));
-            check('demo: servidor recusa Garantia acima do limite sem justificativa', garantia?.status === 422 && garantia.message.includes(limitText(garantiaMax)), garantia?.message);
+            // Quando o limite da Garantia é o próprio teto, passar dele já é "não pode ser enviado".
+            check('demo: servidor recusa Garantia acima do limite sem justificativa', garantia?.status === 422 && garantia.message.includes(garantiaMax >= PRICING_RULES.MAX_NEGOTIATED_DISCOUNT ? 'não pode ser enviado' : limitText(garantiaMax)), garantia?.message);
             const tampered = buildCurrentOrderInput({ invoiceMode: 'aval', manualDiscount: 0 });
             tampered.cart[0].negotiatedPrice = tampered.cart[0].cif * 0.7; // 30% de desconto...
             tampered.cart[0].cif = tampered.cart[0].negotiatedPrice;       // ...escondido subindo o "preço de tabela"
-            const hidden = await rejects(apiRequest('orders.submit', { method: 'POST', body: { id: null, order: tampered } }));
-            check('demo: preço de tabela adulterado na tela não esconde o desconto', hidden?.status === 422 && hidden.message.includes(limitText(avalMax)), hidden?.message);
+            // O "servidor" recalcula o preço de tabela e mantém só o desconto em R$ que a tela mostrava
+            // (zero): o pedido fica no preço de tabela, sem os 30% escondidos.
+            const hidden = await apiRequest('orders.submit', { method: 'POST', body: { id: null, order: tampered } });
+            const realCif = computeItemPrices(productsData[5], tampered.cart[0]).cif;
+            check('demo: preço de tabela adulterado na tela não esconde desconto', Math.abs(hidden.order.cart[0].cif - realCif) < 1e-6 && Math.abs(hidden.order.cart[0].negotiatedPrice - realCif) < 1e-6 && hidden.order.pricingSnapshot.negotiatedDiscount === 0, `${hidden.order.cart[0].negotiatedPrice} / ${realCif}`);
             const okDiscount = avalMax - 2;
             const okAval = await send('aval', okDiscount);
             check('demo: Aval dentro do limite é aceito sem justificativa e guarda a modalidade', okAval.order.status === 'analise' && okAval.order.conditions.invoiceMode === 'aval' && okAval.order.pricingSnapshot.effectiveDiscount === okDiscount && okAval.order.conditions.lowMarginJustification === '');
-            const okOver = await send('garantia', garantiaMax + 5, { lowMarginJustification: 'Cliente estratégico, volume alto' });
+            const okOver = await send('aval', avalMax + 2, { lowMarginJustification: 'Cliente estratégico, volume alto' });
             check('demo: acima da faixa é aceito com justificativa e fica sinalizado', okOver.order.status === 'analise' && okOver.order.pricingSnapshot.discountExceeded === true && okOver.order.conditions.lowMarginJustification.length > 10);
+            const ceiling = PRICING_RULES.MAX_NEGOTIATED_DISCOUNT;
+            const overCeiling = await rejects(send('garantia', ceiling + 1, { lowMarginJustification: 'Cliente estratégico, volume alto' }));
+            check('demo: acima do teto é recusado mesmo com justificativa', overCeiling?.status === 422 && overCeiling.message.includes('não pode ser enviado'), overCeiling?.message);
+            const early = await send('livre', 0, { earlyPayment: true, fobFreight: true });
+            check('demo: antecipado e frete FOB não pedem justificativa no Livre', early.order.pricingSnapshot.negotiatedDiscount === 0 && early.order.pricingSnapshot.effectiveDiscount > 0 && early.order.conditions.lowMarginJustification === '');
             cart.length = 0;
 
             const saved = JSON.parse(localStorage.getItem('hr_demo_state_v2'));
-            check('demo: dados guardados no navegador', Object.keys(saved.orders).length === 4 && saved.catalog.version === 3 && saved.users.length === 5, Object.keys(saved.orders).length);
+            check('demo: dados guardados no navegador', Object.keys(saved.orders).length === 6 && saved.catalog.version === 3 && saved.users.length === 5, Object.keys(saved.orders).length);
             sessionStorage.setItem('hr_demo_user', String(created.user.id));
             const blocked = await rejects(apiRequest('orders.list'));
             check('demo: senha provisória bloqueia até trocar', blocked?.status === 403, blocked?.message);

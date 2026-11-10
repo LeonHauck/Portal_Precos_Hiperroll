@@ -83,6 +83,7 @@ function renderTrashDetails(deletionId, deletion) {
 
     // Same rule as everywhere else (with the order's discounts and contract).
     const totals = calculateOrderTotals(deletion.cart, deletion.conditions);
+    const showMargin = canSeeMargins();
     const rows = totals.lines.map(line => {
         const item = line.item;
         const billedQty = deletion.billedQuantities?.[item.codigo] || 0;
@@ -93,14 +94,14 @@ function renderTrashDetails(deletionId, deletion) {
                 <td class="num">${billedQty} / ${line.qty}</td>
                 <td class="num">${formatCurrency(line.negotiatedUnit)}</td>
                 <td class="num">${formatCurrency(line.subtotal)}</td>
-                <td class="num tone-${line.status.tone}">${formatPercent(line.marginPercent)}</td>
+                ${showMargin ? `<td class="num tone-${line.status.tone}">${formatPercent(line.marginPercent)}</td>` : ''}
             </tr>`;
     }).join('');
 
     contentDiv.innerHTML = `
         <table class="table table--compact">
             <thead>
-                <tr><th>Produto</th><th class="num">Qtd</th><th class="num">Faturado</th><th class="num">Valor unit.</th><th class="num">Subtotal</th><th class="num">Margem</th></tr>
+                <tr><th>Produto</th><th class="num">Qtd</th><th class="num">Faturado</th><th class="num">Valor unit.</th><th class="num">Subtotal</th>${showMargin ? '<th class="num">Margem</th>' : ''}</tr>
             </thead>
             <tbody>${rows}</tbody>
         </table>

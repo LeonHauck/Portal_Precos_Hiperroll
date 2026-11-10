@@ -20,6 +20,7 @@ window.PORTAL_DATA_LOCKED = false;
     // que não vai para o Git. Os testes calculam o esperado a partir destes valores.
     const TEST_RULES = {
         defaultProductMargin: 12, earlyPaymentDiscount: 1.5, fobFreightDiscount: 2.5, minJustificationLength: 10, defaultInvoiceMode: 'livre',
+        maxNegotiatedDiscount: 18, marginAlertBelow: -4,
         invoiceModes: [
             { key: 'livre', name: 'Livre', invoiceShare: '100%', maxDiscount: 0, notice: '' },
             { key: 'aval', name: 'Aval', invoiceShare: '50%', maxDiscount: 8, notice: 'PEDIDO DEVE SER IMPLANTADO AVAL.' },
@@ -41,9 +42,20 @@ window.PORTAL_DATA_LOCKED = false;
         Object.assign(users.rep, { username: 'rep.demo', displayName: 'Representante Demo' });
         Object.assign(users.admin, { username: 'admin.demo', displayName: 'Administrador Demo' });
     }
-    const userKey = { repcat: 'rep', admincat: 'admin', shot: 'gestor', shotdark: 'gestor', shotmodal: 'gestor', mapping: 'rep', shotprod: 'gestor', productlist: 'rep', shotorder: 'rep', shothist: 'gestor', shothistdark: 'gestor', readme_precos: 'rep', readme_pedido: 'rep', readme_historico: 'gestor', readme_tabela: 'gestor', readme_aprovacoes: 'gestor', readme_pedidos: 'gestor', readme_faturamento: 'gestor', readme_usuarios: 'gestor', layout_hist: 'gestor', layout_super: 'gestor', layout_users: 'gestor', layout_mobile: 'rep', layout_full: 'rep', layout_dark: 'rep' }[mode] || mode;
+    const userKey = { repcat: 'rep', repnocat: 'rep', pedido: 'gestor', admincat: 'admin', shot: 'gestor', shotdark: 'gestor', shotmodal: 'gestor', mapping: 'rep', shotprod: 'gestor', productlist: 'rep', shotorder: 'rep', shothist: 'gestor', shothistdark: 'gestor', readme_precos: 'rep', readme_pedido: 'rep', readme_historico: 'gestor', readme_tabela: 'gestor', readme_aprovacoes: 'gestor', readme_pedidos: 'gestor', readme_faturamento: 'gestor', readme_usuarios: 'gestor', layout_hist: 'gestor', layout_super: 'gestor', layout_users: 'gestor', layout_mobile: 'rep', layout_full: 'rep', layout_dark: 'rep' }[mode] || mode;
     const me = mode === 'anon' || mode === 'readme_login' ? null : users[userKey];
-    const catalogPreImported = mode === 'repcat' || mode === 'admincat' || mode === 'readme_tabela';
+    // A representative never uses data.js (api/data.php doesn't deliver it to them): their scenarios
+    // start with the table already in the database, except 'repnocat'.
+    const catalogPreImported = ['rep', 'repcat', 'pedido', 'admincat', 'readme_tabela'].includes(mode) || (me && me.role === 'representante' && mode !== 'repnocat');
+    // Margins only for gestor/admin (can_see_margins in api/lib/pricing.php).
+    const seesMargins = () => me && ['gestor', 'admin'].includes(me.role);
+    const stripOrder = o => {
+        if (seesMargins()) return o;
+        delete o.approvalCheck;
+        (o.cart || []).forEach(item => { delete item.tableMargin; });
+        Object.values(o.lockedPrices || {}).forEach(lock => { delete lock.tableMargin; });
+        return o;
+    };
     const pad = n => String(n).padStart(5, '0');
     let counter = 0;
     const orders = {};
@@ -61,7 +73,13 @@ window.PORTAL_DATA_LOCKED = false;
             clientName: 'Mercado Teste', representativeName: 'João Rep', submittedBy: 'joao', savedBy: 'joao',
             submittedAt: new Date().toISOString(), savedAt: new Date().toISOString(), deletedAt: null,
             cart: [{ codigo: 'P-07007', descricao: 'TESTE', fob: 100, cif: 120, negotiatedPrice: 120, unitDiscount: 0, weight: 4, qty: 1 }],
-            conditions: { manualDiscount: 10, contract: 0, earlyPayment: false, fobFreight: false, earlyPaymentPercent: 1.5, fobFreightPercent: 2.5, lowMarginJustification: 'Cliente estratégico <script>x</script>' }
+            conditions: { manualDiscount: 10, contract: 0, earlyPayment: false, fobFreight: false, earlyPaymentPercent: 1.5, fobFreightPercent: 2.5, lowMarginJustification: 'Cliente estratégico <script>x</script>' },
+            // What check_auto_approval() wrote when it was sent (the reason text comes from the server).
+            approvalCheck: {
+                auto: false, margin: -2, reference: { orderNumber: '00003', clientName: 'Mercado Teste', sameClient: true, margin: 5 },
+                items: [{ codigo: 'P-07007', unitPrice: 108, margin: -2, refOrderNumber: '00003', refUnitPrice: 115, refMargin: 5, samePlace: true, worse: 'preço e margem' }],
+                reasons: ['Pedido com 4,0 kg, abaixo de 200 kg', 'Produto P-07007 com <b>preço e margem</b> menor que no pedido 00003']
+            }
         };
         // What the representative did on another computer: three saves, then the submit.
         ['save_draft', 'save_draft', 'save_draft', 'submit'].forEach((action, i) => events.push({
@@ -100,7 +118,8 @@ window.PORTAL_DATA_LOCKED = false;
     const ok = data => json(200, Object.assign({ success: true }, data));
     const err = (status, message, code) => json(status, Object.assign({ success: false, message }, code ? { code } : {}));
     const clone = o => JSON.parse(JSON.stringify(o));
-    const list = deleted => Object.values(orders).filter(o => Boolean(o.deletedAt) === deleted).map(clone);
+    const visibleOrder = o => stripOrder(clone(o));
+    const list = deleted => Object.values(orders).filter(o => Boolean(o.deletedAt) === deleted).map(visibleOrder);
     const round2 = v => Math.round(v * 100) / 100;
 
     // ----- price table (same rules as api/lib/catalog.php) -----
@@ -113,8 +132,69 @@ window.PORTAL_DATA_LOCKED = false;
         log('catalog', 'import', 'import', null, `${data.costLines.length} linhas`, 'Importação inicial do data.js');
     };
     const catalogPayload = () => catalog
-        ? { imported: true, version: catalog.version, canEdit: me.role === 'gestor', costLines: clone(catalog.costLines), freight: clone(catalog.freight), products: clone(catalog.products.filter(p => canAdmin() || p.active)) }
+        ? { imported: true, version: catalog.version, canEdit: me.role === 'gestor', costLines: clone(catalog.costLines), freight: clone(catalog.freight), products: clone(catalog.products.filter(p => canAdmin() || p.active)).map(p => { if (!seesMargins()) delete p.tableMargin; return p; }) }
         : { imported: false, version: 0, canEdit: me.role === 'gestor', costLines: [], freight: [], products: [] };
+
+    // ----- same order rules as api/lib/orders.php (locked prices, auto-approval) -----
+    const lockKey = item => `${item.codigo}|${item.uf || ''}|${item.cityType || ''}`;
+    const lockPrices = cart => Object.fromEntries((cart || []).map(item => [lockKey(item), { fob: item.fob, cif: item.cif, weight: item.weight, tableMargin: item.tableMargin, weightTier: item.weightTier || '' }]));
+    // Like apply_catalog_prices: margins come from the table (the representative's browser has none).
+    const applyServerPrices = (cart, locked) => cart.map(item => {
+        const lock = locked[lockKey(item)];
+        if (lock) return Object.assign(item, lock, { unitDiscount: Math.max(lock.cif - item.negotiatedPrice, 0) });
+        const product = catalog && catalog.products.find(p => p.codigo === item.codigo);
+        if (product) item.tableMargin = product.tableMargin;
+        return item;
+    });
+    const clientKey = name => String(name || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
+    const forComparison = (cart, conditions) => calculateOrderTotals(cart, Object.assign({}, conditions, { earlyPayment: false, fobFreight: false }));
+    const autoApprovalCheck = (order, excludeId) => {
+        const reasons = [];
+        const totals = calculateOrderTotals(order.cart, order.conditions);
+        if (totals.requiresJustification) reasons.push('Desconto negociado acima do limite da modalidade (com justificativa)');
+        if (totals.totalWeight < 200) reasons.push(`Pedido com ${formatBRL(totals.totalWeight, 1)} kg, abaixo de 200 kg`);
+        const refs = Object.values(orders)
+            .filter(o => o.id !== excludeId && o.status === 'aprovado' && !o.deletedAt && (o.cart || []).length)
+            .sort((a, b) => String(b.submittedAt || '').localeCompare(String(a.submittedAt || '')));
+        const key = clientKey(order.clientName);
+        const clientRef = key ? refs.find(r => clientKey(r.clientName) === key) || null : null;
+        const orderRef = clientRef || refs[0] || null;
+        const current = forComparison(order.cart, order.conditions);
+        const check = { auto: false, margin: current.margin, reference: null, items: [], reasons };
+        if (!orderRef) {
+            reasons.push('Ainda não há pedido aprovado para comparar');
+        } else {
+            const refTotals = forComparison(orderRef.cart, orderRef.conditions);
+            check.reference = { orderNumber: orderRef.orderNumber, clientName: orderRef.clientName, sameClient: Boolean(clientRef), margin: refTotals.margin };
+            if (current.margin < refTotals.margin - 0.005) reasons.push(`Margem do pedido menor que a do pedido ${orderRef.orderNumber}`);
+        }
+        const candidates = clientRef ? [clientRef, ...refs] : refs;
+        current.lines.forEach(line => {
+            const entry = { codigo: line.item.codigo, unitPrice: line.netUnit, margin: line.marginPercent, refOrderNumber: null, refUnitPrice: null, refMargin: null, samePlace: false, worse: '' };
+            let found = null;
+            for (const ref of candidates) {
+                const refLine = forComparison(ref.cart, ref.conditions).lines.find(l => l.item.codigo === line.item.codigo);
+                if (refLine) { found = [ref, refLine]; break; }
+            }
+            if (!found) {
+                reasons.push(`Produto ${entry.codigo} sem pedido aprovado para comparar`);
+            } else {
+                const [ref, refLine] = found;
+                const samePlace = line.item.uf === refLine.item.uf && line.item.cityType === refLine.item.cityType && line.item.weightTier === refLine.item.weightTier;
+                const lowerMargin = line.marginPercent < refLine.marginPercent - 0.005;
+                const lowerPrice = samePlace && line.netUnit < refLine.netUnit - 0.005;
+                const worse = lowerPrice && lowerMargin ? 'preço e margem' : lowerPrice ? 'preço' : lowerMargin ? 'margem' : '';
+                Object.assign(entry, { refOrderNumber: ref.orderNumber, refUnitPrice: refLine.netUnit, refMargin: refLine.marginPercent, samePlace, worse });
+                if (worse) reasons.push(`Produto ${entry.codigo} com ${worse} menor que no pedido ${ref.orderNumber}`);
+            }
+            check.items.push(entry);
+        });
+        check.auto = reasons.length === 0;
+        return check;
+    };
+    // Test hooks: the gestor approves / returns an order "in another browser".
+    window.__mockApprove = id => { Object.assign(orders[id], { status: 'aprovado', approvalBy: 'gestor.demo' }); };
+    window.__mockReject = (id, reason = 'Revisar a quantidade') => { Object.assign(orders[id], { status: 'rejeitado', rejectionReason: reason, lockedPrices: lockPrices(orders[id].cart) }); };
     const assertLine = l => {
         const costs = l.custoBase + l.despCom + l.despAdm;
         if (costs <= 0 || l.price100 <= costs) throw new Error(`Na linha "${l.name}", o preço 100% NF precisa ser maior que custo + despesas.`);
@@ -137,8 +217,11 @@ window.PORTAL_DATA_LOCKED = false;
 
         try {
             switch (action) {
-                case 'session':
-                    return ok({ user: me, rules: me ? TEST_RULES : null, csrfToken: FAKE_CSRF });
+                case 'session': {
+                    const rules = me ? clone(TEST_RULES) : null;
+                    if (rules && !seesMargins()) { delete rules.defaultProductMargin; delete rules.marginAlertBelow; }
+                    return ok({ user: me, rules, csrfToken: FAKE_CSRF });
+                }
                 case 'orders.list':
                     return ok({ orders: list(false), trash: list(true), nextNumber: pad(counter + 1) });
                 case 'orders.history': {
@@ -149,38 +232,60 @@ window.PORTAL_DATA_LOCKED = false;
                 case 'orders.saveDraft':
                 case 'orders.submit': {
                     if (!body.order.cart.length) return err(422, 'Adicione itens');
-                    if (action === 'orders.submit' && catalog && body.order.pricingVersion !== catalog.version) {
+                    const submit = action === 'orders.submit';
+                    // Own draft or own order returned by the gestor: updated in place (editable_order_row).
+                    const editable = body.id && orders[body.id] && orders[body.id].ownerId === me.id && !orders[body.id].deletedAt && ['rascunho', 'rejeitado'].includes(orders[body.id].status);
+                    const locked = editable ? (orders[body.id].lockedPrices || {}) : {};
+                    const hasUnlocked = body.order.cart.some(item => !locked[lockKey(item)]);
+                    if (submit && hasUnlocked && catalog && body.order.pricingVersion !== catalog.version) {
                         return err(409, 'A tabela de preços foi atualizada pelo gestor. Confira os novos valores antes de enviar.', 'pricing_outdated');
                     }
-                    let o = body.id && orders[body.id] && orders[body.id].status === 'rascunho' ? orders[body.id] : null;
+                    const input = clone(body.order);
+                    input.cart = applyServerPrices(input.cart, locked);
+                    let check = null;
+                    if (submit) {
+                        const totals = calculateOrderTotals(input.cart, input.conditions);
+                        if (totals.discountBlocked) return err(422, `${totals.alerts.join('. ')}. Reduza o desconto para enviar.`);
+                        if (totals.requiresJustification && String(input.conditions.lowMarginJustification || '').trim().length < 10) {
+                            return err(422, `${totals.alerts.join('. ')}. Informe uma justificativa com pelo menos 10 caracteres para enviar.`);
+                        }
+                        check = autoApprovalCheck(input, editable ? body.id : '');
+                    }
+                    let o = editable ? orders[body.id] : null;
                     if (!o) {
                         counter++;
                         o = { id: 'order_' + counter, ownerId: me.id, hiperrollNumber: pad(counter) };
                         orders[o.id] = o;
                     }
-                    if (action === 'orders.submit') {
-                        const totals = calculateOrderTotals(body.order.cart, body.order.conditions);
-                        if (totals.requiresJustification && String(body.order.conditions.lowMarginJustification || '').trim().length < 10) {
-                            return err(422, `${totals.alerts.join('. ')}. Informe uma justificativa com pelo menos 10 caracteres para enviar.`);
-                        }
-                    }
-                    Object.assign(o, clone(body.order), {
+                    Object.assign(o, input, {
                         orderNumber: body.order.clientOrderNumber || o.hiperrollNumber,
                         pricingVersion: catalog ? catalog.version : 0,
                         savedBy: me.username, submittedBy: me.username, savedAt: new Date().toISOString(), deletedAt: null,
-                        status: action === 'orders.submit' ? 'analise' : 'rascunho'
+                        status: submit ? (check.auto ? 'aprovado' : 'analise') : 'rascunho'
                     });
-                    if (action === 'orders.submit') o.submittedAt = new Date().toISOString();
-                    logEvent(action === 'orders.submit' ? 'submit' : 'save_draft', o.id);
-                    return ok({ order: clone(o), nextNumber: pad(counter + 1) });
+                    if (submit) {
+                        Object.assign(o, { submittedAt: new Date().toISOString(), approvalCheck: check, approvalBy: check.auto ? 'Aprovação automática' : '', rejectionReason: '' });
+                    }
+                    logEvent(submit ? 'submit' : 'save_draft', o.id);
+                    if (check && check.auto) logEvent('auto_approve', o.id);
+                    return ok({ order: visibleOrder(o), nextNumber: pad(counter + 1) });
+                }
+                case 'orders.setNextNumber': {
+                    if (me.role !== 'admin') return err(403, 'Você não tem permissão para esta ação.');
+                    const next = parseInt(body.nextNumber, 10);
+                    if (!(next > counter)) return err(422, `O próximo número não pode ser menor que ${pad(counter + 1)}: números já usados não voltam.`);
+                    counter = next - 1;
+                    return ok({ nextNumber: pad(counter + 1) });
                 }
                 case 'orders.trash':
                     body.ids.forEach(id => { orders[id].deletedAt = new Date().toISOString(); orders[id].deletedBy = me.username; logEvent('trash', id); });
                     return ok({ trashed: body.ids.length });
                 case 'orders.restore':
                     Object.assign(orders[body.id], { deletedAt: null, status: 'rascunho' });
+                    delete orders[body.id].lockedPrices;
+                    delete orders[body.id].approvalCheck;
                     logEvent('restore', body.id);
-                    return ok({ order: clone(orders[body.id]) });
+                    return ok({ order: visibleOrder(orders[body.id]) });
                 case 'orders.approve': {
                     if (me.role !== 'gestor') return err(403, 'Você não tem permissão para esta ação.');
                     const done = [];
@@ -189,6 +294,18 @@ window.PORTAL_DATA_LOCKED = false;
                         if (orders[id] && orders[id].status === 'analise') { orders[id].status = 'aprovado'; logEvent('approve', id); done.push(clone(orders[id])); } else { skipped++; }
                     });
                     return ok({ orders: done, skipped });
+                }
+                case 'orders.reject': {
+                    if (me.role !== 'gestor') return err(403, 'Você não tem permissão para esta ação.');
+                    const done = [];
+                    body.ids.forEach(id => {
+                        if (orders[id] && orders[id].status === 'analise') {
+                            window.__mockReject(id, body.reason);
+                            logEvent('reject', id, body.reason);
+                            done.push(clone(orders[id]));
+                        }
+                    });
+                    return ok({ orders: done, skipped: body.ids.length - done.length });
                 }
                 case 'users.list':
                     return ok({ users: [users.gestor, users.admin, users.rep] });

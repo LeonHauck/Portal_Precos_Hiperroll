@@ -5,7 +5,8 @@
 // v3: preço individual por produto (products.price_override).
 // v4: margem do produto no preço cheio (products.table_margin).
 // v5: índice da auditoria por alvo, usado pelo histórico de cada pedido.
-const SCHEMA_VERSION = 5;
+// v6: praça "Especial" no frete (cidade com frete próprio, ex.: Juazeiro/BA).
+const SCHEMA_VERSION = 6;
 
 const DENY_ALL_HTACCESS = "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order allow,deny\n    Deny from all\n</IfModule>\n";
 
@@ -134,7 +135,7 @@ function migrate(PDO $pdo): void
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS freight_rates (
                 uf TEXT NOT NULL,
-                praca_type TEXT NOT NULL CHECK (praca_type IN ('Capital', 'Interior', 'Fluvial')),
+                praca_type TEXT NOT NULL CHECK (praca_type IN ('Capital', 'Interior', 'Fluvial', 'Especial')),
                 label TEXT NOT NULL DEFAULT '',
                 tier1 REAL NOT NULL,
                 tier2 REAL NOT NULL,
@@ -178,6 +179,26 @@ function migrate(PDO $pdo): void
             )
         ");
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_price_history_created ON price_history(created_at)');
+
+        // v6: SQLite can't change a CHECK, so a freight table created before "Especial" existed
+        // is copied into a new one with the wider list.
+        $freightSql = (string) $pdo->query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'freight_rates'")->fetchColumn();
+        if ($freightSql !== '' && strpos($freightSql, "'Especial'") === false) {
+            $pdo->exec("
+                CREATE TABLE freight_rates_v6 (
+                    uf TEXT NOT NULL,
+                    praca_type TEXT NOT NULL CHECK (praca_type IN ('Capital', 'Interior', 'Fluvial', 'Especial')),
+                    label TEXT NOT NULL DEFAULT '',
+                    tier1 REAL NOT NULL,
+                    tier2 REAL NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (uf, praca_type)
+                )
+            ");
+            $pdo->exec('INSERT INTO freight_rates_v6 (uf, praca_type, label, tier1, tier2, updated_at) SELECT uf, praca_type, label, tier1, tier2, updated_at FROM freight_rates');
+            $pdo->exec('DROP TABLE freight_rates');
+            $pdo->exec('ALTER TABLE freight_rates_v6 RENAME TO freight_rates');
+        }
 
         $pdo->exec('PRAGMA user_version = ' . SCHEMA_VERSION);
         $pdo->commit();

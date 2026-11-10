@@ -10,15 +10,23 @@ return [
     // Margem usada quando um produto da tabela não tem margem informada (%).
     'default_product_margin' => 12.0,
 
-    // Desconto do pagamento antecipado e do frete FOB (%). Contam no desconto total do pedido.
+    // Desconto do pagamento antecipado e do frete FOB (%). Baixam o preço (e a margem), mas ficam
+    // fora do limite da modalidade e do teto abaixo: só o desconto negociado conta neles.
     'early_payment_discount' => 1.5,
     'fob_freight_discount' => 2.5,
 
     // Tamanho mínimo da justificativa quando o desconto passa do limite da modalidade.
     'min_justification_length' => 10,
 
-    // Modalidades que o representante escolhe no pedido. maxDiscount = desconto total permitido
-    // contra o preço de tabela (%); notice = aviso mostrado quando o pedido tem desconto.
+    // Teto do desconto negociado (%): acima dele o pedido não é enviado, nem com justificativa.
+    'max_negotiated_discount' => 18.0,
+
+    // Margem do pedido ou do item (%) abaixo da qual o gestor vê o alerta forte.
+    'margin_alert_below' => -4.0,
+
+    // Modalidades que o representante escolhe no pedido. maxDiscount = desconto negociado permitido
+    // contra o preço de tabela (%), acima dele só com justificativa; notice = aviso mostrado quando
+    // o pedido tem desconto.
     'invoice_modes' => [
         'livre' => ['name' => 'Livre', 'invoiceShare' => '100%', 'maxDiscount' => 0.0, 'notice' => ''],
         'aval' => ['name' => 'Aval', 'invoiceShare' => '50%', 'maxDiscount' => 8.0, 'notice' => 'PEDIDO DEVE SER IMPLANTADO AVAL.'],

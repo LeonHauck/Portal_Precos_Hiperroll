@@ -24,10 +24,14 @@ function pricing_rules(): array
     if (!is_array($raw)) {
         $invalid('ele precisa terminar com "return [ ... ];"');
     }
-    foreach (['default_product_margin', 'early_payment_discount', 'fob_freight_discount', 'min_justification_length'] as $key) {
+    foreach (['default_product_margin', 'early_payment_discount', 'fob_freight_discount', 'min_justification_length', 'max_negotiated_discount'] as $key) {
         if (!isset($raw[$key]) || !is_numeric($raw[$key]) || $raw[$key] < 0) {
             $invalid("falta o número '{$key}'");
         }
+    }
+    // The only rule that may be negative (a margin below zero).
+    if (!isset($raw['margin_alert_below']) || !is_numeric($raw['margin_alert_below'])) {
+        $invalid("falta o número 'margin_alert_below'");
     }
     $modes = [];
     foreach (($raw['invoice_modes'] ?? []) as $key => $mode) {
@@ -53,9 +57,13 @@ function pricing_rules(): array
         'earlyPaymentDiscount' => (float) $raw['early_payment_discount'],
         'fobFreightDiscount' => (float) $raw['fob_freight_discount'],
         'minJustificationLength' => (int) $raw['min_justification_length'],
+        // Teto do desconto negociado: acima dele o pedido não é enviado, nem com justificativa.
+        'maxNegotiatedDiscount' => (float) $raw['max_negotiated_discount'],
+        // Margem abaixo da qual o gestor vê o alerta forte (só gestor e admin recebem este número).
+        'marginAlertBelow' => (float) $raw['margin_alert_below'],
         // Modalidade da nota, escolhida pelo representante em cada pedido. maxDiscount é o desconto
-        // total permitido contra o preço de tabela; acima dele o envio exige justificativa. notice
-        // aparece para o representante e o gestor sempre que o pedido tem algum desconto.
+        // NEGOCIADO permitido contra o preço de tabela; acima dele o envio exige justificativa.
+        // notice aparece para o representante e o gestor sempre que o pedido tem algum desconto.
         'invoiceModes' => $modes,
         'defaultInvoiceMode' => $defaultMode,
     ];
@@ -77,15 +85,26 @@ function invoice_mode_label(array $mode): string
     return sprintf('%s (%s)', $mode['name'], $mode['invoiceShare']);
 }
 
+// Margins (of products and orders) are for the gestor and the admin only: representatives never
+// receive them, neither on screen nor in the data the API sends (decision of 2026-11-10).
+function can_see_margins(?array $user): bool
+{
+    return $user !== null && in_array($user['role'], [ROLE_GESTOR, ROLE_ADMIN], true);
+}
+
 // What the screen needs to show the same calculations while the order is being built.
-function pricing_rules_for_client(): array
+function pricing_rules_for_client(?array $user): array
 {
     $rules = pricing_rules();
     $modes = [];
     foreach ($rules['invoiceModes'] as $key => $mode) {
         $modes[] = ['key' => $key] + $mode;
     }
-    return ['invoiceModes' => $modes] + $rules;
+    $client = ['invoiceModes' => $modes] + $rules;
+    if (!can_see_margins($user)) {
+        unset($client['defaultProductMargin'], $client['marginAlertBelow']);
+    }
+    return $client;
 }
 
 // Percentages always come from the server rules, never from the request body,
@@ -127,54 +146,83 @@ function format_percent(float $value): string
 // The contract raises the invoice but is paid out by Hiperroll, so it lowers the margin.
 // The margin is stored for the gestor to see; it blocks nothing.
 //
-// DESCONTO: what the customer pays against the table price (item discounts, order discount,
-// antecipado and frete FOB all count). Above the modality's limit the order needs a justification.
+// DESCONTO: two numbers.
+//  - negotiatedDiscount: what the representative negotiated (item discounts + order discount)
+//    against the table price. It is the one checked against the modality's limit (above it, only
+//    with a justification) and against the ceiling maxNegotiatedDiscount (above it, never).
+//  - effectiveDiscount: everything the customer pays less than the table, adding the pagamento
+//    antecipado and the frete FOB. Those two are shown apart and count in no limit (2026-11-10).
 function calculate_order_totals(array $cart, array $conditions): array
 {
     $discountPercent = order_discount_percent($conditions);
     $discountFactor = max(1 - $discountPercent / 100, 0);
+    $negotiatedFactor = max(1 - $conditions['manualDiscount'] / 100, 0);
     $contractFactor = 1 + $conditions['contract'] / 100;
 
     $totalNet = 0.0;
+    $totalNegotiated = 0.0;
     $totalInvoice = 0.0;
     $totalProfit = 0.0;
     $totalTable = 0.0;
+    $totalWeight = 0.0;
+    $lines = [];
     foreach ($cart as $item) {
         $qty = (float) $item['qty'];
         $negotiatedUnit = $item['negotiatedPrice'] > 0 ? $item['negotiatedPrice'] : $item['cif'];
         $tableUnit = $item['cif'] > 0 ? $item['cif'] : $negotiatedUnit;
         $netUnit = $negotiatedUnit * $discountFactor;
+        $invoiceUnit = $netUnit * $contractFactor;
         $productMargin = $item['tableMargin'] ?? pricing_default_product_margin();
         $keepUnit = $tableUnit * (1 - $productMargin / 100);
         $totalNet += $netUnit * $qty;
-        $totalInvoice += $netUnit * $contractFactor * $qty;
+        $totalNegotiated += $negotiatedUnit * $negotiatedFactor * $qty;
+        $totalInvoice += $invoiceUnit * $qty;
         $totalProfit += ($netUnit - $keepUnit) * $qty;
         $totalTable += $tableUnit * $qty;
+        $totalWeight += (float) ($item['weight'] ?? 0) * $qty;
+        $lines[] = [
+            'codigo' => $item['codigo'],
+            'uf' => $item['uf'] ?? '',
+            'cityType' => $item['cityType'] ?? '',
+            'weightTier' => $item['weightTier'] ?? '',
+            'unitPrice' => $netUnit,
+            'margin' => $invoiceUnit > 0 ? (($netUnit - $keepUnit) / $invoiceUnit) * 100 : 0.0,
+        ];
     }
 
     $margin = $totalInvoice > 0 ? ($totalProfit / $totalInvoice) * 100 : 0.0;
     // Rounded to cents of a percent so float noise never turns "exactly 10%" into "above 10%".
-    $effectiveDiscount = $totalTable > 0 ? max(round((1 - $totalNet / $totalTable) * 100, 2), 0.0) : 0.0;
+    $toDiscount = fn (float $paid) => $totalTable > 0 ? max(round((1 - $paid / $totalTable) * 100, 2), 0.0) : 0.0;
+    $effectiveDiscount = $toDiscount($totalNet);
+    $negotiatedDiscount = $toDiscount($totalNegotiated);
 
     $rules = pricing_rules();
     $mode = $rules['invoiceModes'][$conditions['invoiceMode']] ?? $rules['invoiceModes'][$rules['defaultInvoiceMode']];
-    $discountExceeded = count($cart) > 0 && $effectiveDiscount > $mode['maxDiscount'];
+    $hasItems = count($cart) > 0;
+    $discountBlocked = $hasItems && $negotiatedDiscount > $rules['maxNegotiatedDiscount'];
+    $discountExceeded = $hasItems && $negotiatedDiscount > $mode['maxDiscount'];
 
     $alerts = [];
-    if ($discountExceeded) {
+    if ($discountBlocked) {
+        $alerts[] = sprintf('Desconto negociado de %s%% acima do máximo de %s%%: o pedido não pode ser enviado', format_percent($negotiatedDiscount), format_percent($rules['maxNegotiatedDiscount']));
+    } elseif ($discountExceeded) {
         $alerts[] = $mode['maxDiscount'] == 0
-            ? sprintf('Desconto de %s%% na modalidade %s, que não permite desconto', format_percent($effectiveDiscount), invoice_mode_label($mode))
-            : sprintf('Desconto de %s%% acima do limite de %s%% da modalidade %s', format_percent($effectiveDiscount), format_percent($mode['maxDiscount']), invoice_mode_label($mode));
+            ? sprintf('Desconto negociado de %s%% na modalidade %s, que não permite desconto', format_percent($negotiatedDiscount), invoice_mode_label($mode))
+            : sprintf('Desconto negociado de %s%% acima do limite de %s%% da modalidade %s', format_percent($negotiatedDiscount), format_percent($mode['maxDiscount']), invoice_mode_label($mode));
     }
 
     return [
         'margin' => $margin,
         'discountPercent' => $discountPercent,
         'effectiveDiscount' => $effectiveDiscount,
+        'negotiatedDiscount' => $negotiatedDiscount,
         'totalNet' => $totalNet,
         'totalInvoice' => $totalInvoice,
+        'totalWeight' => $totalWeight,
         'discountExceeded' => $discountExceeded,
+        'discountBlocked' => $discountBlocked,
         'requiresJustification' => $discountExceeded,
         'alerts' => $alerts,
+        'lines' => $lines,
     ];
 }

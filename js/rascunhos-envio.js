@@ -24,15 +24,17 @@ function renderDraftsPanel() {
         return;
     }
 
+    const showMargin = canSeeMargins();
     panel.innerHTML = drafts.map(draft => {
         const totals = calculateOrderTotals(draft.cart, draft.conditions);
         const itemCount = (draft.cart || []).reduce((sum, item) => sum + (item.qty || 0), 0);
         const id = escapeHtml(draft.id);
+        const marginText = showMargin ? ` · margem <strong class="tone-${totals.status.tone}">${formatPercent(totals.margin)}</strong>` : '';
         return `
             <div class="draft-card ${draft.id === activeDraftId ? 'active' : ''}">
                 <div class="draft-card__main">
                     <div class="draft-card-title">${escapeHtml(draft.orderNumber || 'Sem número')} <span class="muted">· ${escapeHtml(draft.clientName || 'Cliente não informado')}</span></div>
-                    <div class="draft-card-meta">${itemCount} item(ns) · ${formatCurrency(totals.totalInvoice)} · margem <strong class="tone-${totals.status.tone}">${formatPercent(totals.margin)}</strong> · salvo em ${escapeHtml(formatDateTime(draft.savedAt))}</div>
+                    <div class="draft-card-meta">${itemCount} item(ns) · ${formatCurrency(totals.totalInvoice)}${marginText} · salvo em ${escapeHtml(formatDateTime(draft.savedAt))}</div>
                 </div>
                 <div class="draft-card-actions">
                     <button class="btn btn--secondary btn--sm" data-action="loadDraft" data-id="${id}" data-silent="true">${icon('edit')}Carregar</button>
@@ -146,6 +148,11 @@ function populateSubmitOrderDraftSelection() {
     if (!select) return;
 
     const drafts = getCurrentUserDrafts();
+    // An order the gestor returned, open for correction, is sent again as itself.
+    const returned = orderSubmissionManager.getById(activeDraftId);
+    if (returned && returned.status === 'rejeitado' && returned.ownerId === authManager.getCurrentUserId()) {
+        drafts.unshift(returned);
+    }
     const currentValue = activeDraftId && drafts.some(draft => draft.id === activeDraftId) ? activeDraftId : '';
 
     select.innerHTML = '<option value="__new__">Enviar como novo pedido</option>' + drafts.map(draft => {
@@ -205,15 +212,20 @@ function showSubmitOrderModal() {
     const submitMode = document.getElementById('submitMode');
     if (submitMode) submitMode.textContent = totals.mode ? totals.mode.short : '—';
 
-    const discountParts = describeOrderDiscounts(totals.conditions);
     const submitDiscounts = document.getElementById('submitDiscounts');
-    if (submitDiscounts) {
-        submitDiscounts.textContent = `${formatPercent(totals.effectiveDiscount)} sobre a tabela`
-            + (discountParts.length ? ` (${discountParts.join(' + ')})` : '');
+    if (submitDiscounts) submitDiscounts.textContent = describeDiscountBreakdown(totals);
+
+    const submitWeight = document.getElementById('submitWeight');
+    if (submitWeight) submitWeight.textContent = `${formatBRL(totals.totalWeight, 1)} kg`;
+    const weightNotice = document.getElementById('submitWeightNotice');
+    if (weightNotice) {
+        const light = totals.totalWeight < FREIGHT_TIER2_MIN_KG;
+        weightNotice.hidden = !light;
+        weightNotice.innerHTML = light ? `${icon('package')}<span>Abaixo de ${FREIGHT_TIER2_MIN_KG} kg: o pedido vai para análise do gestor.</span>` : '';
     }
 
     const submitMargin = document.getElementById('submitMargin');
-    if (submitMargin) submitMargin.textContent = `${formatPercent(totals.margin)} (${totals.status.label})`;
+    if (submitMargin) submitMargin.textContent = canSeeMargins() ? `${formatPercent(totals.margin)} (${totals.status.label})` : '';
 
     const submitNotice = document.getElementById('submitModeNotice');
     if (submitNotice) {
@@ -223,17 +235,21 @@ function showSubmitOrderModal() {
 
     const summaryBox = document.getElementById('submitSummaryBox');
     const summaryTitle = document.getElementById('submitSummaryTitle');
-    if (summaryBox) summaryBox.classList.toggle('is-warning', totals.requiresJustification);
+    if (summaryBox) summaryBox.classList.toggle('is-warning', totals.requiresJustification || totals.discountBlocked);
     if (summaryTitle) {
-        summaryTitle.textContent = totals.requiresJustification
+        summaryTitle.textContent = totals.discountBlocked || totals.requiresJustification
             ? totals.alerts.join('. ')
             : 'Pedido pronto para envio';
     }
 
+    // Above the ceiling there is nothing to justify: the order can't be sent until the discount drops.
     const lowMarginBlock = document.getElementById('submitLowMarginBlock');
     const justificationInput = document.getElementById('submitLowMarginJustification');
-    if (lowMarginBlock) lowMarginBlock.hidden = !totals.requiresJustification;
-    if (justificationInput && !totals.requiresJustification) justificationInput.value = '';
+    const needsJustification = totals.requiresJustification && !totals.discountBlocked;
+    if (lowMarginBlock) lowMarginBlock.hidden = !needsJustification;
+    if (justificationInput && !needsJustification) justificationInput.value = '';
+    const sendButton = document.querySelector('#submitOrderModal .btn-submit-order');
+    if (sendButton) sendButton.disabled = totals.discountBlocked;
 
     const modal = document.getElementById('submitOrderModal');
     if (modal) modal.style.display = 'flex';
@@ -268,7 +284,9 @@ async function submitOrder() {
 
         closeSubmitOrderModal();
         resetCurrentOrderForm();
-        alert(`Pedido ${order.orderNumber} enviado com sucesso! Aguardando aprovação do gestor.`);
+        alert(order.status === 'aprovado'
+            ? `Pedido ${order.orderNumber} enviado com sucesso e aprovado automaticamente.`
+            : `Pedido ${order.orderNumber} enviado com sucesso! Aguardando aprovação do gestor.`);
         const historySearchInput = document.getElementById('historySearchInput');
         if (historySearchInput) historySearchInput.value = '';
         switchTab('tab-history');
@@ -287,7 +305,7 @@ async function submitOrder() {
             showSubmitOrderModal();
             const refreshedMsg = document.getElementById('submitOrderMessage');
             if (refreshedMsg) {
-                refreshedMsg.textContent = 'Os preços foram revisados com a tabela nova. Confira a margem e clique em "Enviar pedido" novamente.';
+                refreshedMsg.textContent = 'Os preços foram atualizados para a tabela nova. Confira os valores e clique em "Enviar pedido" novamente.';
                 refreshedMsg.className = 'modal-msg modal-msg--warn';
             }
             return;
@@ -342,6 +360,23 @@ async function saveDraftCurrentOrder() {
     }
 }
 
+// Items of an order the gestor returned keep the prices they had (server: lock_order_prices).
+// The flag only stops this screen from repricing them; the server decides with its own copy.
+function markLockedItems(submission) {
+    const locked = submission && submission.lockedPrices && typeof submission.lockedPrices === 'object' ? submission.lockedPrices : {};
+    cart.forEach(item => {
+        item.priceLocked = Object.prototype.hasOwnProperty.call(locked, `${item.codigo}|${item.uf || ''}|${item.cityType || ''}`);
+    });
+}
+
+// "Corrigir e reenviar": the order returned by the gestor opens in the form and is sent again as
+// itself (same number), keeping the prices it had.
+async function correctReturnedOrder(submissionId) {
+    await loadDraftToCurrentOrder(submissionId, true);
+    switchTab('tab-order');
+    alert('Pedido devolvido aberto para correção. Os itens que já estavam nele mantêm o preço que tinham; itens novos usam a tabela atual. Ao enviar, ele volta com o mesmo número.');
+}
+
 async function loadDraftToCurrentOrder(submissionId, silent = false) {
     const submission = orderSubmissionManager.getById(submissionId);
     if (!submission) {
@@ -361,11 +396,12 @@ async function loadDraftToCurrentOrder(submissionId, silent = false) {
     setCurrentOrderConditions(submission.conditions);
     cart.length = 0;
     (Array.isArray(submission.cart) ? submission.cart : []).forEach(item => cart.push(JSON.parse(JSON.stringify(item))));
+    markLockedItems(submission);
     updateOrderTable();
     updateHeaderInfo();
     renderDraftsPanel();
     closeOrderHistoryModal();
-    const repriced = await reviewCartPrices('A tabela de preços mudou desde que este rascunho foi salvo.');
+    const repriced = await reviewCartPrices('A tabela de preços mudou desde que este rascunho foi salvo. Como ele ainda não foi enviado, passa a usar a tabela nova.');
     if (!silent && repriced === 'none') {
         alert('Rascunho carregado. Edite o pedido ou envie quando estiver pronto.');
     }
@@ -389,11 +425,12 @@ async function repeatOrder(submissionId) {
     setCurrentOrderConditions(submission.conditions);
     cart.length = 0;
     (Array.isArray(submission.cart) ? submission.cart : []).forEach(item => cart.push(JSON.parse(JSON.stringify(item))));
+    cart.forEach(item => { item.priceLocked = false; }); // a repeated order is a new order: table in force
     updateOrderTable();
     renderDraftsPanel();
     closeOrderHistoryModal();
     switchTab('tab-order');
-    const repriced = await reviewCartPrices('A tabela de preços mudou desde este pedido.');
+    const repriced = await reviewCartPrices('A tabela de preços mudou desde este pedido. O pedido novo usa a tabela atual.');
     if (repriced === 'none') {
         alert('Pedido repetido como novo pedido. Ajuste os dados se necessário e envie novamente.');
     }

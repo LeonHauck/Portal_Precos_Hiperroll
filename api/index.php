@@ -67,7 +67,7 @@ function handle_login(array $body): void
 
     $current = current_user(true);
     audit('user.login', (string) $row['id']);
-    json_response(200, ['success' => true, 'user' => public_user($current), 'rules' => pricing_rules_for_client(), 'csrfToken' => csrf_token()]);
+    json_response(200, ['success' => true, 'user' => public_user($current), 'rules' => pricing_rules_for_client($current), 'csrfToken' => csrf_token()]);
 }
 
 function export_backup(): void
@@ -101,7 +101,7 @@ switch ($action) {
             'success' => true,
             'user' => $user ? public_user($user) : null,
             // Commercial rules for the screen's calculations (api/lib/pricing.php is their only source).
-            'rules' => $user ? pricing_rules_for_client() : null,
+            'rules' => $user ? pricing_rules_for_client($user) : null,
             'csrfToken' => csrf_token(),
         ]);
         break;
@@ -138,6 +138,14 @@ switch ($action) {
         expect_method('GET');
         require_login();
         json_response(200, ['success' => true, 'nextNumber' => peek_next_hiperroll_number()]);
+        break;
+
+    // Used once, on the day the commercial team moves from the old web system: the numbering
+    // continues from the number in use there.
+    case 'orders.setNextNumber':
+        expect_method('POST');
+        require_role(ROLE_ADMIN);
+        json_response(200, ['success' => true, 'nextNumber' => set_next_hiperroll_number($body['nextNumber'] ?? null)]);
         break;
 
     case 'orders.history':

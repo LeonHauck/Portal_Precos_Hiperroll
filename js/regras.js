@@ -23,13 +23,15 @@ let activeDraftId = null;
 // pricing_rules_for_client) and applyServerRules() fills these two objects. The screen uses them
 // only to show the calculations while the order is being built; the server recalculates to decide.
 const PRICING_RULES = {
-    DEFAULT_PRODUCT_MARGIN: 0,     // produto sem margem informada na tabela
+    DEFAULT_PRODUCT_MARGIN: 0,     // produto sem margem informada na tabela (só gestor e admin recebem)
     EARLY_PAYMENT_DISCOUNT: 0,
     FOB_FREIGHT_DISCOUNT: 0,
-    MIN_JUSTIFICATION_LENGTH: 0
+    MIN_JUSTIFICATION_LENGTH: 0,
+    MAX_NEGOTIATED_DISCOUNT: Infinity, // teto do desconto negociado: acima dele o pedido não é enviado
+    MARGIN_ALERT_BELOW: null           // margem abaixo da qual o gestor vê o alerta forte (só gestor e admin)
 };
-// Modalidade da nota (Livre / Aval / Garantia): maxDiscount é o desconto total permitido contra o
-// preço de tabela; notice aparece para o representante e o gestor quando o pedido tem desconto.
+// Modalidade da nota (Livre / Aval / Garantia): maxDiscount é o desconto NEGOCIADO permitido contra
+// o preço de tabela; notice aparece para o representante e o gestor quando o pedido tem desconto.
 const INVOICE_MODES = {};
 let DEFAULT_INVOICE_MODE = '';
 
@@ -39,6 +41,8 @@ function applyServerRules(rules) {
     PRICING_RULES.EARLY_PAYMENT_DISCOUNT = Number(rules.earlyPaymentDiscount) || 0;
     PRICING_RULES.FOB_FREIGHT_DISCOUNT = Number(rules.fobFreightDiscount) || 0;
     PRICING_RULES.MIN_JUSTIFICATION_LENGTH = Number(rules.minJustificationLength) || 0;
+    PRICING_RULES.MAX_NEGOTIATED_DISCOUNT = Number.isFinite(Number(rules.maxNegotiatedDiscount)) && rules.maxNegotiatedDiscount !== null ? Number(rules.maxNegotiatedDiscount) : Infinity;
+    PRICING_RULES.MARGIN_ALERT_BELOW = rules.marginAlertBelow !== undefined && rules.marginAlertBelow !== null && Number.isFinite(Number(rules.marginAlertBelow)) ? Number(rules.marginAlertBelow) : null;
     Object.keys(INVOICE_MODES).forEach(key => delete INVOICE_MODES[key]);
     (rules.invoiceModes || []).forEach(mode => {
         INVOICE_MODES[mode.key] = {
@@ -55,9 +59,10 @@ function applyServerRules(rules) {
 }
 
 // Colour of a margin. Green = at (or above) the product's margin at full price; yellow = reduced
-// by discounts; red = negative. The margin is information for the gestor: what blocks an order
-// is the modality's discount range, not the margin.
-// tone is the CSS class suffix (tone-good / tone-warn / tone-bad); color is only for the PDF.
+// by discounts; red = negative; "crítica" = below the alert line set in the rules (the gestor sees
+// it highlighted). The margin is information for the gestor: what blocks an order is the
+// discount (modality's range and ceiling), not the margin.
+// tone is the CSS class suffix (tone-good / tone-warn / tone-bad / tone-critical); color is only for the PDF.
 function getMarginStatus(margin, referenceMargin) {
     if (margin >= referenceMargin - 0.005) {
         return { label: 'Margem cheia', tone: 'good', color: '#15803d', description: 'Margem cheia' };
@@ -65,7 +70,14 @@ function getMarginStatus(margin, referenceMargin) {
     if (margin >= 0) {
         return { label: 'Reduzida', tone: 'warn', color: '#b45309', description: 'Margem reduzida pelos descontos' };
     }
+    if (PRICING_RULES.MARGIN_ALERT_BELOW !== null && margin < PRICING_RULES.MARGIN_ALERT_BELOW) {
+        return { label: 'Crítica', tone: 'critical', color: '#991b1b', description: 'Margem muito abaixo do esperado' };
+    }
     return { label: 'Negativa', tone: 'bad', color: '#c53030', description: 'Margem negativa' };
+}
+
+function canSeeMargins() {
+    return typeof authManager !== 'undefined' && authManager.canSeeMargins();
 }
 
 // The order keeps the percentages it was sent with, so a later rule change never rewrites what
@@ -109,17 +121,22 @@ function formatMarginPercent(value) {
 // A discount on one item changes only that item; a discount on the order changes every item.
 // The contract % raises the invoice, but Hiperroll pays that amount out, so it lowers the margin.
 //
-// DESCONTO E MODALIDADE. The effective discount compares what the customer pays with the table
-// price (item discounts, order discount, pagamento antecipado and frete FOB all count). Each
-// modality allows a maximum (INVOICE_MODES); above it the order can only be sent with a
-// justification and reaches the gestor flagged. The margin itself blocks nothing.
+// DESCONTO E MODALIDADE (same as calculate_order_totals in api/lib/pricing.php). Two numbers:
+//  - negotiatedDiscount: what the representative negotiated (item discounts + order discount)
+//    against the table price. Each modality allows a maximum (INVOICE_MODES): above it the order
+//    can only be sent with a justification and reaches the gestor flagged. Above the ceiling
+//    MAX_NEGOTIATED_DISCOUNT it can't be sent at all.
+//  - effectiveDiscount: everything the customer pays less than the table, adding the pagamento
+//    antecipado and the frete FOB. Those two are shown apart and count in no limit.
+// The margin itself blocks nothing.
 function calculateOrderTotals(items, conditions) {
     const c = normalizeOrderConditions(conditions);
     const discountPercent = getOrderDiscountPercent(c);
     const discountFactor = Math.max(1 - discountPercent / 100, 0);
+    const negotiatedFactor = Math.max(1 - c.manualDiscount / 100, 0);
     const contractFactor = 1 + c.contract / 100;
 
-    const totals = { totalQty: 0, totalWeight: 0, totalFob: 0, totalGross: 0, totalNet: 0, totalInvoice: 0, totalProfit: 0, totalTable: 0 };
+    const totals = { totalQty: 0, totalWeight: 0, totalFob: 0, totalGross: 0, totalNet: 0, totalNegotiated: 0, totalInvoice: 0, totalProfit: 0, totalTable: 0 };
     let tableProfit = 0;
     const lines = (Array.isArray(items) ? items : []).map(item => {
         const qty = parseFloat(item.qty) || 0;
@@ -141,6 +158,7 @@ function calculateOrderTotals(items, conditions) {
         totals.totalFob += fobUnit * qty;
         totals.totalGross += negotiatedUnit * qty;
         totals.totalNet += netUnit * qty;
+        totals.totalNegotiated += negotiatedUnit * negotiatedFactor * qty;
         totals.totalInvoice += invoiceUnit * qty;
         totals.totalProfit += profitUnit * qty;
         totals.totalTable += tableUnit * qty;
@@ -158,16 +176,21 @@ function calculateOrderTotals(items, conditions) {
     // Margin the order would have at full table price (null while it is empty).
     const tableMargin = totals.totalTable > 0 ? Math.round((tableProfit / totals.totalTable) * 1e6) / 1e4 : null;
     // Rounded to cents of a percent so float noise never turns "exactly 10%" into "above 10%".
-    const effectiveDiscount = totals.totalTable > 0 ? Math.max(Math.round((1 - totals.totalNet / totals.totalTable) * 1e4) / 100, 0) : 0;
+    const toDiscount = paid => totals.totalTable > 0 ? Math.max(Math.round((1 - paid / totals.totalTable) * 1e4) / 100, 0) : 0;
+    const effectiveDiscount = toDiscount(totals.totalNet);
+    const negotiatedDiscount = toDiscount(totals.totalNegotiated);
 
     const mode = INVOICE_MODES[c.invoiceMode] || null;
     const hasItems = lines.length > 0;
-    const discountExceeded = hasItems && mode !== null && effectiveDiscount > mode.maxDiscount;
+    const discountBlocked = hasItems && negotiatedDiscount > PRICING_RULES.MAX_NEGOTIATED_DISCOUNT;
+    const discountExceeded = hasItems && mode !== null && negotiatedDiscount > mode.maxDiscount;
     const alerts = [];
-    if (discountExceeded) {
+    if (discountBlocked) {
+        alerts.push(`Desconto negociado de ${formatMarginPercent(negotiatedDiscount)}% acima do máximo de ${formatMarginPercent(PRICING_RULES.MAX_NEGOTIATED_DISCOUNT)}%: o pedido não pode ser enviado`);
+    } else if (discountExceeded) {
         alerts.push(mode.maxDiscount === 0
-            ? `Desconto de ${formatMarginPercent(effectiveDiscount)}% na modalidade ${mode.short}, que não permite desconto`
-            : `Desconto de ${formatMarginPercent(effectiveDiscount)}% acima do limite de ${formatMarginPercent(mode.maxDiscount)}% da modalidade ${mode.short}`);
+            ? `Desconto negociado de ${formatMarginPercent(negotiatedDiscount)}% na modalidade ${mode.short}, que não permite desconto`
+            : `Desconto negociado de ${formatMarginPercent(negotiatedDiscount)}% acima do limite de ${formatMarginPercent(mode.maxDiscount)}% da modalidade ${mode.short}`);
     }
 
     return {
@@ -175,11 +198,13 @@ function calculateOrderTotals(items, conditions) {
         conditions: c,
         discountPercent,
         effectiveDiscount,
+        negotiatedDiscount,
         lines,
         margin,
         tableMargin,
         mode,
         modeNotice: hasItems && mode !== null && mode.notice && effectiveDiscount > 0 ? mode.notice : '',
+        discountBlocked,
         discountExceeded,
         requiresJustification: discountExceeded,
         alerts,
@@ -190,10 +215,23 @@ function calculateOrderTotals(items, conditions) {
 function describeOrderDiscounts(conditions) {
     const c = normalizeOrderConditions(conditions);
     const parts = [];
-    if (c.manualDiscount > 0) parts.push(`Desconto manual ${formatPercent(c.manualDiscount)}`);
+    if (c.manualDiscount > 0) parts.push(`Desconto do pedido ${formatPercent(c.manualDiscount)}`);
     if (c.earlyPayment) parts.push(`Pagamento antecipado ${formatPercent(c.earlyPaymentPercent)}`);
     if (c.fobFreight) parts.push(`Frete FOB ${formatPercent(c.fobFreightPercent)}`);
     return parts;
+}
+
+// "Desconto negociado 5% + antecipado 1,5% + frete FOB 2,5% (total 9% sobre a tabela)" (example numbers): the
+// negotiated part, which the limits look at, and the two discounts that are apart from it.
+function describeDiscountBreakdown(totals) {
+    const c = totals.conditions;
+    const extras = [];
+    if (c.earlyPayment) extras.push(`antecipado ${formatPercent(c.earlyPaymentPercent)}`);
+    if (c.fobFreight) extras.push(`frete FOB ${formatPercent(c.fobFreightPercent)}`);
+    const negotiated = `Desconto negociado ${formatPercent(totals.negotiatedDiscount)}`;
+    return extras.length
+        ? `${negotiated} + ${extras.join(' + ')} (total ${formatPercent(totals.effectiveDiscount)} sobre a tabela)`
+        : negotiated;
 }
 
 // ===== Utilitários de tela =====
@@ -274,6 +312,7 @@ function formatDate(value) {
 // Used by the gestor's screens, the order list and the trash.
 function renderOrderItemsTable(submission, { showBilling = false } = {}) {
     const totals = calculateOrderTotals(submission.cart, submission.conditions);
+    const showMargin = canSeeMargins();
     const billed = submission.billedQuantities || {};
     const rows = totals.lines.map(line => {
         const item = line.item;
@@ -285,7 +324,7 @@ function renderOrderItemsTable(submission, { showBilling = false } = {}) {
                 <td class="num">${line.qty}</td>
                 ${showBilling ? `<td class="num tone-${billingTone}">${billedQty} / ${line.qty}</td>` : ''}
                 <td class="num">${formatCurrency(line.negotiatedUnit)}</td>
-                <td class="num tone-${line.status.tone}">${formatPercent(line.marginPercent)}</td>
+                ${showMargin ? `<td class="num tone-${line.status.tone}">${formatPercent(line.marginPercent)}</td>` : ''}
                 <td class="num">${formatCurrency(line.subtotal)}</td>
             </tr>`;
     }).join('');
@@ -298,7 +337,7 @@ function renderOrderItemsTable(submission, { showBilling = false } = {}) {
                         <th class="num">Qtd</th>
                         ${showBilling ? '<th class="num">Faturado</th>' : ''}
                         <th class="num">Valor unit.</th>
-                        <th class="num">Margem</th>
+                        ${showMargin ? '<th class="num">Margem</th>' : ''}
                         <th class="num">Subtotal</th>
                     </tr>
                 </thead>
@@ -327,7 +366,7 @@ function renderOrderConditionsSummary(submission) {
         ? `<div class="alert alert--warn">${icon('pin')}<span>${escapeHtml(totals.modeNotice)}</span></div>`
         : '';
 
-    const justificationHtml = totals.requiresJustification
+    const justificationHtml = totals.requiresJustification || totals.discountBlocked
         ? `<div class="alert alert--danger low-margin-alert">${icon('alert')}
                 <div>
                     ${totals.alerts.map(alert => `<strong>${escapeHtml(alert)}</strong>`).join('')}
@@ -338,17 +377,77 @@ function renderOrderConditionsSummary(submission) {
             </div>`
         : '';
 
+    const showMargin = canSeeMargins();
+    const marginHtml = showMargin
+        ? `<span>Margem do pedido <strong class="tone-${totals.status.tone}">${formatPercent(totals.margin)}</strong> <span class="muted">(${totals.status.label})</span></span>`
+        : '';
+    const criticalHtml = showMargin && totals.lines.length && totals.status.tone === 'critical'
+        ? `<div class="alert alert--critical margin-critical-alert">${icon('alert')}<div><strong>Margem crítica: ${formatPercent(totals.margin)}</strong><div>Abaixo de ${formatPercent(PRICING_RULES.MARGIN_ALERT_BELOW)}, o ponto de alerta das regras comerciais. Confira antes de aprovar.</div></div></div>`
+        : '';
+
     return `
         <div class="order-conditions-summary">
             <div class="chip-row">${modeHtml}${discountsHtml}${contractHtml}</div>
             <div class="kv-row">
-                <span>Desconto sobre a tabela <strong>${formatPercent(totals.effectiveDiscount)}</strong></span>
-                <span>Margem do pedido <strong class="tone-${totals.status.tone}">${formatPercent(totals.margin)}</strong> <span class="muted">(${totals.status.label})</span></span>
+                <span>${escapeHtml(describeDiscountBreakdown(totals))}</span>
+                ${marginHtml}
             </div>
+            ${criticalHtml}
             ${noticeHtml}
             ${justificationHtml}
+            ${renderApprovalCheck(submission)}
         </div>
     `;
+}
+
+// Name the server writes as approver of the orders it approves by itself (AUTO_APPROVER in orders.php).
+const AUTO_APPROVER = 'Aprovação automática';
+
+function isAutoApproved(submission) {
+    return Boolean(submission) && submission.status === 'aprovado' && submission.approvalBy === AUTO_APPROVER;
+}
+
+// For the gestor: why the order came for analysis (or why it was approved by itself) and how it
+// compares, product by product, with the reference order. Built by check_auto_approval() in
+// api/lib/orders.php when the order was sent; representatives never receive it.
+function renderApprovalCheck(submission) {
+    const check = submission && submission.approvalCheck;
+    if (!check || !canSeeMargins()) return '';
+    const head = check.auto
+        ? `<div class="alert alert--info">${icon('check-circle')}<div><strong>Aprovado automaticamente</strong><div>Dentro da faixa de desconto, com peso suficiente e sem piora de preço ou margem em relação ao pedido de referência.</div></div></div>`
+        : (check.reasons || []).length
+            ? `<div class="alert alert--warn">${icon('info')}<div><strong>Veio para sua análise porque:</strong><ul class="approval-reasons">${check.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul></div></div>`
+            : '';
+    const ref = check.reference;
+    const refText = ref
+        ? `Comparado com o pedido <strong>${escapeHtml(ref.orderNumber)}</strong> (${ref.sameClient ? 'último pedido deste cliente' : `último pedido do sistema, cliente ${escapeHtml(ref.clientName || 'não informado')}`}): margem do pedido ${formatPercent(ref.margin)} → <strong class="${check.margin < ref.margin - 0.005 ? 'tone-bad' : ''}">${formatPercent(check.margin)}</strong>`
+        : 'Sem pedido aprovado anterior para comparar.';
+    const money = value => value === null || value === undefined ? '—' : formatCurrency(value);
+    const percent = value => value === null || value === undefined ? '—' : formatPercent(value);
+    const rows = (check.items || []).map(item => {
+        const priceTone = item.worse.includes('preço') ? 'tone-bad' : '';
+        const marginTone = item.worse.includes('margem') ? 'tone-bad' : '';
+        const refPrice = item.refOrderNumber && !item.samePlace ? '<span class="muted" title="O pedido de referência é de outra região ou faixa de peso: o preço não é comparado">outra região</span>' : money(item.refUnitPrice);
+        return `
+            <tr>
+                <td><strong>${escapeHtml(item.codigo)}</strong></td>
+                <td class="num">${refPrice}</td>
+                <td class="num ${priceTone}">${money(item.unitPrice)}</td>
+                <td class="num">${percent(item.refMargin)}</td>
+                <td class="num ${marginTone}">${percent(item.margin)}</td>
+                <td>${item.refOrderNumber ? escapeHtml(item.refOrderNumber) : '<span class="muted">sem histórico</span>'}</td>
+            </tr>`;
+    }).join('');
+    return `
+        <div class="approval-check">
+            ${head}
+            <p class="approval-check__ref">${refText}</p>
+            ${rows ? `<div class="table-wrap"><table class="table table--compact">
+                <thead><tr><th>Produto</th><th class="num">Preço antes</th><th class="num">Preço agora</th><th class="num">Margem antes</th><th class="num">Margem agora</th><th>Pedido de referência</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table></div>` : ''}
+            <p class="muted approval-check__note">Preço e margem sem o pagamento antecipado e o frete FOB, que ficam à parte da negociação.</p>
+        </div>`;
 }
 
 function setLoadedOrderReference(reference = '') {

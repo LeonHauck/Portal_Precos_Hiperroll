@@ -6,8 +6,12 @@
 // o banco vira a fonte oficial: toda alteração guarda "de → para" em price_history e incrementa
 // a versão da tabela (counters.pricing_version), que os pedidos gravam para rastreabilidade.
 
-const PRACA_TYPES = ['Capital', 'Interior', 'Fluvial'];
+// "Especial" = a city with its own freight inside a state, shown by its name (today only
+// Juazeiro/BA, a specific customer). Same list as PRACA_LABELS in js/catalogo.js.
+const PRACA_TYPES = ['Capital', 'Interior', 'Fluvial', 'Especial'];
+// tier1 = 150 to 199 kg, tier2 = 200 kg or more. The band follows the order's total weight.
 const FREIGHT_TIERS = ['tier1', 'tier2'];
+const FREIGHT_TIER2_MIN_KG = 200;
 const MAX_PRICE_VALUE = 100000.0;
 const MAX_PRODUCT_WEIGHT = 10000.0;
 const MAX_CATALOG_ROWS = 5000;
@@ -132,6 +136,11 @@ function product_to_client(array $row): array
     ];
 }
 
+function freight_tier_for_weight(float $totalWeight): string
+{
+    return $totalWeight >= FREIGHT_TIER2_MIN_KG ? 'tier2' : 'tier1';
+}
+
 function all_cost_lines(): array
 {
     return db()->query('SELECT * FROM cost_lines ORDER BY name')->fetchAll();
@@ -163,18 +172,25 @@ function find_product(string $codigo): ?array
     return $stmt->fetch() ?: null;
 }
 
-// Representatives only receive active products; gestor/admin also see inactive ones to reactivate them.
+// Representatives only receive active products, and without their margins; gestor/admin also
+// see inactive ones to reactivate them.
 function get_catalog(array $user): array
 {
     $where = can_view_pricing_admin($user) ? '' : ' WHERE active = 1';
-    $products = db()->query('SELECT * FROM products' . $where . ' ORDER BY sort_order, codigo')->fetchAll();
+    $products = array_map('product_to_client', db()->query('SELECT * FROM products' . $where . ' ORDER BY sort_order, codigo')->fetchAll());
+    if (!can_see_margins($user)) {
+        $products = array_map(function (array $product): array {
+            unset($product['tableMargin']);
+            return $product;
+        }, $products);
+    }
     return [
         'imported' => catalog_is_imported(),
         'version' => pricing_version(),
         'canEdit' => can_edit_pricing($user),
         'costLines' => array_map('cost_line_to_client', all_cost_lines()),
         'freight' => array_map('freight_to_client', all_freight_rates()),
-        'products' => array_map('product_to_client', $products),
+        'products' => $products,
     ];
 }
 
@@ -807,9 +823,30 @@ function server_item_prices(array $product, ?array $freightRate, string $weightT
 // With the catalog in the database, the product's margin, the FOB and, when the item carries its
 // region, the CIF (the table price discounts and margin are measured against) are recalculated
 // here: an outdated or tampered browser can't change the margin or hide a discount.
-function apply_catalog_prices(array $cart, bool $submit): array
+//  - The weight band comes from the order's total weight, never from the browser.
+//  - When the table price changed, the item keeps the discount in R$ the representative gave
+//    (same as the screen does): new orders and drafts always follow the table in force.
+//  - $locked: items of an order the gestor returned keep the prices they had (see
+//    lock_order_prices in orders.php), whatever the table says now.
+function apply_catalog_prices(array $cart, bool $submit, array $locked = []): array
 {
-    if (!$cart || !catalog_is_imported()) {
+    if (!$cart) {
+        return $cart;
+    }
+    $isLocked = fn (array $item): bool => is_array($locked[locked_price_key($item)] ?? null);
+    foreach ($cart as &$item) {
+        if ($isLocked($item)) {
+            $lock = $locked[locked_price_key($item)];
+            $item['fob'] = (float) ($lock['fob'] ?? $item['fob']);
+            $item['cif'] = (float) ($lock['cif'] ?? $item['cif']);
+            $item['weight'] = (float) ($lock['weight'] ?? $item['weight']);
+            $item['tableMargin'] = (float) ($lock['tableMargin'] ?? $item['tableMargin']);
+            $item['weightTier'] = in_array($lock['weightTier'] ?? '', FREIGHT_TIERS, true) ? $lock['weightTier'] : $item['weightTier'];
+            $item['unitDiscount'] = max($item['cif'] - $item['negotiatedPrice'], 0);
+        }
+    }
+    unset($item);
+    if (!catalog_is_imported()) {
         return $cart;
     }
     $codes = array_values(array_unique(array_column($cart, 'codigo')));
@@ -828,7 +865,18 @@ function apply_catalog_prices(array $cart, bool $submit): array
         $freight[$row['uf'] . '/' . $row['praca_type']] = $row;
     }
 
+    $totalWeight = 0.0;
+    foreach ($cart as $item) {
+        $product = $products[$item['codigo']] ?? null;
+        $unitWeight = !$isLocked($item) && $product ? (float) $product['weight'] : (float) $item['weight'];
+        $totalWeight += $unitWeight * (float) $item['qty'];
+    }
+    $tier = freight_tier_for_weight($totalWeight);
+
     foreach ($cart as &$item) {
+        if ($isLocked($item)) {
+            continue;
+        }
         $product = $products[$item['codigo']] ?? null;
         if (!$product || !(int) $product['active']) {
             if ($submit) {
@@ -836,14 +884,22 @@ function apply_catalog_prices(array $cart, bool $submit): array
             }
             continue;
         }
+        if ($item['uf'] !== '') {
+            $item['weightTier'] = $tier;
+        }
         $rate = $freight[$item['uf'] . '/' . $item['cityType']] ?? null;
         $prices = server_item_prices($product, $rate, $item['weightTier']);
         $item['weight'] = $prices['weight'];
         $item['fob'] = $prices['fob'];
         $item['tableMargin'] = (float) $product['table_margin'];
         if ($prices['cif'] !== null) {
+            $sentCif = (float) $item['cif'];
+            if ($item['negotiatedPrice'] > 0 && $sentCif > 0 && abs($prices['cif'] - $sentCif) >= 0.005) {
+                $discount = max($sentCif - $item['negotiatedPrice'], 0);
+                $item['negotiatedPrice'] = max($prices['cif'] - $discount, 0);
+            }
             $item['cif'] = $prices['cif'];
-            $item['unitDiscount'] = max($prices['cif'] - $item['negotiatedPrice'], 0);
+            $item['unitDiscount'] = max($item['cif'] - $item['negotiatedPrice'], 0);
         }
     }
     unset($item);

@@ -100,7 +100,8 @@ function buildLegacyCatalog() {
     });
 
     // The first row of each UF is its capital; "interior"/"fluvial" rows are named. Any other
-    // named city is treated as Interior and replaces it — reported in `warnings` for the gestor.
+    // named city (today only Juazeiro/BA, a specific customer) becomes that state's "Especial"
+    // praça, shown by its name, so it never replaces the state's Interior (decision of 2026-11-10).
     const freight = {};
     let currentUF = '';
     let ufEntryCount = 0;
@@ -112,7 +113,7 @@ function buildLegacyCatalog() {
         }
         const label = row[1] || '';
         const city = label.toLowerCase();
-        let type = 'Interior';
+        let type = 'Especial';
         if (city.includes('fluvial')) {
             type = 'Fluvial';
         } else if (city.includes('interior')) {
@@ -195,12 +196,15 @@ function applyCatalog(catalog) {
     populateStateSelect();
 }
 
+// A representative only ever uses the table in the database: data.js (with costs and margins)
+// is delivered to the gestor and the admin only, to take it to the database (api/data.php).
 function useCatalog(serverCatalog) {
     if (serverCatalog && serverCatalog.imported) {
         applyCatalog({ ...serverCatalog, source: 'server', warnings: [] });
         return;
     }
-    const legacy = getLegacyCatalog() || { costLines: [], freight: [], products: [], warnings: [] };
+    const canUseLegacy = typeof authManager === 'undefined' || authManager.canViewPricingAdmin();
+    const legacy = (canUseLegacy && getLegacyCatalog()) || { costLines: [], freight: [], products: [], warnings: [] };
     applyCatalog({ ...legacy, source: 'legacy', imported: false, version: 0, canEdit: Boolean(serverCatalog && serverCatalog.canEdit) });
 }
 
@@ -215,16 +219,23 @@ function populateStateSelect() {
 }
 
 // Only the kinds of praça that exist in the freight table for the chosen state: "Fluvial", for
-// example, only exists where the table has a river freight (today AP and PA).
-const PRACA_LABELS = Object.freeze({ Capital: 'Capital / Região Metropolitana', Interior: 'Interior', Fluvial: 'Fluvial (Norte)' });
+// example, only exists where the table has a river freight (today AP and PA), and "Especial" is a
+// city with its own freight, shown by its name (today Juazeiro/BA). Same list as PRACA_TYPES in
+// api/lib/catalog.php.
+const PRACA_LABELS = Object.freeze({ Capital: 'Capital / Região Metropolitana', Interior: 'Interior', Fluvial: 'Fluvial (Norte)', Especial: 'Praça especial' });
+
+function pracaLabel(uf, type) {
+    const label = type === 'Especial' && freightData[uf] && freightData[uf][type] ? freightData[uf][type].label : '';
+    return label || PRACA_LABELS[type] || type;
+}
 
 function updateCityTypeOptions() {
     const select = document.getElementById('cityType');
     if (!select) return;
     const uf = document.getElementById('stateSelect')?.value || '';
-    const available = Object.keys(PRACA_LABELS).filter(type => !uf || (freightData[uf] && freightData[uf][type]));
+    const available = Object.keys(PRACA_LABELS).filter(type => uf ? Boolean(freightData[uf] && freightData[uf][type]) : type !== 'Especial');
     const current = select.value;
-    select.innerHTML = available.map(type => `<option value="${type}">${PRACA_LABELS[type]}</option>`).join('');
+    select.innerHTML = available.map(type => `<option value="${type}">${escapeHtml(pracaLabel(uf, type))}</option>`).join('');
     select.value = available.includes(current) ? current : available[0];
 }
 
@@ -237,7 +248,7 @@ function getCurrentRegionFilters() {
     return {
         uf: document.getElementById('stateSelect')?.value || '',
         cityType: document.getElementById('cityType')?.value || '',
-        weightTier: document.getElementById('weightTier')?.value || ''
+        weightTier: currentWeightTier() // follows the order's total weight (js/pedido.js)
     };
 }
 
@@ -317,6 +328,10 @@ function startPricingWatcher() {
 }
 
 // ----- "Avisar e atualizar": revisão de preços do pedido aberto -----
+// Decision of 2026-11-10: an order being built and a draft always move to the table in force
+// (the representative is told what changed and the discount in R$ of each item is kept). Orders
+// already sent never change. Items of an order the gestor returned keep their prices
+// (priceLocked, see markLockedItems in js/rascunhos-envio.js and lock_order_prices in the server).
 
 // Compares each cart item with the table in use. Items without a region (older drafts) only get
 // their FOB updated, since their CIF depends on a region the portal didn't record.
@@ -324,6 +339,7 @@ function planCartRepricing(items) {
     const changes = [];
     const missing = [];
     items.forEach(item => {
+        if (item.priceLocked) return;
         const product = productsData.find(p => p.codigo === item.codigo);
         if (!product || !product.active) {
             missing.push(item);
@@ -340,19 +356,17 @@ function planCartRepricing(items) {
     return { changes, missing, hasDifferences: missing.length > 0 || changes.some(c => c.changed) };
 }
 
-// 'keep'  = the negotiated price stays; the discount against the new table is recalculated.
-// 'table' = the same R$ discount as before is applied on top of the new table price.
-function applyCartRepricing(plan, choice) {
-    plan.changes.forEach(({ item, newFob, newCif, newWeight, newTableMargin }) => {
+// The same R$ discount as before is applied on top of the new table price.
+function applyCartRepricing(plan) {
+    plan.changes.forEach(({ item, newFob, newCif, newWeight, newTableMargin, changed }) => {
         const previousDiscount = item.unitDiscount || 0;
         item.fob = newFob;
         item.cif = newCif;
         item.weight = newWeight;
-        // The product's margin always follows the table in force, whatever the price choice.
+        // The product's margin always follows the table in force.
         if (newTableMargin !== undefined) item.tableMargin = newTableMargin;
-        if (choice === 'table') {
-            item.negotiatedPrice = Math.max(newCif - previousDiscount, 0);
-        }
+        // Unchanged items only align sub-cent differences; their negotiated price stays.
+        if (changed) item.negotiatedPrice = Math.max(newCif - previousDiscount, 0);
         item.unitDiscount = Math.max(newCif - item.negotiatedPrice, 0);
     });
     plan.missing.forEach(item => {
@@ -361,24 +375,19 @@ function applyCartRepricing(plan, choice) {
     });
 }
 
-function previewRepricingMargin(plan, choice) {
-    const clones = plan.changes.map(c => ({ ...c.item }));
-    applyCartRepricing({ changes: plan.changes.map((c, i) => ({ ...c, item: clones[i] })), missing: [] }, choice);
-    return calculateOrderTotals(clones, getCurrentOrderConditions()).margin;
-}
-
+// 'none' = nothing changed; 'table' = the representative was told and the prices were updated.
 async function reviewCartPrices(reason) {
     if (!cart.length) return 'none';
     const plan = planCartRepricing(cart);
     if (!plan.hasDifferences) {
-        applyCartRepricing(plan, 'keep'); // only aligns sub-cent differences and weights
+        applyCartRepricing(plan); // only aligns sub-cent differences and weights
         updateOrderTable();
         return 'none';
     }
-    const choice = await showRepriceModal(reason, plan);
-    applyCartRepricing(plan, choice);
+    await showRepriceModal(reason, plan);
+    applyCartRepricing(plan);
     updateOrderTable();
-    return choice;
+    return 'table';
 }
 
 let repriceModalResolver = null;
@@ -387,7 +396,8 @@ function showRepriceModal(reason, plan) {
     const modal = document.getElementById('repriceModal');
     const body = document.getElementById('repriceModalBody');
     if (!modal || !body) {
-        return Promise.resolve(confirm(`${reason}\n\nOK = usar os novos preços de tabela\nCancelar = manter os preços negociados`) ? 'table' : 'keep');
+        alert(`${reason}\n\nOs preços do pedido serão atualizados para a tabela nova, mantendo o desconto em R$ de cada item.`);
+        return Promise.resolve('table');
     }
     const money = value => `<span class="nowrap">${formatCurrency(value)}</span>`;
     const arrow = (before, after) => Math.abs(before - after) < 0.005
@@ -406,11 +416,9 @@ function showRepriceModal(reason, plan) {
         : '';
 
     document.getElementById('repriceReason').textContent = reason;
-    document.getElementById('repriceKeepMargin').textContent = formatPercent(previewRepricingMargin(plan, 'keep'));
-    document.getElementById('repriceTableMargin').textContent = formatPercent(previewRepricingMargin(plan, 'table'));
     body.innerHTML = `
         ${rows ? `<div class="table-wrap"><table class="table table--compact">
-            <thead><tr><th>Produto</th><th class="num">FOB</th><th class="num">CIF de tabela</th><th class="num">Seu preço hoje</th><th class="num">Com a nova tabela</th></tr></thead>
+            <thead><tr><th>Produto</th><th class="num">FOB</th><th class="num">CIF de tabela</th><th class="num">Seu preço antes</th><th class="num">Seu preço agora</th></tr></thead>
             <tbody>${rows}</tbody>
         </table></div>` : ''}
         ${missing}`;

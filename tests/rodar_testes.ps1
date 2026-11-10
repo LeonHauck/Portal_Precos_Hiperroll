@@ -1,5 +1,5 @@
 ﻿param(
-    [string[]] $Modos = @('anon', 'newrep', 'rep', 'gestor', 'repcat', 'admincat'),
+    [string[]] $Modos = @('anon', 'newrep', 'rep', 'pedido', 'gestor', 'repcat', 'repnocat', 'admincat'),
     [switch] $SemDemo
 )
 # Roda os testes automáticos da tela do portal no Microsoft Edge sem janela (headless).

@@ -68,12 +68,65 @@ function summarizeDescription(desc, maxChars = 36) {
     return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// ----- Faixa de peso do frete: automática, pelo peso total do pedido -----
+// Same rule as freight_tier_for_weight() in api/lib/catalog.php, which decides when the order is
+// saved. tier1 = 150 to 199 kg; tier2 = 200 kg or more. Lighter orders use tier1 and go to the gestor.
+const FREIGHT_TIER2_MIN_KG = 200;
+const FREIGHT_TIER_LABELS = Object.freeze({ tier1: 'de 150 a 199 kg', tier2: 'acima de 200 kg' });
+
+function cartTotalWeight() {
+    return cart.reduce((sum, item) => sum + (parseFloat(item.weight) || 0) * (parseInt(item.qty, 10) || 0), 0);
+}
+
+function freightTierForWeight(totalWeight) {
+    return totalWeight >= FREIGHT_TIER2_MIN_KG ? 'tier2' : 'tier1';
+}
+
+function currentWeightTier() {
+    return freightTierForWeight(cartTotalWeight());
+}
+
+// When the order's weight crosses the 200 kg line, every item moves to the new band: the CIF
+// changes with the freight and the discount in R$ the representative gave stays. Items of an
+// order the gestor returned keep their prices (priceLocked).
+function syncCartWeightTier() {
+    const tier = currentWeightTier();
+    let changed = false;
+    cart.forEach(item => {
+        if (item.priceLocked || !item.uf || item.weightTier === tier) return;
+        const product = productsData.find(p => p.codigo === item.codigo);
+        if (!product) return;
+        const prices = computeItemPrices(product, { uf: item.uf, cityType: item.cityType, weightTier: tier });
+        const discount = Math.max((item.cif || 0) - (item.negotiatedPrice || 0), 0);
+        item.weightTier = tier;
+        item.fob = prices.fob;
+        item.cif = prices.cif;
+        item.negotiatedPrice = Math.max(prices.cif - discount, 0);
+        item.unitDiscount = Math.max(item.cif - item.negotiatedPrice, 0);
+        changed = true;
+    });
+    return changed;
+}
+
+function renderWeightTierInfo() {
+    const el = document.getElementById('weightTierInfo');
+    if (!el) return;
+    const weight = cartTotalWeight();
+    el.textContent = `${FREIGHT_TIER_LABELS[freightTierForWeight(weight)]} · pedido com ${formatBRL(weight, 0)} kg`;
+}
+
 function updateResults() {
     let searchTerm = document.getElementById('productSearch').value.toLowerCase().trim();
     const uf = document.getElementById('stateSelect').value;
     const cityType = document.getElementById('cityType').value;
-    const weightTier = document.getElementById('weightTier').value;
+    const weightTier = currentWeightTier();
     const container = document.getElementById('resultsContainer');
+    renderWeightTierInfo();
+
+    if (!productsData.length && pricingCatalog.source !== 'server') {
+        container.innerHTML = `<div class="empty-state">${icon('info')}A tabela de preços ainda não foi liberada pelo gestor. Tente de novo mais tarde.</div>`;
+        return;
+    }
 
     if (!uf) {
         container.innerHTML = `<div class="empty-state">${icon('map-pin')}Selecione o estado para ver os preços.</div>`;
@@ -211,18 +264,24 @@ function applyPricingRuleLabels() {
     });
 }
 
-// Below the order form: the discounts in use, the discount against the table price with the
-// modality's limit, the "PEDIDO DEVE SER IMPLANTADO..." notice and what will need a justification.
+// Below the order form: the negotiated discount with the modality's limit, the antecipado and
+// frete FOB apart, the "PEDIDO DEVE SER IMPLANTADO..." notice, what will need a justification and
+// what can't be sent at all.
 function renderOrderDiscountBreakdown(totals) {
     const el = document.getElementById('orderDiscountBreakdown');
     if (!el) return;
-    const parts = describeOrderDiscounts(totals.conditions);
+    const c = totals.conditions;
     const limit = totals.mode
-        ? (totals.mode.maxDiscount === 0 ? 'a modalidade não permite desconto' : `limite da modalidade: ${totals.mode.maxDiscount}%`)
+        ? (totals.mode.maxDiscount === 0 ? 'a modalidade não permite desconto' : `limite da modalidade: ${formatMarginPercent(totals.mode.maxDiscount)}%`)
         : '';
-    el.innerHTML = `Desconto sobre a tabela: <strong>${formatPercent(totals.effectiveDiscount)}</strong>`
+    const extras = [];
+    if (c.earlyPayment) extras.push(`pagamento antecipado ${formatPercent(c.earlyPaymentPercent)}`);
+    if (c.fobFreight) extras.push(`frete FOB ${formatPercent(c.fobFreightPercent)}`);
+    el.innerHTML = `Desconto negociado: <strong>${formatPercent(totals.negotiatedDiscount)}</strong>`
         + (limit ? ` <span>(${escapeHtml(limit)})</span>` : '')
-        + (parts.length ? `<br><span>${parts.map(escapeHtml).join(' + ')}</span>` : '');
+        + (extras.length
+            ? `<br><span>À parte, fora do limite: ${escapeHtml(extras.join(' + '))}. Total sobre a tabela: <strong>${formatPercent(totals.effectiveDiscount)}</strong></span>`
+            : '');
 
     const notice = document.getElementById('orderModeNotice');
     if (notice) {
@@ -232,9 +291,22 @@ function renderOrderDiscountBreakdown(totals) {
 
     const warning = document.getElementById('orderMinMarginWarning');
     if (warning) {
-        warning.hidden = !totals.requiresJustification;
-        warning.innerHTML = totals.requiresJustification
-            ? `${icon('alert')}<span>${escapeHtml(totals.alerts.join('. '))}. O envio exigirá uma justificativa e chegará sinalizado ao gestor.</span>`
+        const text = totals.discountBlocked
+            ? `${totals.alerts.join('. ')}. Reduza o desconto para enviar.`
+            : totals.requiresJustification
+                ? `${totals.alerts.join('. ')}. O envio exigirá uma justificativa e chegará sinalizado ao gestor.`
+                : '';
+        warning.hidden = !text;
+        warning.innerHTML = text ? `${icon('alert')}<span>${escapeHtml(text)}</span>` : '';
+    }
+
+    // Lighter orders use the 150-199 kg freight and always go to the gestor.
+    const weightWarning = document.getElementById('orderWeightWarning');
+    if (weightWarning) {
+        const light = totals.lines.length > 0 && totals.totalWeight < FREIGHT_TIER2_MIN_KG;
+        weightWarning.hidden = !light;
+        weightWarning.innerHTML = light
+            ? `${icon('package')}<span>Pedido com ${escapeHtml(formatBRL(totals.totalWeight, 1))} kg, abaixo de ${FREIGHT_TIER2_MIN_KG} kg: usa o frete de 150 a 199 kg e vai para análise do gestor.</span>`
             : '';
     }
 }
@@ -247,13 +319,20 @@ function updateOrderTable() {
         container.innerHTML = `<div class="empty-state empty-state--compact">${icon('cart')}Nenhum item no pedido. Use <strong>Adicionar</strong> na lista de produtos acima.</div>`;
         summaryDiv.hidden = true;
         updateTableMarginLabels(null);
+        renderWeightTierInfo();
         return;
     }
 
     summaryDiv.hidden = false;
 
+    // The weight band follows the order's weight: crossing 200 kg reprices the items, and the
+    // product list shows the prices of the new band.
+    if (syncCartWeightTier() && document.getElementById('stateSelect')?.value) updateResults();
+    renderWeightTierInfo();
+
     const totals = calculateOrderTotals(cart, getCurrentOrderConditions());
     updateTableMarginLabels(totals.tableMargin);
+    const showMargin = canSeeMargins();
 
     const rows = totals.lines.map((line, idx) => {
         const item = line.item;
@@ -266,6 +345,7 @@ function updateOrderTable() {
                 <td class="cell-product">
                     <strong>${escapeHtml(item.codigo)}</strong>
                     <span>${escapeHtml(item.descricao)}</span>
+                    ${item.priceLocked ? `<span class="price-locked-note" title="Pedido devolvido pelo gestor: este item mantém o preço de tabela que tinha, mesmo que a tabela tenha mudado">${icon('pin')}preço mantido</span>` : ''}
                 </td>
                 <td class="num">
                     <input class="input-sm w-qty" type="number" value="${item.qty}" min="1" data-change="updateCartQty" data-index="${idx}" aria-label="Quantidade">
@@ -282,10 +362,10 @@ function updateOrderTable() {
                     <input class="input-sm w-money" type="number" step="0.01" min="0" value="${line.negotiatedUnit.toFixed(2)}" data-change="updateNegotiatedPrice" data-index="${idx}" title="Preço negociado unitário" aria-label="Preço negociado">
                     <span class="print-value">${formatCurrency(line.negotiatedUnit)}</span>
                 </td>
-                <td class="num">
+                ${showMargin ? `<td class="num">
                     <span class="tone-${line.status.tone}" title="${escapeHtml(marginTitle)}">${formatPercent(line.marginPercent)}</span>
                     ${line.tableMargin !== null ? `<div class="item-table-margin">tabela ${formatMarginPercent(line.tableMargin)}%</div>` : ''}
-                </td>
+                </td>` : ''}
                 <td class="num price-tag">${formatCurrency(line.subtotal)}</td>
                 <td class="col-action">
                     <button data-action="removeFromCart" data-index="${idx}" class="btn btn--icon btn--ghost" title="Remover item" aria-label="Remover item">${icon('trash')}</button>
@@ -304,7 +384,7 @@ function updateOrderTable() {
                     <th class="num">CIF unit.</th>
                     <th class="num">Desconto unit. (R$)</th>
                     <th class="num">Preço negociado</th>
-                    <th class="num" title="Margem do item depois dos descontos. No preço de tabela ela é a margem do produto; cada desconto reduz esse valor.">Margem</th>
+                    ${showMargin ? '<th class="num" title="Margem do item depois dos descontos. No preço de tabela ela é a margem do produto; cada desconto reduz esse valor.">Margem</th>' : ''}
                     <th class="num">Subtotal</th>
                     <th></th>
                 </tr>
@@ -327,8 +407,10 @@ function updateOrderTable() {
     currentOrderMargin = totals.margin;
 
     const totalsPriceContainer = document.getElementById('totalsPriceContainer');
-    totalsPriceContainer.classList.remove('margin-alert', 'margin-warning', 'margin-good');
-    totalsPriceContainer.classList.add({ good: 'margin-good', warn: 'margin-warning', bad: 'margin-alert' }[totals.status.tone]);
+    totalsPriceContainer.classList.remove('margin-alert', 'margin-warning', 'margin-good', 'margin-critical');
+    if (showMargin) {
+        totalsPriceContainer.classList.add({ good: 'margin-good', warn: 'margin-warning', bad: 'margin-alert', critical: 'margin-critical' }[totals.status.tone]);
+    }
 
     renderOrderDiscountBreakdown(totals);
 }

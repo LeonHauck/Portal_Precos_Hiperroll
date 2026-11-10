@@ -79,7 +79,7 @@
                     <dt class="info-label">Data</dt>
                     <dd class="info-value" id="headerOrderDate">--</dd>
                 </div>
-                <div class="info-box info-box--margin" title="Margem do pedido atual vendido no preço de tabela, sem descontos">
+                <div class="info-box info-box--margin margin-only" title="Margem do pedido atual vendido no preço de tabela, sem descontos">
                     <dt class="info-label">Margem tabela</dt>
                     <dd class="info-value" id="marginThreshold">—</dd>
                 </div>
@@ -134,11 +134,8 @@
                         </select>
                     </div>
                     <div class="field">
-                        <label for="weightTier">Faixa de peso</label>
-                        <select id="weightTier">
-                            <option value="tier1">De 150 a 199 kg</option>
-                            <option value="tier2" selected>Acima de 200 kg</option>
-                        </select>
+                        <span class="field-label" title="Escolhida sozinha pelo peso total do pedido: a partir de 200 kg, a faixa acima de 200 kg">Faixa de peso (automática)</span>
+                        <div id="weightTierInfo" class="weight-tier-info">de 150 a 199 kg · pedido com 0 kg</div>
                     </div>
                 </div>
                 <div id="resultsContainer" class="table-wrap table-wrap--scroll">
@@ -223,6 +220,7 @@
                             <div id="orderDiscountBreakdown" class="order-discount-breakdown"></div>
                             <div id="orderModeNotice" class="alert alert--warn" hidden></div>
                             <div id="orderMinMarginWarning" class="alert alert--danger" hidden></div>
+                            <div id="orderWeightWarning" class="alert alert--info" hidden></div>
                             <div class="print-values">
                                 <div>Desconto (total): <strong id="printDiscount">0%</strong></div>
                                 <div>Contrato (total): <strong id="printContract">0%</strong></div>
@@ -243,7 +241,7 @@
                             <span class="total__label">Total CIF</span>
                             <span class="total__value">R$&nbsp;<span id="totalCif">0,00</span></span>
                         </div>
-                        <div class="total">
+                        <div class="total margin-only">
                             <span class="total__label">Margem do pedido</span>
                             <span class="total__value"><span id="marginPercentage">0,00%</span></span>
                             <span class="margin-min-hint" title="Margem deste pedido se fosse vendido no preço de tabela, sem descontos">no preço de tabela: <span id="orderTableMargin">—</span></span>
@@ -356,10 +354,12 @@
                         <div><dt>Modalidade</dt><dd id="submitMode">—</dd></div>
                         <div><dt>Desconto</dt><dd id="submitDiscounts">0,00%</dd></div>
                         <div><dt>Total CIF</dt><dd id="submitTotalCif">R$ 0,00</dd></div>
-                        <div><dt>Margem</dt><dd id="submitMargin">0,00%</dd></div>
+                        <div><dt>Peso</dt><dd id="submitWeight">0 kg</dd></div>
+                        <div class="margin-only"><dt>Margem</dt><dd id="submitMargin">0,00%</dd></div>
                     </dl>
                 </div>
                 <div id="submitModeNotice" class="alert alert--warn" hidden></div>
+                <div id="submitWeightNotice" class="alert alert--info" hidden></div>
                 <div id="submitLowMarginBlock" class="field low-margin-justification" hidden>
                     <label for="submitLowMarginJustification">Justificativa *</label>
                     <textarea id="submitLowMarginJustification" rows="3" placeholder="Ex.: cliente estratégico, volume elevado, ação comercial combinada com a supervisão..."></textarea>
@@ -479,6 +479,15 @@
                 </form>
                 <div id="usersMessage" class="modal-msg"></div>
                 <div id="usersTableContainer" class="table-wrap users-table-container"></div>
+                <!-- Só o admin: usado uma vez, no dia em que o comercial sair do sistema de pedidos antigo -->
+                <form id="nextNumberForm" class="new-user-form next-number-form" data-submit="submitNextNumber" autocomplete="off" hidden>
+                    <div class="field">
+                        <label for="nextOrderNumber">Próximo número de pedido Hiper Roll</label>
+                        <input id="nextOrderNumber" type="number" min="1" step="1" required>
+                        <p class="field-hint">No dia da migração, informe o próximo número do sistema antigo. A numeração só avança: números já usados não voltam.</p>
+                    </div>
+                    <button type="submit" class="btn btn--secondary"><svg class="icon"><use href="#i-save"></use></svg>Salvar número</button>
+                </form>
             </div>
             <div class="modal-footer">
                 <button data-action="exportBackup" class="btn btn--ghost modal-footer__start"><svg class="icon"><use href="#i-download"></use></svg>Baixar backup</button>
@@ -500,12 +509,11 @@
                 </div>
             </div>
             <div class="modal-body">
-                <p class="muted">Estes itens mudaram de preço. Você pode manter os preços que negociou (a margem é recalculada com o novo FOB) ou aplicar a nova tabela mantendo o mesmo desconto em R$ de cada item.</p>
+                <p class="muted">Este pedido ainda não foi enviado, então passa a usar a tabela nova. Cada item mantém o mesmo desconto em R$ que você deu.</p>
                 <div id="repriceModalBody"></div>
             </div>
             <div class="modal-footer reprice-footer">
-                <button data-action="resolveReprice" data-choice="keep" class="btn btn--ghost">Manter meus preços negociados <small>margem: <span id="repriceKeepMargin">—</span></small></button>
-                <button data-action="resolveReprice" data-choice="table" class="btn btn--secondary">Usar os novos preços de tabela <small>margem: <span id="repriceTableMargin">—</span></small></button>
+                <button data-action="resolveReprice" data-choice="table" class="btn btn--primary">Entendi, atualizar os preços</button>
             </div>
         </div>
     </div>

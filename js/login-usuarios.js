@@ -175,8 +175,34 @@ async function showUsersModal() {
     populateNewUserRoleOptions();
     const msg = document.getElementById('usersMessage');
     if (msg) msg.textContent = '';
+    const nextNumberForm = document.getElementById('nextNumberForm');
+    if (nextNumberForm) {
+        nextNumberForm.hidden = !authManager.isAdmin();
+        const input = document.getElementById('nextOrderNumber');
+        if (input) input.value = parseInt(hiperrollOrderNumberManager.preview, 10) || '';
+    }
     modal.style.display = 'flex';
     await refreshUsersTable();
+}
+
+// Admin: the numbering continues from the old web system (decision of 2026-11-10).
+async function submitNextNumber(event) {
+    if (event) event.preventDefault();
+    const input = document.getElementById('nextOrderNumber');
+    const msg = document.getElementById('usersMessage');
+    const value = parseInt(input?.value || '', 10);
+    if (!(value > 0)) {
+        if (msg) msg.textContent = 'Informe um número inteiro maior que zero.';
+        return;
+    }
+    if (!confirm(`O próximo pedido receberá o número ${String(value).padStart(5, '0')}. A numeração só avança, não volta. Confirmar?`)) return;
+    try {
+        const next = await orderSubmissionManager.setNextNumber(value);
+        if (!activeDraftId && cart.length === 0) hiperrollOrderNumberManager.applyToForm();
+        if (msg) msg.textContent = `Pronto: o próximo pedido será o ${next}.`;
+    } catch (e) {
+        if (msg) msg.textContent = e.message;
+    }
 }
 
 function closeUsersModal() {
