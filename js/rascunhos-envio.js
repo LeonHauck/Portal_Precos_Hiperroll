@@ -197,13 +197,19 @@ function showSubmitOrderModal() {
     }
 
     const clientName = document.getElementById('clientName')?.value.trim() || '';
+    const clientCnpj = normalizeCnpj(document.getElementById('clientCnpj')?.value || '');
+    if (clientCnpj && !isValidCnpj(clientCnpj)) {
+        formatClientCnpjInput(document.getElementById('clientCnpj'));
+        showToast('O CNPJ do cliente está inválido. Corrija ou deixe em branco antes de enviar.');
+        return;
+    }
     const submitOrderNumber = document.getElementById('submitOrderNumber');
     const submitClientName = document.getElementById('submitClientName');
     const submitItemCount = document.getElementById('submitItemCount');
     const submitTotalCif = document.getElementById('submitTotalCif');
 
     if (submitOrderNumber) submitOrderNumber.textContent = orderNumber;
-    if (submitClientName) submitClientName.textContent = clientName || 'Não informado';
+    if (submitClientName) submitClientName.textContent = (clientName || 'Não informado') + (clientCnpj ? ` · CNPJ ${formatCnpj(clientCnpj)}` : '');
     if (submitItemCount) submitItemCount.textContent = cart.length;
 
     const totals = calculateOrderTotals(cart, getCurrentOrderConditions());
@@ -250,6 +256,9 @@ function showSubmitOrderModal() {
     if (justificationInput && !needsJustification) justificationInput.value = '';
     const sendButton = document.querySelector('#submitOrderModal .btn-submit-order');
     if (sendButton) sendButton.disabled = totals.discountBlocked;
+    if (totals.discountBlocked) {
+        showToast(`Envio bloqueado: o desconto negociado de ${formatPercent(totals.negotiatedDiscount)} passa do máximo de ${formatPercent(PRICING_RULES.MAX_NEGOTIATED_DISCOUNT)}. Reduza o desconto para enviar.`);
+    }
 
     const modal = document.getElementById('submitOrderModal');
     if (modal) modal.style.display = 'flex';
@@ -325,10 +334,11 @@ function resetCurrentOrderForm() {
     setLoadedOrderReference('');
     cart.length = 0;
     updateOrderTable();
-    ['orderNumberClient', 'clientName', 'proposalValidity'].forEach(id => {
+    ['orderNumberClient', 'clientName', 'clientCnpj', 'proposalValidity'].forEach(id => {
         const input = document.getElementById(id);
         if (input) input.value = '';
     });
+    checkClientCnpj();
     const representativeInput = document.getElementById('representativeName');
     if (representativeInput) representativeInput.value = authManager.getDisplayName();
     setCurrentOrderConditions(null);
@@ -391,6 +401,8 @@ async function loadDraftToCurrentOrder(submissionId, silent = false) {
     if (hiperrollField) hiperrollField.value = submission.hiperrollNumber || '';
     document.getElementById('orderNumberClient').value = submission.clientOrderNumber || '';
     document.getElementById('clientName').value = submission.clientName || '';
+    document.getElementById('clientCnpj').value = formatCnpj(submission.clientCnpj || '');
+    formatClientCnpjInput(document.getElementById('clientCnpj'));
     document.getElementById('representativeName').value = submission.representativeName || '';
     document.getElementById('proposalValidity').value = submission.proposalValidity || '';
     setCurrentOrderConditions(submission.conditions);
@@ -420,6 +432,8 @@ async function repeatOrder(submissionId) {
     hiperrollOrderNumberManager.applyToForm();
     document.getElementById('orderNumberClient').value = submission.clientOrderNumber || '';
     document.getElementById('clientName').value = submission.clientName || '';
+    document.getElementById('clientCnpj').value = formatCnpj(submission.clientCnpj || '');
+    formatClientCnpjInput(document.getElementById('clientCnpj'));
     document.getElementById('representativeName').value = submission.representativeName || authManager.getDisplayName();
     document.getElementById('proposalValidity').value = normalizeProposalValidity(submission.proposalValidity || '');
     setCurrentOrderConditions(submission.conditions);

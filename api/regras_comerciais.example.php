@@ -21,8 +21,8 @@ return [
     // Teto do desconto negociado (%): acima dele o pedido não é enviado, nem com justificativa.
     'max_negotiated_discount' => 18.0,
 
-    // Margem do pedido ou do item (%) abaixo da qual o gestor vê o alerta forte.
-    'margin_alert_below' => -4.0,
+    // Margem do PEDIDO (%) abaixo da qual o gestor vê o alerta forte de "margem preocupante".
+    'margin_alert_below' => 8.0,
 
     // Modalidades que o representante escolhe no pedido. maxDiscount = desconto negociado permitido
     // contra o preço de tabela (%), acima dele só com justificativa; notice = aviso mostrado quando

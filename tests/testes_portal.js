@@ -340,26 +340,43 @@
 
                 // ----- aprovação automática: compara com o último pedido aprovado do cliente -----
                 resetCurrentOrderForm();
-                const ordersOf = client => Object.values(window.__mockOrders).filter(o => o.clientName === client).sort((a, b) => a.hiperrollNumber.localeCompare(b.hiperrollNumber));
+                // The client is followed by its CNPJ (the name changes on purpose below).
+                const CNPJ_AUTO = '11222333000181'; // well-known valid test CNPJ, not a real customer
+                const ordersOf = () => Object.values(window.__mockOrders).filter(o => o.clientCnpj === CNPJ_AUTO).sort((a, b) => a.hiperrollNumber.localeCompare(b.hiperrollNumber));
                 const lastAlert = () => window.__alerts[window.__alerts.length - 1] || '';
                 $('stateSelect').value = 'MG';
                 onStateChange();
                 addToCart(productsData[2].codigo);
                 updateCartQty(0, Math.ceil(200 / cart[0].weight));
                 $('clientName').value = 'Mercado Automático';
+
+                // ----- CNPJ do cliente: opcional, mas validado (numérico ou com letras) -----
+                check('rep: CNPJ válido, numérico e com letras', isValidCnpj('11.222.333/0001-81') && isValidCnpj('12.ABC.345/01DE-35') && !isValidCnpj('11.222.333/0001-82') && !isValidCnpj('00.000.000/0000-00') && !isValidCnpj('123'));
+                $('clientCnpj').value = '11222333000182';
+                formatClientCnpjInput($('clientCnpj'));
+                check('rep: CNPJ errado é formatado e avisado no campo', $('clientCnpj').value === '11.222.333/0001-82' && !$('clientCnpjHint').hidden && $('clientCnpj').classList.contains('is-invalid'));
                 showSubmitOrderModal();
+                check('rep: com CNPJ errado a janela de envio não abre e um balão explica', !visible($('submitOrderModal')) && [...document.querySelectorAll('#toastStack .toast')].some(t => t.textContent.includes('CNPJ do cliente está inválido')));
+                $('clientCnpj').value = '11222333000181';
+                formatClientCnpjInput($('clientCnpj'));
+                check('rep: CNPJ certo fica formatado e sem aviso', $('clientCnpj').value === '11.222.333/0001-81' && $('clientCnpjHint').hidden);
+                showSubmitOrderModal();
+                check('rep: janela de envio mostra o CNPJ', $('submitClientName').textContent.includes('CNPJ 11.222.333/0001-81'));
                 check('rep: janela de envio sem margem, com o peso', !visible($('submitMargin').parentElement) && $('submitWeight').textContent.includes('kg') && $('submitWeightNotice').hidden);
                 await submitOrder();
-                const firstAuto = ordersOf('Mercado Automático')[0];
+                const firstAuto = ordersOf()[0];
+                check('rep: CNPJ vai ao servidor só com os caracteres', window.__mockCalls.filter(c => c.action === 'orders.submit').pop().body.order.clientCnpj === CNPJ_AUTO);
                 check('rep: primeiro pedido do cliente vai para análise (nada para comparar)', firstAuto && firstAuto.status === 'analise' && firstAuto.approvalCheck.reasons.some(r => r.includes('Ainda não há pedido aprovado')) && lastAlert().includes('Aguardando aprovação'), lastAlert());
                 check('rep: representante não recebe a comparação nem a margem', !('approvalCheck' in orderSubmissionManager.getById(firstAuto.id)) && orderSubmissionManager.getById(firstAuto.id).cart.every(item => !('tableMargin' in item)));
                 window.__mockApprove(firstAuto.id);
                 await loadServerData();
                 await repeatOrder(firstAuto.id);
+                check('rep: repetir pedido traz o CNPJ', $('clientCnpj').value === '11.222.333/0001-81');
+                $('clientName').value = 'Mercado Automatico LTDA'; // outro jeito de escrever: o CNPJ identifica
                 showSubmitOrderModal();
                 await submitOrder();
-                const secondAuto = ordersOf('Mercado Automático')[1];
-                check('rep: mesmo pedido, mesmo preço: aprovado sozinho', secondAuto && secondAuto.status === 'aprovado' && secondAuto.approvalBy === AUTO_APPROVER && lastAlert().includes('aprovado automaticamente'), lastAlert());
+                const secondAuto = ordersOf()[1];
+                check('rep: mesmo CNPJ (nome escrito diferente), mesmo preço: aprovado sozinho', secondAuto && secondAuto.status === 'aprovado' && secondAuto.approvalBy === AUTO_APPROVER && lastAlert().includes('aprovado automaticamente'), lastAlert());
                 renderHistoryTab();
                 check('rep: cartão mostra "Automático"', Boolean($('historyTabContent').querySelector(`[id="historyCard_${secondAuto.id}"] .auto-approved-chip`)));
                 await repeatOrder(firstAuto.id);
@@ -369,17 +386,25 @@
                 updateOrderTable();
                 showSubmitOrderModal();
                 await submitOrder();
-                const thirdAuto = ordersOf('Mercado Automático')[2];
+                const thirdAuto = ordersOf()[2];
                 check('rep: preço menor que no último pedido vai para o gestor', thirdAuto && thirdAuto.status === 'analise' && thirdAuto.approvalCheck.reasons.some(r => r.includes('preço e margem menor que no pedido')), thirdAuto && JSON.stringify(thirdAuto.approvalCheck.reasons));
 
                 // ----- teto do desconto negociado -----
                 await repeatOrder(firstAuto.id);
                 setModeRep('garantia');
+                document.getElementById('toastStack')?.remove();
                 $('orderDiscount').value = String(RULES.maxNegotiatedDiscount + 1);
                 updateOrderTable();
+                const ceilingToasts = () => [...document.querySelectorAll('#toastStack .toast')].map(t => t.textContent);
+                check('rep: acima do teto aparece um balão de aviso', ceilingToasts().length === 1 && ceilingToasts()[0].includes('não pode ser enviado'), JSON.stringify(ceilingToasts()));
+                updateOrderTable();
+                check('rep: o balão não se repete enquanto o desconto continua acima', ceilingToasts().length === 1);
                 check('rep: acima do teto aparece "não pode ser enviado"', !$('orderMinMarginWarning').hidden && $('orderMinMarginWarning').textContent.includes('não pode ser enviado'), $('orderMinMarginWarning').textContent);
                 showSubmitOrderModal();
                 check('rep: acima do teto o botão de envio trava e não pede justificativa', document.querySelector('#submitOrderModal .btn-submit-order').disabled && $('submitLowMarginBlock').hidden);
+                check('rep: ao abrir o envio bloqueado, outro balão explica', ceilingToasts().length === 2 && ceilingToasts()[1].includes('Envio bloqueado'));
+                document.querySelector('#toastStack .toast__close').click();
+                check('rep: o balão fecha no ×', ceilingToasts().length === 1);
                 closeSubmitOrderModal();
                 $('orderDiscount').value = '0';
                 updateOrderTable();
@@ -427,16 +452,18 @@
                 const sac = productsData.find(p => p.tableMargin === marginA);
                 const bob = productsData.find(p => p.tableMargin === marginB);
                 const marginAfter = (productMargin, discount) => (1 - (1 - productMargin / 100) / (1 - discount / 100)) * 100;
+                // Order margin below the alert line is "Preocupante" (critical), whatever else it is.
+                const orderTone = (margin, otherwise) => margin < RULES.marginAlertBelow ? 'critical' : otherwise;
                 $('stateSelect').value = 'MG';
                 addToCart(sac.codigo);
                 let mt = totalsNow();
-                check('pedido: no preço de tabela a margem é a do produto', Math.abs(mt.margin - marginA) < 1e-9 && mt.tableMargin === marginA && $('marginThreshold').textContent === pct(marginA) && mt.status.tone === 'good', mt.margin);
+                check('pedido: no preço de tabela a margem é a do produto', Math.abs(mt.margin - marginA) < 1e-9 && mt.tableMargin === marginA && $('marginThreshold').textContent === pct(marginA) && mt.status.tone === orderTone(mt.margin, 'good'), mt.margin);
                 check('pedido: item guarda a margem do produto e o pedido a envia', cart[0].tableMargin === marginA && buildCurrentOrderInput().cart[0].tableMargin === marginA && buildCurrentOrderInput().conditions.invoiceMode === 'livre');
                 check('pedido: Livre sem desconto: sem aviso e sem justificativa', !mt.requiresJustification && mt.modeNotice === '' && mt.effectiveDiscount === 0 && $('orderModeNotice').hidden && $('orderMinMarginWarning').hidden);
 
                 setDiscount(2);
                 mt = totalsNow();
-                check('pedido: 2% no pedido reduz a margem pelo valor', Math.abs(mt.margin - marginAfter(marginA, 2)) < 1e-9 && mt.effectiveDiscount === 2 && mt.status.tone === 'warn', mt.margin.toFixed(4));
+                check('pedido: 2% no pedido reduz a margem pelo valor', Math.abs(mt.margin - marginAfter(marginA, 2)) < 1e-9 && mt.effectiveDiscount === 2 && mt.status.tone === orderTone(mt.margin, 'warn'), mt.margin.toFixed(4));
                 check('pedido: Livre com desconto exige justificativa', mt.discountExceeded && mt.requiresJustification && mt.alerts[0].includes('não permite desconto') && !$('orderMinMarginWarning').hidden, mt.alerts[0]);
                 check('pedido: Livre não mostra aviso de implantação', mt.modeNotice === '');
 
@@ -468,7 +495,9 @@
 
                 // margem abaixo do ponto de alerta das regras: destaque forte para o gestor
                 const criticalMargin = marginAfter(marginA, GARANTIA_MAX + 1);
-                check('pedido: margem abaixo do ponto de alerta fica "Crítica"', criticalMargin < RULES.marginAlertBelow ? (mt.status.tone === 'critical' && $('totalsPriceContainer').classList.contains('margin-critical') && renderOrderConditionsSummary({ cart, conditions: getCurrentOrderConditions() }).includes('margin-critical-alert')) : mt.status.tone === 'bad', `${mt.margin.toFixed(2)} / alerta ${RULES.marginAlertBelow}`);
+                const sampleOrder = productMargin => calculateOrderTotals([{ codigo: 'T', cif: 100, negotiatedPrice: 100, tableMargin: productMargin, qty: 1 }], { invoiceMode: 'livre' }).status;
+                check('pedido: margem do pedido abaixo do ponto de alerta é "Preocupante"; acima dele, normal', sampleOrder(RULES.marginAlertBelow - 1).tone === 'critical' && sampleOrder(RULES.marginAlertBelow - 1).label === 'Preocupante' && sampleOrder(RULES.marginAlertBelow + 1).tone === 'good');
+                check('pedido: margem abaixo do ponto de alerta fica destacada na tela', criticalMargin < RULES.marginAlertBelow ? (mt.status.tone === 'critical' && $('totalsPriceContainer').classList.contains('margin-critical') && renderOrderConditionsSummary({ cart, conditions: getCurrentOrderConditions() }).includes('margin-critical-alert')) : mt.status.tone === 'bad', `${mt.margin.toFixed(2)} / alerta ${RULES.marginAlertBelow}`);
 
                 // teto do desconto negociado: acima dele não envia nem com justificativa
                 setDiscount(RULES.maxNegotiatedDiscount + 0.5);

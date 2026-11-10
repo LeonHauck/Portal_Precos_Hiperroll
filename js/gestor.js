@@ -18,7 +18,7 @@ function showSubmissionDetails(submissionId) {
     const timestamp = submission.status === 'rascunho' ? submission.savedAt : submission.submittedAt;
 
     alert(`Pedido: ${submission.orderNumber}
-Cliente: ${submission.clientName}
+Cliente: ${submission.clientName}${submission.clientCnpj ? ` (CNPJ ${formatCnpj(submission.clientCnpj)})` : ''}
 Representante: ${describeOrderAuthor(submission)}
 Status: ${status.label}
 Descontos: ${discountParts.length ? describeDiscountBreakdown(pricing) : 'Nenhum'}
@@ -31,7 +31,8 @@ ${submission.rejectionReason ? `Motivo da rejeição: ${submission.rejectionReas
 // Header line used by the gestor's modals: who sent it, when, for whom.
 function describeOrderOrigin(submission) {
     const timestamp = submission.status === 'rascunho' ? submission.savedAt : submission.submittedAt;
-    return `${escapeHtml(submission.clientName || 'Cliente não informado')} · ${escapeHtml(describeOrderAuthor(submission))} · ${escapeHtml(formatDateTime(timestamp))}`;
+    const cnpj = submission.clientCnpj ? ` (CNPJ ${escapeHtml(formatCnpj(submission.clientCnpj))})` : '';
+    return `${escapeHtml(submission.clientName || 'Cliente não informado')}${cnpj} · ${escapeHtml(describeOrderAuthor(submission))} · ${escapeHtml(formatDateTime(timestamp))}`;
 }
 
 function openSupervisorOrderActions(submissionId) {
@@ -184,7 +185,7 @@ function renderPendingOrder(submission) {
         chips.push(`<span class="chip chip--rejected low-margin-badge" title="${escapeHtml(title)}">${icon('alert')}${label}</span>`);
     }
     if (pricing.status.tone === 'critical') {
-        chips.push(`<span class="chip chip--critical margin-critical-badge" title="Margem abaixo do ponto de alerta das regras comerciais">${icon('alert')}Margem crítica ${formatPercent(pricing.margin)}</span>`);
+        chips.push(`<span class="chip chip--critical margin-critical-badge" title="Margem do pedido abaixo do ponto de alerta das regras comerciais">${icon('alert')}Margem preocupante ${formatPercent(pricing.margin)}</span>`);
     }
     if (pricing.modeNotice) {
         chips.push(`<span class="chip chip--warn mode-notice-badge" title="${escapeHtml(pricing.modeNotice)}">${icon('pin')}${escapeHtml(pricing.mode.short)}</span>`);

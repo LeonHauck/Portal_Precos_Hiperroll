@@ -59,19 +59,20 @@ function applyServerRules(rules) {
 }
 
 // Colour of a margin. Green = at (or above) the product's margin at full price; yellow = reduced
-// by discounts; red = negative; "crítica" = below the alert line set in the rules (the gestor sees
-// it highlighted). The margin is information for the gestor: what blocks an order is the
-// discount (modality's range and ceiling), not the margin.
+// by discounts; red = negative. For the whole order (orderLevel) there is one more: "Preocupante",
+// when the order's margin is below the alert line of the rules (decision of 2026-11-10: the
+// gestor sees it highlighted). The margin is information for the gestor: what blocks an order is
+// the discount (modality's range and ceiling), not the margin.
 // tone is the CSS class suffix (tone-good / tone-warn / tone-bad / tone-critical); color is only for the PDF.
-function getMarginStatus(margin, referenceMargin) {
+function getMarginStatus(margin, referenceMargin, { orderLevel = false } = {}) {
+    if (orderLevel && PRICING_RULES.MARGIN_ALERT_BELOW !== null && margin < PRICING_RULES.MARGIN_ALERT_BELOW) {
+        return { label: 'Preocupante', tone: 'critical', color: '#991b1b', description: 'Margem do pedido abaixo do ponto de alerta' };
+    }
     if (margin >= referenceMargin - 0.005) {
         return { label: 'Margem cheia', tone: 'good', color: '#15803d', description: 'Margem cheia' };
     }
     if (margin >= 0) {
         return { label: 'Reduzida', tone: 'warn', color: '#b45309', description: 'Margem reduzida pelos descontos' };
-    }
-    if (PRICING_RULES.MARGIN_ALERT_BELOW !== null && margin < PRICING_RULES.MARGIN_ALERT_BELOW) {
-        return { label: 'Crítica', tone: 'critical', color: '#991b1b', description: 'Margem muito abaixo do esperado' };
     }
     return { label: 'Negativa', tone: 'bad', color: '#c53030', description: 'Margem negativa' };
 }
@@ -208,7 +209,7 @@ function calculateOrderTotals(items, conditions) {
         discountExceeded,
         requiresJustification: discountExceeded,
         alerts,
-        status: getMarginStatus(margin, tableMargin !== null ? tableMargin : PRICING_RULES.DEFAULT_PRODUCT_MARGIN)
+        status: getMarginStatus(margin, tableMargin !== null ? tableMargin : PRICING_RULES.DEFAULT_PRODUCT_MARGIN, { orderLevel: hasItems })
     };
 }
 
@@ -245,6 +246,55 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+// Balão no canto da tela (some sozinho ou no ×): avisos que o usuário não pode deixar passar,
+// como um desconto acima do máximo. Fica acima de qualquer janela aberta.
+function showToast(message, { tone = 'danger', timeout = 8000 } = {}) {
+    let stack = document.getElementById('toastStack');
+    if (!stack) {
+        stack = document.createElement('div');
+        stack.id = 'toastStack';
+        stack.className = 'toast-stack';
+        stack.setAttribute('aria-live', 'assertive');
+        document.body.appendChild(stack);
+    }
+    const toast = document.createElement('div');
+    toast.className = `toast toast--${tone}`;
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `${icon('alert')}<span class="toast__text">${escapeHtml(message)}</span><button type="button" class="toast__close" aria-label="Fechar aviso">${icon('x')}</button>`;
+    toast.querySelector('.toast__close').addEventListener('click', () => toast.remove());
+    stack.appendChild(toast);
+    setTimeout(() => toast.remove(), timeout);
+    return toast;
+}
+
+// ===== CNPJ do cliente =====
+// Aceita o CNPJ numérico e o alfanumérico (letras nas 12 primeiras posições, em uso pela Receita
+// desde julho de 2026). Dígitos verificadores: cada caractere vale o código ASCII − 48 (0–9 = 0–9,
+// A = 17...), pesos 5..2,9..2 e 6..2,9..2, resto da divisão por 11. Mesma conta de
+// normalize_cnpj()/is_valid_cnpj() em api/lib/orders.php.
+function normalizeCnpj(value) {
+    return String(value ?? '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+}
+
+function isValidCnpj(value) {
+    const cnpj = normalizeCnpj(value);
+    if (!/^[0-9A-Z]{12}[0-9]{2}$/.test(cnpj) || /^(.)\1{13}$/.test(cnpj)) return false;
+    const digit = (base, weights) => {
+        const sum = weights.reduce((acc, w, i) => acc + (base.charCodeAt(i) - 48) * w, 0) % 11;
+        return sum < 2 ? 0 : 11 - sum;
+    };
+    const first = digit(cnpj, [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+    const second = digit(cnpj.slice(0, 12) + first, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+    return cnpj.slice(12) === `${first}${second}`;
+}
+
+// "11222333000181" → "11.222.333/0001-81" (incomplete values stay as typed).
+function formatCnpj(value) {
+    const cnpj = normalizeCnpj(value);
+    if (cnpj.length !== 14) return String(value ?? '').trim();
+    return `${cnpj.slice(0, 2)}.${cnpj.slice(2, 5)}.${cnpj.slice(5, 8)}/${cnpj.slice(8, 12)}-${cnpj.slice(12)}`;
 }
 
 // Money in the Brazilian format: 1234.5 → "1.234,50". Every amount on screen uses it.
@@ -382,7 +432,7 @@ function renderOrderConditionsSummary(submission) {
         ? `<span>Margem do pedido <strong class="tone-${totals.status.tone}">${formatPercent(totals.margin)}</strong> <span class="muted">(${totals.status.label})</span></span>`
         : '';
     const criticalHtml = showMargin && totals.lines.length && totals.status.tone === 'critical'
-        ? `<div class="alert alert--critical margin-critical-alert">${icon('alert')}<div><strong>Margem crítica: ${formatPercent(totals.margin)}</strong><div>Abaixo de ${formatPercent(PRICING_RULES.MARGIN_ALERT_BELOW)}, o ponto de alerta das regras comerciais. Confira antes de aprovar.</div></div></div>`
+        ? `<div class="alert alert--critical margin-critical-alert">${icon('alert')}<div><strong>Margem do pedido preocupante: ${formatPercent(totals.margin)}</strong><div>Abaixo de ${formatPercent(PRICING_RULES.MARGIN_ALERT_BELOW)}, o ponto de alerta das regras comerciais. Confira antes de aprovar.</div></div></div>`
         : '';
 
     return `

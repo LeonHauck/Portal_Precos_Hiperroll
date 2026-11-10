@@ -67,7 +67,7 @@ Capturas feitas com usuários e clientes de exemplo. Preços, descontos e margen
 - Acompanhamento em tempo real do desconto negociado, com o pagamento antecipado e o frete FOB mostrados à parte.
 - **Margem só para o gestor e o administrador:** o representante não vê margem na tela, no PDF nem nos dados que recebe do servidor. O gestor vê a margem por item e por pedido, com destaque forte quando ela cai abaixo do ponto de alerta.
 - Avisos automáticos conforme a modalidade escolhida, exibidos ao representante e ao gestor.
-- Pedidos fora da política comercial só são enviados com justificativa e chegam sinalizados ao gestor; acima do desconto máximo o envio é bloqueado.
+- Pedidos fora da política comercial só são enviados com justificativa e chegam sinalizados ao gestor; acima do desconto máximo o envio é bloqueado, com um balão de aviso na tela.
 - **Preços atualizados:** pedido em montagem e rascunho sempre passam para a tabela em vigor (o portal mostra o que mudou e mantém o desconto em R$ de cada item). Pedido já enviado não muda.
 - **Pedido devolvido:** quando o gestor rejeita um pedido, o representante usa "Corrigir e reenviar"; os itens que já estavam nele mantêm o preço, e o pedido volta com o mesmo número.
 
@@ -76,12 +76,12 @@ Os percentuais, limites e margens da política comercial não são descritos nes
 ### 🧾 Pedidos e workflow comercial
 
 - Geração automática do número interno Hiperroll com cinco dígitos. No dia da migração, o administrador informa o próximo número do sistema antigo (na janela Usuários) e a numeração continua dele.
-- Registro de cliente, representante, validade da proposta e número do pedido do cliente.
+- Registro de cliente (com CNPJ opcional, validado, inclusive no formato com letras), representante, validade da proposta e número do pedido do cliente.
 - Salvamento e carregamento de rascunhos.
 - Envio de pedidos para o status **Em Análise**.
 - **Histórico do pedido** (botão "📋 Histórico" no resumo do pedido e em cada cartão da aba Histórico e Entregas): rascunho salvo, envio, aprovação ou rejeição com o motivo, faturamento, lixeira e restauração, com data e usuário. Vem do registro de auditoria do servidor, então o representante e o gestor veem a mesma linha do tempo em qualquer computador.
 - Consulta dos pedidos do usuário na aba **Histórico e Entregas**.
-- **Aprovação automática:** o pedido é aprovado sozinho quando está dentro da faixa de desconto, tem peso suficiente e não piorou preço nem margem em relação ao último pedido aprovado do cliente (ou, sem ele, ao último pedido do sistema com o mesmo produto). Senão, vai para o gestor com os motivos e a comparação produto a produto.
+- **Aprovação automática:** o pedido é aprovado sozinho quando está dentro da faixa de desconto, tem peso suficiente e não piorou preço nem margem em relação ao último pedido aprovado do cliente (reconhecido pelo CNPJ ou, sem ele, pelo nome) (ou, sem ele, ao último pedido do sistema com o mesmo produto). Senão, vai para o gestor com os motivos e a comparação produto a produto.
 - Aprovação ou rejeição com justificativa e observação do supervisor. Pode haver mais de um gestor: o administrador cria outra conta com esse papel.
 - Previsão de faturamento calculada após a aprovação.
 - Exclusão de registros armazenados localmente quando necessário.

@@ -101,6 +101,7 @@ function renderOrderRow(submission, isGestor) {
                 </span>
                 <span class="order-row__client">
                     <strong>${escapeHtml(submission.clientName || 'Cliente não informado')}</strong>
+                    ${submission.clientCnpj ? `<span class="muted">CNPJ ${escapeHtml(formatCnpj(submission.clientCnpj))}</span>` : ''}
                     <span class="muted">${escapeHtml(describeOrderAuthor(submission))}</span>
                 </span>
                 <span class="order-row__total">${formatCurrency(pricing.totalInvoice)}</span>
@@ -135,7 +136,7 @@ function renderHistoryTab() {
         new Date(b.submittedAt || b.savedAt || 0) - new Date(a.submittedAt || a.savedAt || 0));
 
     if (searchTerm) {
-        submissions = submissions.filter(s => [s.orderNumber, s.clientName, s.representativeName, s.submittedBy, s.savedBy, s.hiperrollNumber]
+        submissions = submissions.filter(s => [s.orderNumber, s.clientName, s.clientCnpj, s.clientCnpj && formatCnpj(s.clientCnpj), s.representativeName, s.submittedBy, s.savedBy, s.hiperrollNumber]
             .some(value => value && String(value).toLowerCase().includes(searchTerm)));
     }
 

@@ -264,6 +264,8 @@ function applyPricingRuleLabels() {
     });
 }
 
+let discountBlockedNotified = false;
+
 // Below the order form: the negotiated discount with the modality's limit, the antecipado and
 // frete FOB apart, the "PEDIDO DEVE SER IMPLANTADO..." notice, what will need a justification and
 // what can't be sent at all.
@@ -288,6 +290,13 @@ function renderOrderDiscountBreakdown(totals) {
         notice.hidden = !totals.modeNotice;
         notice.innerHTML = totals.modeNotice ? `${icon('pin')}<span>${escapeHtml(totals.modeNotice)}</span>` : '';
     }
+
+    // The moment the discount goes over the ceiling, a balloon says so (the warning below the
+    // conditions is easy to miss). It shows again only after the discount went back under it.
+    if (totals.discountBlocked && !discountBlockedNotified) {
+        showToast(`Desconto negociado de ${formatPercent(totals.negotiatedDiscount)}: passa do máximo de ${formatPercent(PRICING_RULES.MAX_NEGOTIATED_DISCOUNT)}. Este pedido não pode ser enviado; reduza o desconto.`);
+    }
+    discountBlockedNotified = totals.discountBlocked;
 
     const warning = document.getElementById('orderMinMarginWarning');
     if (warning) {
@@ -320,6 +329,7 @@ function updateOrderTable() {
         summaryDiv.hidden = true;
         updateTableMarginLabels(null);
         renderWeightTierInfo();
+        discountBlockedNotified = false;
         return;
     }
 
@@ -462,6 +472,30 @@ function normalizeProposalValidity(value) {
     if (!Number.isFinite(parsed)) return raw;
 
     return parsed === 1 ? '1 dia' : `${parsed} dias`;
+}
+
+// CNPJ do cliente: optional, but when typed it must be valid (the server checks it too). It is
+// what identifies the client in the comparison with the last order (aprovação automática).
+function checkClientCnpj() {
+    const input = document.getElementById('clientCnpj');
+    const hint = document.getElementById('clientCnpjHint');
+    if (!input || !hint) return true;
+    const value = normalizeCnpj(input.value);
+    // While it is being typed (less than 14 characters) nothing is flagged yet.
+    const invalid = value.length >= 14 && !isValidCnpj(value);
+    hint.hidden = !invalid;
+    input.classList.toggle('is-invalid', invalid);
+    return !value || isValidCnpj(value);
+}
+
+function formatClientCnpjInput(input) {
+    if (!input) return;
+    input.value = formatCnpj(input.value);
+    const hint = document.getElementById('clientCnpjHint');
+    const value = normalizeCnpj(input.value);
+    const invalid = value !== '' && !isValidCnpj(value);
+    if (hint) hint.hidden = !invalid;
+    input.classList.toggle('is-invalid', invalid);
 }
 
 function formatProposalValidityInput(input) {

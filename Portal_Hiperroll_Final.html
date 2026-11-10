@@ -183,6 +183,11 @@
                                     <input type="text" id="clientName" placeholder="Nome do cliente" data-input="updateHeaderInfo">
                                 </div>
                                 <div class="field field--wide">
+                                    <label for="clientCnpj" title="Identifica o cliente na comparação com o último pedido (aprovação automática). Aceita o CNPJ com letras.">CNPJ do cliente</label>
+                                    <input type="text" id="clientCnpj" placeholder="00.000.000/0000-00" maxlength="18" autocomplete="off" spellcheck="false" data-input="checkClientCnpj" data-change="formatClientCnpj">
+                                    <p id="clientCnpjHint" class="field-hint tone-bad" hidden>CNPJ inválido: confira os números.</p>
+                                </div>
+                                <div class="field field--wide">
                                     <label for="representativeName">Representante</label>
                                     <input type="text" id="representativeName" placeholder="Nome do representante" data-input="updateHeaderInfo">
                                 </div>

@@ -10,6 +10,7 @@ function createPdfExportNode() {
     const orderNumberClient = field('orderNumberClient');
     const orderNumber = field('loadedDraftNumber') || orderNumberClient || orderNumberHiperroll;
     const clientName = field('clientName') || '—';
+    const clientCnpj = normalizeCnpj(field('clientCnpj'));
     const representativeName = field('representativeName') || '—';
     const proposalValidity = normalizeProposalValidity(field('proposalValidity')) || '—';
     const dateStr = formatDateTime(new Date());
@@ -80,6 +81,7 @@ function createPdfExportNode() {
             <div><span>Pedido Hiper Roll</span><strong class="pdf-highlight">${escapeHtml(orderNumberHiperroll)}</strong></div>
             <div><span>Pedido do cliente</span><strong>${escapeHtml(orderNumberClient || 'Não informado')}</strong></div>
             <div><span>Cliente</span><strong>${escapeHtml(clientName)}</strong></div>
+            <div><span>CNPJ do cliente</span><strong>${clientCnpj ? escapeHtml(formatCnpj(clientCnpj)) : 'Não informado'}</strong></div>
             <div><span>Representante</span><strong>${escapeHtml(representativeName)}</strong></div>
             <div><span>Validade da proposta</span><strong>${escapeHtml(proposalValidity)}</strong></div>
             <div><span>Status</span><strong>${escapeHtml(status.label)}</strong></div>

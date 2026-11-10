@@ -387,6 +387,7 @@ function buildCurrentOrderInput(extraConditions = {}) {
     return {
         clientOrderNumber: document.getElementById('orderNumberClient')?.value.trim() || '',
         clientName: document.getElementById('clientName')?.value.trim() || '',
+        clientCnpj: normalizeCnpj(document.getElementById('clientCnpj')?.value || ''),
         representativeName: document.getElementById('representativeName')?.value.trim() || '',
         proposalValidity: normalizeProposalValidity(document.getElementById('proposalValidity')?.value || ''),
         cart: cart.map(item => ({

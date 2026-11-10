@@ -59,7 +59,7 @@ function pricing_rules(): array
         'minJustificationLength' => (int) $raw['min_justification_length'],
         // Teto do desconto negociado: acima dele o pedido não é enviado, nem com justificativa.
         'maxNegotiatedDiscount' => (float) $raw['max_negotiated_discount'],
-        // Margem abaixo da qual o gestor vê o alerta forte (só gestor e admin recebem este número).
+        // Margem do PEDIDO abaixo da qual o gestor vê o alerta forte de "margem preocupante" (só gestor e admin recebem este número).
         'marginAlertBelow' => (float) $raw['margin_alert_below'],
         // Modalidade da nota, escolhida pelo representante em cada pedido. maxDiscount é o desconto
         // NEGOCIADO permitido contra o preço de tabela; acima dele o envio exige justificativa.

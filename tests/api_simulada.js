@@ -20,7 +20,7 @@ window.PORTAL_DATA_LOCKED = false;
     // que não vai para o Git. Os testes calculam o esperado a partir destes valores.
     const TEST_RULES = {
         defaultProductMargin: 12, earlyPaymentDiscount: 1.5, fobFreightDiscount: 2.5, minJustificationLength: 10, defaultInvoiceMode: 'livre',
-        maxNegotiatedDiscount: 18, marginAlertBelow: -4,
+        maxNegotiatedDiscount: 18, marginAlertBelow: 8,
         invoiceModes: [
             { key: 'livre', name: 'Livre', invoiceShare: '100%', maxDiscount: 0, notice: '' },
             { key: 'aval', name: 'Aval', invoiceShare: '50%', maxDiscount: 8, notice: 'PEDIDO DEVE SER IMPLANTADO AVAL.' },
@@ -157,7 +157,10 @@ window.PORTAL_DATA_LOCKED = false;
             .filter(o => o.id !== excludeId && o.status === 'aprovado' && !o.deletedAt && (o.cart || []).length)
             .sort((a, b) => String(b.submittedAt || '').localeCompare(String(a.submittedAt || '')));
         const key = clientKey(order.clientName);
-        const clientRef = key ? refs.find(r => clientKey(r.clientName) === key) || null : null;
+        const cnpj = normalizeCnpj(order.clientCnpj);
+        // Same client: same CNPJ when both have one, otherwise the same name (is_same_client).
+        const sameClient = r => (cnpj && r.clientCnpj ? normalizeCnpj(r.clientCnpj) === cnpj : Boolean(key) && clientKey(r.clientName) === key);
+        const clientRef = refs.find(sameClient) || null;
         const orderRef = clientRef || refs[0] || null;
         const current = forComparison(order.cart, order.conditions);
         const check = { auto: false, margin: current.margin, reference: null, items: [], reasons };
@@ -241,6 +244,8 @@ window.PORTAL_DATA_LOCKED = false;
                         return err(409, 'A tabela de preços foi atualizada pelo gestor. Confira os novos valores antes de enviar.', 'pricing_outdated');
                     }
                     const input = clone(body.order);
+                    input.clientCnpj = normalizeCnpj(input.clientCnpj);
+                    if (input.clientCnpj && !isValidCnpj(input.clientCnpj)) return err(422, 'O CNPJ do cliente está inválido. Corrija ou deixe em branco.');
                     input.cart = applyServerPrices(input.cart, locked);
                     let check = null;
                     if (submit) {

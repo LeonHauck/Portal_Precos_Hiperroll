@@ -45,12 +45,45 @@ function sanitize_cart($cart): array
     return $clean;
 }
 
+// CNPJ do cliente: numeric or alphanumeric (letters in the first 12 positions, used by the
+// Receita Federal since July 2026). Check digits: each character is worth its ASCII code − 48,
+// weights 5..2,9..2 and 6..2,9..2, remainder of the division by 11. Same as isValidCnpj() in js/regras.js.
+function normalize_cnpj($value): string
+{
+    return (string) preg_replace('/[^0-9A-Z]/', '', strtoupper(is_string($value) ? $value : ''));
+}
+
+function is_valid_cnpj(string $cnpj): bool
+{
+    if (!preg_match('/^[0-9A-Z]{12}[0-9]{2}$/', $cnpj) || preg_match('/^(.)\1{13}$/', $cnpj)) {
+        return false;
+    }
+    $digit = function (string $base, array $weights): int {
+        $sum = 0;
+        foreach ($weights as $i => $weight) {
+            $sum += (ord($base[$i]) - 48) * $weight;
+        }
+        $rest = $sum % 11;
+        return $rest < 2 ? 0 : 11 - $rest;
+    };
+    $first = $digit($cnpj, [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+    $second = $digit(substr($cnpj, 0, 12) . $first, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+    return substr($cnpj, 12) === $first . $second;
+}
+
 function sanitize_order_input($order): array
 {
     $o = is_array($order) ? $order : [];
+    // Optional; when typed it must be valid, because it identifies the client in the comparison
+    // with the last order (check_auto_approval).
+    $cnpj = normalize_cnpj($o['clientCnpj'] ?? '');
+    if ($cnpj !== '' && !is_valid_cnpj($cnpj)) {
+        fail(422, 'O CNPJ do cliente está inválido. Corrija ou deixe em branco.');
+    }
     return [
         'clientOrderNumber' => str_field($o['clientOrderNumber'] ?? '', 40),
         'clientName' => str_field($o['clientName'] ?? '', 120),
+        'clientCnpj' => $cnpj,
         'representativeName' => str_field($o['representativeName'] ?? '', 120),
         'proposalValidity' => str_field($o['proposalValidity'] ?? '', 40),
         'cart' => sanitize_cart($o['cart'] ?? []),
@@ -307,6 +340,7 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
             'clientOrderNumber' => $input['clientOrderNumber'],
             'orderNumber' => $input['clientOrderNumber'] !== '' ? $input['clientOrderNumber'] : $number,
             'clientName' => $input['clientName'],
+            'clientCnpj' => $input['clientCnpj'],
             'representativeName' => $input['representativeName'],
             'proposalValidity' => $input['proposalValidity'],
             'cart' => $input['cart'],
@@ -351,7 +385,7 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
             $payload['submittedBy'] = $user['username'];
 
             // Approved on its own when nothing needs the gestor's eyes (see check_auto_approval).
-            $check = check_auto_approval($input['cart'], $conditions, $pricing, $existing ? $orderId : '', $input['clientName']);
+            $check = check_auto_approval($input['cart'], $conditions, $pricing, $existing ? $orderId : '', $input['clientName'], $input['clientCnpj']);
             $payload['approvalCheck'] = $check;
             $autoApproved = $check['auto'];
             if ($autoApproved) {
@@ -394,7 +428,8 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
 //  - the negotiated discount is within the modality's limit (no justification needed);
 //  - it weighs at least FREIGHT_TIER2_MIN_KG (lighter orders are analysed by the gestor);
 //  - compared with the reference order, neither the order's margin nor any product's margin
-//    or price got worse. Reference = the client's last approved order; for a product that
+//    or price got worse. Reference = the client's last approved order (same CNPJ when both
+//    orders have one, otherwise the same name); for a product that
 //    order doesn't have (or a client with no orders yet), the last approved order in the
 //    system that has it. Prices are only compared within the same region and weight band.
 // The comparison leaves out the pagamento antecipado and the frete FOB, which are apart from the
@@ -438,6 +473,7 @@ function approved_reference_orders(string $excludeId): array
             'number' => (string) ($payload['orderNumber'] ?? $row['hiperroll_number']),
             'clientName' => (string) ($payload['clientName'] ?? ''),
             'client' => client_key((string) ($payload['clientName'] ?? '')),
+            'cnpj' => normalize_cnpj($payload['clientCnpj'] ?? ''),
             'at' => (string) ($payload['submittedAt'] ?? ''),
             'cart' => $payload['cart'],
             'conditions' => $payload['conditions'] ?? [],
@@ -447,7 +483,16 @@ function approved_reference_orders(string $excludeId): array
     return $orders;
 }
 
-function check_auto_approval(array $cart, array $conditions, array $pricing, string $orderId, string $clientName): array
+// Same client: same CNPJ when both orders have one; otherwise the same (normalized) name.
+function is_same_client(array $ref, string $key, string $cnpj): bool
+{
+    if ($cnpj !== '' && $ref['cnpj'] !== '') {
+        return $ref['cnpj'] === $cnpj;
+    }
+    return $key !== '' && $ref['client'] === $key;
+}
+
+function check_auto_approval(array $cart, array $conditions, array $pricing, string $orderId, string $clientName, string $clientCnpj = ''): array
 {
     $reasons = [];
     if ($pricing['requiresJustification']) {
@@ -461,7 +506,7 @@ function check_auto_approval(array $cart, array $conditions, array $pricing, str
     $key = client_key($clientName);
     $clientRef = null;
     foreach ($refs as $ref) {
-        if ($key !== '' && $ref['client'] === $key) {
+        if (is_same_client($ref, $key, $clientCnpj)) {
             $clientRef = $ref;
             break;
         }
