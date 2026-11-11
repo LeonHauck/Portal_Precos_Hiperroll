@@ -426,6 +426,7 @@ function save_order(array $user, $id, $orderInput, bool $submit): array
 // An order is approved on its own when ALL of these hold; otherwise it goes to the gestor with
 // the reasons and the comparison:
 //  - the negotiated discount is within the modality's limit (no justification needed);
+//  - the order's margin didn't fall more than marginAlertDrop points below its own table margin;
 //  - it weighs at least FREIGHT_TIER2_MIN_KG (lighter orders are analysed by the gestor);
 //  - compared with the reference order, neither the order's margin nor any product's margin
 //    or price got worse. Reference = the client's last approved order (same CNPJ when both
@@ -497,6 +498,14 @@ function check_auto_approval(array $cart, array $conditions, array $pricing, str
     $reasons = [];
     if ($pricing['requiresJustification']) {
         $reasons[] = 'Desconto negociado acima do limite da modalidade (com justificativa)';
+    }
+    if ($pricing['marginAlert']) {
+        $reasons[] = sprintf(
+            'Margem preocupante: %s%%, mais de %s pontos abaixo da margem de tabela do pedido (%s%%)',
+            format_percent($pricing['margin']),
+            format_percent(pricing_rules()['marginAlertDrop']),
+            format_percent($pricing['tableMargin'])
+        );
     }
     if ($pricing['totalWeight'] < FREIGHT_TIER2_MIN_KG) {
         $reasons[] = sprintf('Pedido com %s kg, abaixo de %d kg', number_format($pricing['totalWeight'], 1, ',', '.'), FREIGHT_TIER2_MIN_KG);

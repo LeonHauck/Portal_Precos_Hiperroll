@@ -37,7 +37,7 @@
             check('demo: representante logado sem servidor', authManager.getCurrentUser() === 'Rep.Demo' && !$('loginScreen').classList.contains('active'), authManager.getCurrentUser());
             // A demonstração começa com a tabela já no "banco": o representante nunca usa o data.js.
             check('demo: 207 produtos vindos do banco simulado', productsData.length === 207 && pricingCatalog.source === 'server');
-            check('demo: representante não recebe margens', pricingCatalog.products.every(p => !('tableMargin' in p)) && PRICING_RULES.MARGIN_ALERT_BELOW === null);
+            check('demo: representante não recebe margens', pricingCatalog.products.every(p => !('tableMargin' in p)) && PRICING_RULES.MARGIN_ALERT_DROP === null);
             check('demo: representante não vê aprovações nem preços', !visible($('supervisorBtn')) && !visible($('btn-tab-pricing')));
 
             $('stateSelect').value = 'MG';

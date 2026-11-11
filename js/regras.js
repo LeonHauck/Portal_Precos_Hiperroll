@@ -28,7 +28,7 @@ const PRICING_RULES = {
     FOB_FREIGHT_DISCOUNT: 0,
     MIN_JUSTIFICATION_LENGTH: 0,
     MAX_NEGOTIATED_DISCOUNT: Infinity, // teto do desconto negociado: acima dele o pedido não é enviado
-    MARGIN_ALERT_BELOW: null           // margem abaixo da qual o gestor vê o alerta forte (só gestor e admin)
+    MARGIN_ALERT_DROP: null            // pontos abaixo da margem de tabela do pedido que viram "preocupante" (só gestor e admin)
 };
 // Modalidade da nota (Livre / Aval / Garantia): maxDiscount é o desconto NEGOCIADO permitido contra
 // o preço de tabela; notice aparece para o representante e o gestor quando o pedido tem desconto.
@@ -42,7 +42,7 @@ function applyServerRules(rules) {
     PRICING_RULES.FOB_FREIGHT_DISCOUNT = Number(rules.fobFreightDiscount) || 0;
     PRICING_RULES.MIN_JUSTIFICATION_LENGTH = Number(rules.minJustificationLength) || 0;
     PRICING_RULES.MAX_NEGOTIATED_DISCOUNT = Number.isFinite(Number(rules.maxNegotiatedDiscount)) && rules.maxNegotiatedDiscount !== null ? Number(rules.maxNegotiatedDiscount) : Infinity;
-    PRICING_RULES.MARGIN_ALERT_BELOW = rules.marginAlertBelow !== undefined && rules.marginAlertBelow !== null && Number.isFinite(Number(rules.marginAlertBelow)) ? Number(rules.marginAlertBelow) : null;
+    PRICING_RULES.MARGIN_ALERT_DROP = rules.marginAlertDrop !== undefined && rules.marginAlertDrop !== null && Number.isFinite(Number(rules.marginAlertDrop)) ? Number(rules.marginAlertDrop) : null;
     Object.keys(INVOICE_MODES).forEach(key => delete INVOICE_MODES[key]);
     (rules.invoiceModes || []).forEach(mode => {
         INVOICE_MODES[mode.key] = {
@@ -60,13 +60,13 @@ function applyServerRules(rules) {
 
 // Colour of a margin. Green = at (or above) the product's margin at full price; yellow = reduced
 // by discounts; red = negative. For the whole order (orderLevel) there is one more: "Preocupante",
-// when the order's margin is below the alert line of the rules (decision of 2026-11-10: the
-// gestor sees it highlighted). The margin is information for the gestor: what blocks an order is
+// when the order's margin fell more than MARGIN_ALERT_DROP points below the order's own table
+// margin (decision of 2026-11-11: the gestor sees it highlighted and it is never auto-approved). The margin is information for the gestor: what blocks an order is
 // the discount (modality's range and ceiling), not the margin.
 // tone is the CSS class suffix (tone-good / tone-warn / tone-bad / tone-critical); color is only for the PDF.
 function getMarginStatus(margin, referenceMargin, { orderLevel = false } = {}) {
-    if (orderLevel && PRICING_RULES.MARGIN_ALERT_BELOW !== null && margin < PRICING_RULES.MARGIN_ALERT_BELOW) {
-        return { label: 'Preocupante', tone: 'critical', color: '#991b1b', description: 'Margem do pedido abaixo do ponto de alerta' };
+    if (orderLevel && PRICING_RULES.MARGIN_ALERT_DROP !== null && margin < referenceMargin - PRICING_RULES.MARGIN_ALERT_DROP) {
+        return { label: 'Preocupante', tone: 'critical', color: '#991b1b', description: 'Margem do pedido muito abaixo da margem de tabela dele' };
     }
     if (margin >= referenceMargin - 0.005) {
         return { label: 'Margem cheia', tone: 'good', color: '#15803d', description: 'Margem cheia' };
@@ -432,7 +432,7 @@ function renderOrderConditionsSummary(submission) {
         ? `<span>Margem do pedido <strong class="tone-${totals.status.tone}">${formatPercent(totals.margin)}</strong> <span class="muted">(${totals.status.label})</span></span>`
         : '';
     const criticalHtml = showMargin && totals.lines.length && totals.status.tone === 'critical'
-        ? `<div class="alert alert--critical margin-critical-alert">${icon('alert')}<div><strong>Margem do pedido preocupante: ${formatPercent(totals.margin)}</strong><div>Abaixo de ${formatPercent(PRICING_RULES.MARGIN_ALERT_BELOW)}, o ponto de alerta das regras comerciais. Confira antes de aprovar.</div></div></div>`
+        ? `<div class="alert alert--critical margin-critical-alert">${icon('alert')}<div><strong>Margem do pedido preocupante: ${formatPercent(totals.margin)}</strong><div>Mais de ${formatMarginPercent(PRICING_RULES.MARGIN_ALERT_DROP)} pontos abaixo da margem de tabela deste pedido (${formatPercent(totals.tableMargin)}). Por isso ele não foi aprovado automaticamente: confira antes de aprovar.</div></div></div>`
         : '';
 
     return `

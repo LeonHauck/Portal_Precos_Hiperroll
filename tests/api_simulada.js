@@ -20,7 +20,7 @@ window.PORTAL_DATA_LOCKED = false;
     // que não vai para o Git. Os testes calculam o esperado a partir destes valores.
     const TEST_RULES = {
         defaultProductMargin: 12, earlyPaymentDiscount: 1.5, fobFreightDiscount: 2.5, minJustificationLength: 10, defaultInvoiceMode: 'livre',
-        maxNegotiatedDiscount: 18, marginAlertBelow: 8,
+        maxNegotiatedDiscount: 18, marginAlertDrop: 6,
         invoiceModes: [
             { key: 'livre', name: 'Livre', invoiceShare: '100%', maxDiscount: 0, notice: '' },
             { key: 'aval', name: 'Aval', invoiceShare: '50%', maxDiscount: 8, notice: 'PEDIDO DEVE SER IMPLANTADO AVAL.' },
@@ -152,6 +152,7 @@ window.PORTAL_DATA_LOCKED = false;
         const reasons = [];
         const totals = calculateOrderTotals(order.cart, order.conditions);
         if (totals.requiresJustification) reasons.push('Desconto negociado acima do limite da modalidade (com justificativa)');
+        if (totals.margin < totals.tableMargin - TEST_RULES.marginAlertDrop) reasons.push(`Margem preocupante: ${formatMarginPercent(totals.margin)}%, mais de ${TEST_RULES.marginAlertDrop} pontos abaixo da margem de tabela do pedido (${formatMarginPercent(totals.tableMargin)}%)`);
         if (totals.totalWeight < 200) reasons.push(`Pedido com ${formatBRL(totals.totalWeight, 1)} kg, abaixo de 200 kg`);
         const refs = Object.values(orders)
             .filter(o => o.id !== excludeId && o.status === 'aprovado' && !o.deletedAt && (o.cart || []).length)
@@ -222,7 +223,7 @@ window.PORTAL_DATA_LOCKED = false;
             switch (action) {
                 case 'session': {
                     const rules = me ? clone(TEST_RULES) : null;
-                    if (rules && !seesMargins()) { delete rules.defaultProductMargin; delete rules.marginAlertBelow; }
+                    if (rules && !seesMargins()) { delete rules.defaultProductMargin; delete rules.marginAlertDrop; }
                     return ok({ user: me, rules, csrfToken: FAKE_CSRF });
                 }
                 case 'orders.list':

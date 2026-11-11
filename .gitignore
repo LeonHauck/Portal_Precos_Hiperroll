@@ -31,3 +31,7 @@ users.json
 # Ambiente Python local e resultados dos testes
 /.venv/
 /tests/resultados/
+# Arquivos compactados (backups do projeto nao vao para o GitHub)
+*.zip
+*.rar
+*.7z

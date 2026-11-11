@@ -267,7 +267,7 @@
 
                 check('rep: preços vêm do banco, nunca do data.js', pricingCatalog.source === 'server', pricingCatalog.source);
                 check('rep: tabela chega sem a margem dos produtos', pricingCatalog.products.length > 100 && pricingCatalog.products.every(p => !('tableMargin' in p)));
-                check('rep: regras chegam sem margem padrão nem ponto de alerta', PRICING_RULES.DEFAULT_PRODUCT_MARGIN === 0 && PRICING_RULES.MARGIN_ALERT_BELOW === null && PRICING_RULES.MAX_NEGOTIATED_DISCOUNT === RULES.maxNegotiatedDiscount);
+                check('rep: regras chegam sem margem padrão nem ponto de alerta', PRICING_RULES.DEFAULT_PRODUCT_MARGIN === 0 && PRICING_RULES.MARGIN_ALERT_DROP === null && PRICING_RULES.MAX_NEGOTIATED_DISCOUNT === RULES.maxNegotiatedDiscount);
                 check('rep: aba de preços oculta', !visible($('btn-tab-pricing')));
                 check('rep: UFs carregadas (inclui TO)', $('stateSelect').options.length > 20 && Boolean(freightData.TO), $('stateSelect').options.length);
 
@@ -388,6 +388,15 @@
                 await submitOrder();
                 const thirdAuto = ordersOf()[2];
                 check('rep: preço menor que no último pedido vai para o gestor', thirdAuto && thirdAuto.status === 'analise' && thirdAuto.approvalCheck.reasons.some(r => r.includes('preço e margem menor que no pedido')), thirdAuto && JSON.stringify(thirdAuto.approvalCheck.reasons));
+                // Desconto dentro da faixa da Garantia, mas a margem cai muito abaixo da tabela do pedido.
+                await repeatOrder(firstAuto.id);
+                setModeRep('garantia');
+                $('orderDiscount').value = String(GARANTIA_MAX);
+                updateOrderTable();
+                showSubmitOrderModal();
+                await submitOrder();
+                const worried = ordersOf()[3];
+                check('rep: margem preocupante nunca é aprovada sozinha', worried && worried.status === 'analise' && worried.approvalCheck.reasons.some(r => r.startsWith('Margem preocupante')), worried && JSON.stringify(worried.approvalCheck.reasons));
 
                 // ----- teto do desconto negociado -----
                 await repeatOrder(firstAuto.id);
@@ -452,18 +461,18 @@
                 const sac = productsData.find(p => p.tableMargin === marginA);
                 const bob = productsData.find(p => p.tableMargin === marginB);
                 const marginAfter = (productMargin, discount) => (1 - (1 - productMargin / 100) / (1 - discount / 100)) * 100;
-                // Order margin below the alert line is "Preocupante" (critical), whatever else it is.
-                const orderTone = (margin, otherwise) => margin < RULES.marginAlertBelow ? 'critical' : otherwise;
+                // An order margin more than marginAlertDrop points below the order's own table margin is "Preocupante".
+                const orderTone = (totals, otherwise) => totals.margin < totals.tableMargin - RULES.marginAlertDrop ? 'critical' : otherwise;
                 $('stateSelect').value = 'MG';
                 addToCart(sac.codigo);
                 let mt = totalsNow();
-                check('pedido: no preço de tabela a margem é a do produto', Math.abs(mt.margin - marginA) < 1e-9 && mt.tableMargin === marginA && $('marginThreshold').textContent === pct(marginA) && mt.status.tone === orderTone(mt.margin, 'good'), mt.margin);
+                check('pedido: no preço de tabela a margem é a do produto', Math.abs(mt.margin - marginA) < 1e-9 && mt.tableMargin === marginA && $('marginThreshold').textContent === pct(marginA) && mt.status.tone === orderTone(mt, 'good'), mt.margin);
                 check('pedido: item guarda a margem do produto e o pedido a envia', cart[0].tableMargin === marginA && buildCurrentOrderInput().cart[0].tableMargin === marginA && buildCurrentOrderInput().conditions.invoiceMode === 'livre');
                 check('pedido: Livre sem desconto: sem aviso e sem justificativa', !mt.requiresJustification && mt.modeNotice === '' && mt.effectiveDiscount === 0 && $('orderModeNotice').hidden && $('orderMinMarginWarning').hidden);
 
                 setDiscount(2);
                 mt = totalsNow();
-                check('pedido: 2% no pedido reduz a margem pelo valor', Math.abs(mt.margin - marginAfter(marginA, 2)) < 1e-9 && mt.effectiveDiscount === 2 && mt.status.tone === orderTone(mt.margin, 'warn'), mt.margin.toFixed(4));
+                check('pedido: 2% no pedido reduz a margem pelo valor', Math.abs(mt.margin - marginAfter(marginA, 2)) < 1e-9 && mt.effectiveDiscount === 2 && mt.status.tone === orderTone(mt, 'warn'), mt.margin.toFixed(4));
                 check('pedido: Livre com desconto exige justificativa', mt.discountExceeded && mt.requiresJustification && mt.alerts[0].includes('não permite desconto') && !$('orderMinMarginWarning').hidden, mt.alerts[0]);
                 check('pedido: Livre não mostra aviso de implantação', mt.modeNotice === '');
 
@@ -495,9 +504,15 @@
 
                 // margem abaixo do ponto de alerta das regras: destaque forte para o gestor
                 const criticalMargin = marginAfter(marginA, GARANTIA_MAX + 1);
-                const sampleOrder = productMargin => calculateOrderTotals([{ codigo: 'T', cif: 100, negotiatedPrice: 100, tableMargin: productMargin, qty: 1 }], { invoiceMode: 'livre' }).status;
-                check('pedido: margem do pedido abaixo do ponto de alerta é "Preocupante"; acima dele, normal', sampleOrder(RULES.marginAlertBelow - 1).tone === 'critical' && sampleOrder(RULES.marginAlertBelow - 1).label === 'Preocupante' && sampleOrder(RULES.marginAlertBelow + 1).tone === 'good');
-                check('pedido: margem abaixo do ponto de alerta fica destacada na tela', criticalMargin < RULES.marginAlertBelow ? (mt.status.tone === 'critical' && $('totalsPriceContainer').classList.contains('margin-critical') && renderOrderConditionsSummary({ cart, conditions: getCurrentOrderConditions() }).includes('margin-critical-alert')) : mt.status.tone === 'bad', `${mt.margin.toFixed(2)} / alerta ${RULES.marginAlertBelow}`);
+                // Product with a 20% table margin: the drop is what matters, not a fixed number.
+                const sampleOrder = discount => calculateOrderTotals([{ codigo: 'T', cif: 100, negotiatedPrice: 100, tableMargin: 20, qty: 1 }], { invoiceMode: 'garantia', manualDiscount: discount });
+                const smallDrop = sampleOrder(1);
+                const bigDrop = sampleOrder(RULES.maxNegotiatedDiscount);
+                check('pedido: margem que cai pouco abaixo da tabela do pedido não é preocupante', 20 - smallDrop.margin < RULES.marginAlertDrop && smallDrop.status.tone === 'warn', smallDrop.margin.toFixed(2));
+                check('pedido: margem que cai mais que o limite abaixo da tabela do pedido é "Preocupante"', 20 - bigDrop.margin > RULES.marginAlertDrop && bigDrop.status.tone === 'critical' && bigDrop.status.label === 'Preocupante', bigDrop.margin.toFixed(2));
+                const sacolaFull = calculateOrderTotals([{ codigo: 'T', cif: 100, negotiatedPrice: 100, tableMargin: 5, qty: 1 }], { invoiceMode: 'livre' });
+                check('pedido: produto de margem baixa vendido no preço de tabela não é preocupante', sacolaFull.status.tone === 'good');
+                check('pedido: margem preocupante fica destacada na tela', mt.margin < mt.tableMargin - RULES.marginAlertDrop ? (mt.status.tone === 'critical' && $('totalsPriceContainer').classList.contains('margin-critical') && renderOrderConditionsSummary({ cart, conditions: getCurrentOrderConditions() }).includes('margin-critical-alert')) : mt.status.tone === 'bad', `${mt.margin.toFixed(2)} / alerta ${RULES.marginAlertBelow}`);
 
                 // teto do desconto negociado: acima dele não envia nem com justificativa
                 setDiscount(RULES.maxNegotiatedDiscount + 0.5);

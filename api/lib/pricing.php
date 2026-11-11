@@ -24,14 +24,10 @@ function pricing_rules(): array
     if (!is_array($raw)) {
         $invalid('ele precisa terminar com "return [ ... ];"');
     }
-    foreach (['default_product_margin', 'early_payment_discount', 'fob_freight_discount', 'min_justification_length', 'max_negotiated_discount'] as $key) {
+    foreach (['default_product_margin', 'early_payment_discount', 'fob_freight_discount', 'min_justification_length', 'max_negotiated_discount', 'margin_alert_drop'] as $key) {
         if (!isset($raw[$key]) || !is_numeric($raw[$key]) || $raw[$key] < 0) {
             $invalid("falta o número '{$key}'");
         }
-    }
-    // The only rule that may be negative (a margin below zero).
-    if (!isset($raw['margin_alert_below']) || !is_numeric($raw['margin_alert_below'])) {
-        $invalid("falta o número 'margin_alert_below'");
     }
     $modes = [];
     foreach (($raw['invoice_modes'] ?? []) as $key => $mode) {
@@ -59,8 +55,9 @@ function pricing_rules(): array
         'minJustificationLength' => (int) $raw['min_justification_length'],
         // Teto do desconto negociado: acima dele o pedido não é enviado, nem com justificativa.
         'maxNegotiatedDiscount' => (float) $raw['max_negotiated_discount'],
-        // Margem do PEDIDO abaixo da qual o gestor vê o alerta forte de "margem preocupante" (só gestor e admin recebem este número).
-        'marginAlertBelow' => (float) $raw['margin_alert_below'],
+        // "Margem preocupante": pontos que a margem do pedido pode cair abaixo da margem de tabela do
+        // próprio pedido (só gestor e admin recebem este número).
+        'marginAlertDrop' => (float) $raw['margin_alert_drop'],
         // Modalidade da nota, escolhida pelo representante em cada pedido. maxDiscount é o desconto
         // NEGOCIADO permitido contra o preço de tabela; acima dele o envio exige justificativa.
         // notice aparece para o representante e o gestor sempre que o pedido tem algum desconto.
@@ -102,7 +99,7 @@ function pricing_rules_for_client(?array $user): array
     }
     $client = ['invoiceModes' => $modes] + $rules;
     if (!can_see_margins($user)) {
-        unset($client['defaultProductMargin'], $client['marginAlertBelow']);
+        unset($client['defaultProductMargin'], $client['marginAlertDrop']);
     }
     return $client;
 }
@@ -164,6 +161,7 @@ function calculate_order_totals(array $cart, array $conditions): array
     $totalInvoice = 0.0;
     $totalProfit = 0.0;
     $totalTable = 0.0;
+    $tableProfit = 0.0;
     $totalWeight = 0.0;
     $lines = [];
     foreach ($cart as $item) {
@@ -179,6 +177,7 @@ function calculate_order_totals(array $cart, array $conditions): array
         $totalInvoice += $invoiceUnit * $qty;
         $totalProfit += ($netUnit - $keepUnit) * $qty;
         $totalTable += $tableUnit * $qty;
+        $tableProfit += $tableUnit * ($productMargin / 100) * $qty;
         $totalWeight += (float) ($item['weight'] ?? 0) * $qty;
         $lines[] = [
             'codigo' => $item['codigo'],
@@ -191,6 +190,8 @@ function calculate_order_totals(array $cart, array $conditions): array
     }
 
     $margin = $totalInvoice > 0 ? ($totalProfit / $totalInvoice) * 100 : 0.0;
+    // Margin this same order would have at full table price (each product's margin, weighted).
+    $tableMargin = $totalTable > 0 ? ($tableProfit / $totalTable) * 100 : 0.0;
     // Rounded to cents of a percent so float noise never turns "exactly 10%" into "above 10%".
     $toDiscount = fn (float $paid) => $totalTable > 0 ? max(round((1 - $paid / $totalTable) * 100, 2), 0.0) : 0.0;
     $effectiveDiscount = $toDiscount($totalNet);
@@ -201,6 +202,8 @@ function calculate_order_totals(array $cart, array $conditions): array
     $hasItems = count($cart) > 0;
     $discountBlocked = $hasItems && $negotiatedDiscount > $rules['maxNegotiatedDiscount'];
     $discountExceeded = $hasItems && $negotiatedDiscount > $mode['maxDiscount'];
+    // "Margem preocupante": the order lost more than marginAlertDrop points of its own table margin.
+    $marginAlert = $hasItems && $margin < $tableMargin - $rules['marginAlertDrop'];
 
     $alerts = [];
     if ($discountBlocked) {
@@ -213,6 +216,8 @@ function calculate_order_totals(array $cart, array $conditions): array
 
     return [
         'margin' => $margin,
+        'tableMargin' => $tableMargin,
+        'marginAlert' => $marginAlert,
         'discountPercent' => $discountPercent,
         'effectiveDiscount' => $effectiveDiscount,
         'negotiatedDiscount' => $negotiatedDiscount,

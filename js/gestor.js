@@ -185,7 +185,7 @@ function renderPendingOrder(submission) {
         chips.push(`<span class="chip chip--rejected low-margin-badge" title="${escapeHtml(title)}">${icon('alert')}${label}</span>`);
     }
     if (pricing.status.tone === 'critical') {
-        chips.push(`<span class="chip chip--critical margin-critical-badge" title="Margem do pedido abaixo do ponto de alerta das regras comerciais">${icon('alert')}Margem preocupante ${formatPercent(pricing.margin)}</span>`);
+        chips.push(`<span class="chip chip--critical margin-critical-badge" title="Margem do pedido muito abaixo da margem de tabela dele">${icon('alert')}Margem preocupante ${formatPercent(pricing.margin)}</span>`);
     }
     if (pricing.modeNotice) {
         chips.push(`<span class="chip chip--warn mode-notice-badge" title="${escapeHtml(pricing.modeNotice)}">${icon('pin')}${escapeHtml(pricing.mode.short)}</span>`);
