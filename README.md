@@ -170,6 +170,7 @@ A pasta `demo/` fica só na máquina de desenvolvimento (está no `.gitignore`, 
 - Sessão em cookie `HttpOnly`/`SameSite` e renovada no login; toda alteração exige um token CSRF.
 - As regras comerciais são recalculadas no servidor (`api/lib/pricing.php`), e, com a tabela no banco, os preços de cada item também vêm do banco (`api/lib/catalog.php`) — não dá para burlá-las alterando o JavaScript no navegador.
 - Um pedido montado com uma versão antiga da tabela é recusado no envio até o representante revisar os novos preços.
+- **Custos e fretes não saem do servidor para o representante:** o navegador dele recebe só os produtos e a lista de regiões, e pede ao servidor os **preços prontos** (FOB e CIF das duas faixas de peso) de uma região por vez (`pricing.prices` → `region_prices()` em `api/lib/catalog.php`). Assim nem a aba Rede (F12) mostra custo, frete ou margem. O gestor e o administrador recebem a tabela completa, porque editam e conferem os preços.
 - `.htaccess` bloqueia o download do banco, da planilha, dos scripts de manutenção, dos backups e de arquivos ocultos. A pasta de dados (banco e notas fiscais) recusa qualquer acesso direto pelo navegador.
 - Todo texto digitado por alguém (cliente, observações, motivos, nomes) passa por `escapeHtml()` antes de aparecer na tela, então nunca é executado como código. Há um teste automático para isso em `tests/testes_portal.js`.
 - **CSP (Content Security Policy)** ligado no `<meta>` do `Portal_Hiperroll_Final.html` e no `.htaccess` (as duas cópias devem ficar iguais; o `.htaccess` acrescenta `frame-ancestors`): o navegador só executa JavaScript de arquivos do próprio site e da biblioteca de PDF (cdnjs). Por isso o HTML não tem `onclick=`, `<script>` escrito dentro da página nem `style=""`: os botões usam `data-action="nomeDaAcao"`, ligado à função em `js/acoes.js`. Para criar um botão novo, acrescente a ação na lista de `js/acoes.js`.
@@ -209,7 +210,7 @@ As regras comerciais (modalidades, limites de desconto, condições e cálculo d
 
 O servidor lê esse arquivo em `pricing_rules()` (`api/lib/pricing.php`), que confere se nada está faltando. A tela recebe as regras junto com a sessão, depois do login (`pricing_rules_for_client()` → `applyServerRules()` em `js/regras.js`), e começa sem regra nenhuma até lá. Para mudar uma regra, altere apenas o `regras_comerciais.php` do servidor. Os testes automáticos usam regras fictícias (`tests/api_simulada.js`).
 
-O que continua escrito nos dois lados é a *fórmula* (não os valores), porque a tela precisa calcular na hora enquanto o pedido é montado: `calculateOrderTotals()` em `js/regras.js` × `calculate_order_totals()` em `api/lib/pricing.php`, e `computeItemPrices()` em `js/catalogo.js` × `server_item_prices()` em `api/lib/catalog.php`. Quem decide é sempre o servidor.
+O que continua escrito nos dois lados é a *fórmula* (não os valores), porque a tela precisa calcular na hora enquanto o pedido é montado: `calculateOrderTotals()` em `js/regras.js` × `calculate_order_totals()` em `api/lib/pricing.php`, e `computeItemPrices()` em `js/catalogo.js` × `server_item_prices()` em `api/lib/catalog.php` (a tela só calcula preços para o gestor e o administrador; o representante recebe os preços prontos). Quem decide é sempre o servidor.
 
 ## 🗂️ Estrutura principal
 

@@ -42,7 +42,7 @@ window.PORTAL_DATA_LOCKED = false;
         Object.assign(users.rep, { username: 'rep.demo', displayName: 'Representante Demo' });
         Object.assign(users.admin, { username: 'admin.demo', displayName: 'Administrador Demo' });
     }
-    const userKey = { repcat: 'rep', repnocat: 'rep', pedido: 'gestor', admincat: 'admin', shot: 'gestor', shotdark: 'gestor', shotmodal: 'gestor', mapping: 'rep', shotprod: 'gestor', productlist: 'rep', shotorder: 'rep', shothist: 'gestor', shothistdark: 'gestor', readme_precos: 'rep', readme_pedido: 'rep', readme_historico: 'gestor', readme_tabela: 'gestor', readme_aprovacoes: 'gestor', readme_pedidos: 'gestor', readme_faturamento: 'gestor', readme_usuarios: 'gestor', layout_hist: 'gestor', layout_super: 'gestor', layout_users: 'gestor', layout_mobile: 'rep', layout_full: 'rep', layout_dark: 'rep' }[mode] || mode;
+    const userKey = { repcat: 'rep', repnocat: 'rep', pedido: 'gestor', admincat: 'admin', shot: 'gestor', shotdark: 'gestor', shotmodal: 'gestor', mapping: 'gestor', shotprod: 'gestor', productlist: 'gestor', shotorder: 'rep', shothist: 'gestor', shothistdark: 'gestor', readme_precos: 'rep', readme_pedido: 'rep', readme_historico: 'gestor', readme_tabela: 'gestor', readme_aprovacoes: 'gestor', readme_pedidos: 'gestor', readme_faturamento: 'gestor', readme_usuarios: 'gestor', layout_hist: 'gestor', layout_super: 'gestor', layout_users: 'gestor', layout_mobile: 'rep', layout_full: 'rep', layout_dark: 'rep' }[mode] || mode;
     const me = mode === 'anon' || mode === 'readme_login' ? null : users[userKey];
     // A representative never uses data.js (api/data.php doesn't deliver it to them): their scenarios
     // start with the table already in the database, except 'repnocat'.
@@ -131,9 +131,49 @@ window.PORTAL_DATA_LOCKED = false;
         catalog = { version: 1, costLines: clone(data.costLines), freight: clone(data.freight), products: clone(data.products).map(p => Object.assign({ active: true }, p)) };
         log('catalog', 'import', 'import', null, `${data.costLines.length} linhas`, 'Importação inicial do data.js');
     };
-    const catalogPayload = () => catalog
-        ? { imported: true, version: catalog.version, canEdit: me.role === 'gestor', costLines: clone(catalog.costLines), freight: clone(catalog.freight), products: clone(catalog.products.filter(p => canAdmin() || p.active)).map(p => { if (!seesMargins()) delete p.tableMargin; return p; }) }
-        : { imported: false, version: 0, canEdit: me.role === 'gestor', costLines: [], freight: [], products: [] };
+    // Like get_catalog: a representative gets no cost, freight value or margin, only products and regions.
+    const catalogPayload = () => {
+        if (!catalog) return { imported: false, version: 0, canEdit: me.role === 'gestor', pricesOnRequest: !canAdmin(), costLines: [], freight: [], products: [] };
+        if (canAdmin()) return { imported: true, version: catalog.version, canEdit: me.role === 'gestor', pricesOnRequest: false, costLines: clone(catalog.costLines), freight: clone(catalog.freight), products: clone(catalog.products) };
+        return {
+            imported: true, version: catalog.version, canEdit: false, pricesOnRequest: true, costLines: [],
+            freight: catalog.freight.map(f => ({ uf: f.uf, pracaType: f.pracaType, label: f.label })),
+            products: catalog.products.filter(p => p.active).map(p => ({ codigo: p.codigo, descricao: p.descricao, categoria: p.categoria, subcat: p.subcat, weight: p.weight, ncm: p.ncm, active: true }))
+        };
+    };
+    // Like server_item_prices / region_prices in api/lib/catalog.php.
+    const itemPrices = (product, line, rate, tier) => {
+        const price100 = product.priceOverride != null && product.weight > 0 ? product.priceOverride / product.weight : line.price100;
+        const costs = line.custoBase + line.despCom + line.despAdm;
+        const fob = product.priceOverride != null ? product.priceOverride : price100 * product.weight;
+        return { fob, cif: costs > 0 ? (costs + rate[tier]) / (costs / price100) * product.weight : null };
+    };
+    const regionPricesPayload = (uf, pracaType) => {
+        const rate = catalog.freight.find(f => f.uf === uf && f.pracaType === pracaType);
+        if (!rate) return null;
+        const prices = {};
+        catalog.products.filter(p => p.active).forEach(p => {
+            const line = catalog.costLines.find(l => l.key === p.costLineKey);
+            if (!line) return;
+            const t1 = itemPrices(p, line, rate, 'tier1');
+            prices[p.codigo] = { fob: t1.fob, cif: { tier1: t1.cif, tier2: itemPrices(p, line, rate, 'tier2').cif } };
+        });
+        return { uf, pracaType, version: catalog.version, prices };
+    };
+    // README screenshots: the simulated server's table gets invented numbers (no real price in images).
+    window.__mockFictitiousPrices = () => {
+        if (!catalog) return;
+        catalog.costLines.forEach((line, i) => {
+            const price = 9.5 + ((i * 7) % 11) * 0.85;   // invented R$/kg
+            Object.assign(line, { price100: +price.toFixed(2), custoBase: +(price * 0.62).toFixed(2), despCom: +(price * 0.08).toFixed(2), despAdm: +(price * 0.06).toFixed(2) });
+        });
+        catalog.freight.forEach((row, i) => {
+            const rate = 0.55 + ((i * 5) % 9) * 0.07;    // invented freight R$/kg
+            row.tier1 = +rate.toFixed(2);
+            row.tier2 = +(rate * 0.85).toFixed(2);
+        });
+        catalog.products.forEach(product => { product.priceOverride = null; });
+    };
 
     // ----- same order rules as api/lib/orders.php (locked prices, auto-approval) -----
     const lockKey = item => `${item.codigo}|${item.uf || ''}|${item.cityType || ''}`;
@@ -215,7 +255,7 @@ window.PORTAL_DATA_LOCKED = false;
         const method = opts.method || 'GET';
         const headers = opts.headers || {};
         const body = opts.body ? JSON.parse(opts.body) : {};
-        window.__mockCalls.push({ action, method, csrf: headers['X-CSRF-Token'], body, id: query.get('id') });
+        window.__mockCalls.push({ action, method, csrf: headers['X-CSRF-Token'], body, id: query.get('id'), uf: query.get('uf') });
         if (method === 'POST' && headers['X-CSRF-Token'] !== FAKE_CSRF) return err(419, 'csrf');
         if (catalogPreImported && !catalog && action !== 'session' && typeof buildLegacyCatalog === 'function') importFrom(buildLegacyCatalog());
 
@@ -318,6 +358,11 @@ window.PORTAL_DATA_LOCKED = false;
 
                 case 'pricing.get':
                     return ok({ catalog: catalogPayload() });
+                case 'pricing.prices': {
+                    if (!catalog) return err(409, 'A tabela de preços ainda não foi liberada pelo gestor.');
+                    const region = regionPricesPayload(query.get('uf') || '', query.get('praca') || '');
+                    return region ? ok(region) : err(404, 'Região não encontrada na tabela de frete.');
+                }
                 case 'pricing.import':
                     if (!canAdmin()) return err(403, 'Você não tem permissão para esta ação.');
                     if (catalog) return err(409, 'A tabela de preços já foi importada.');

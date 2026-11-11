@@ -40,10 +40,13 @@
             check('demo: representante não recebe margens', pricingCatalog.products.every(p => !('tableMargin' in p)) && PRICING_RULES.MARGIN_ALERT_DROP === null);
             check('demo: representante não vê aprovações nem preços', !visible($('supervisorBtn')) && !visible($('btn-tab-pricing')));
 
+            check('demo: representante não recebe custos nem valores de frete', pricingCatalog.pricesOnRequest === true && pricingCatalog.costLines.length === 0 && pricingCatalog.freight.length > 20 && pricingCatalog.freight.every(f => !('tier1' in f) && !('tier2' in f)) && pricingCatalog.products.every(p => !('costLineKey' in p) && !('priceOverride' in p)));
             $('stateSelect').value = 'MG';
+            onStateChange();
+            await loadRegionPrices('MG', $('cityType').value);
             updateResults();
             const mgPrices = computeItemPrices(productsData[0], getCurrentRegionFilters());
-            check('demo: CIF maior que o FOB (frete de MG somado)', mgPrices.rate > 0 && mgPrices.cif > mgPrices.fob, `${mgPrices.fob.toFixed(2)} / ${mgPrices.cif.toFixed(2)}`);
+            check('demo: CIF maior que o FOB (frete de MG somado)', mgPrices.cif > mgPrices.fob && $('resultsContainer').querySelectorAll('.price-cif').length > 100, `${mgPrices.fob.toFixed(2)} / ${mgPrices.cif.toFixed(2)}`);
             addToCart(productsData[0].codigo);
             $('clientName').value = 'Mercado Demo';
             await saveDraftCurrentOrder();
@@ -97,7 +100,8 @@
             await importPricingCatalog();
             check('demo: tabela importada (versão 1, 14 grupos)', pricingCatalog.source === 'server' && pricingCatalog.version === 1 && pricingCatalog.costLines.length === 14, pricingCatalog.costLines.length);
             const importedPrices = computeItemPrices(productsData[0], { uf: 'MG', cityType: 'Capital', weightTier: 'tier1' });
-            check('demo: depois da importação o CIF continua maior que o FOB', importedPrices.rate > 0 && Math.abs(importedPrices.fob - mgPrices.fob) < 1e-9 && Math.abs(importedPrices.cif - mgPrices.cif) < 1e-9, `${importedPrices.fob.toFixed(2)} / ${importedPrices.cif.toFixed(2)}`);
+            // The gestor calculates on screen; the representative got the same values ready from the server.
+            check('demo: preço do gestor (calculado na tela) igual ao pronto do representante', importedPrices.rate > 0 && Math.abs(importedPrices.fob - mgPrices.fob) < 1e-9 && Math.abs(importedPrices.cif - mgPrices.cif) < 1e-9, `${importedPrices.fob.toFixed(2)} / ${importedPrices.cif.toFixed(2)}`);
             const target = pricingCatalog.products[0];
             await sendPricingChange('pricing.saveProduct', { product: { ...target, priceOverride: 50 }, note: 'teste' });
             check('demo: preço próprio R$ 50', computeItemPrices(productsData.find(p => p.codigo === target.codigo), {}).fob === 50 && pricingCatalog.version === 2);
@@ -117,6 +121,8 @@
             check('demo: representante recebe a tabela nova', pricingCatalog.source === 'server' && pricingCatalog.version === 3);
             cart.length = 0;
             $('stateSelect').value = 'MG';
+            onStateChange();
+            await loadRegionPrices('MG', $('cityType').value);
             addToCart(target.codigo);
             cart[0].fob = 1; // tela adulterada: o "servidor" precisa recalcular
             await saveDraftCurrentOrder();

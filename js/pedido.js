@@ -92,11 +92,18 @@ function currentWeightTier() {
 function syncCartWeightTier() {
     const tier = currentWeightTier();
     let changed = false;
+    let waitingForPrices = false;
     cart.forEach(item => {
         if (item.priceLocked || !item.uf || item.weightTier === tier) return;
         const product = productsData.find(p => p.codigo === item.codigo);
         if (!product) return;
         const prices = computeItemPrices(product, { uf: item.uf, cityType: item.cityType, weightTier: tier });
+        if (!prices) {
+            // Representative: this region's prices are still downloading (a failed region isn't
+            // asked again on every change; the product list has a "Tentar de novo" button).
+            if (!regionPricesFailedFor(item.uf, item.cityType)) waitingForPrices = true;
+            return;
+        }
         const discount = Math.max((item.cif || 0) - (item.negotiatedPrice || 0), 0);
         item.weightTier = tier;
         item.fob = prices.fob;
@@ -105,6 +112,11 @@ function syncCartWeightTier() {
         item.unitDiscount = Math.max(item.cif - item.negotiatedPrice, 0);
         changed = true;
     });
+    if (waitingForPrices) {
+        loadCartRegionPrices()
+            .then(() => updateOrderTable())
+            .catch(e => showToast(`Não foi possível buscar os preços da nova faixa de peso: ${e.message}`));
+    }
     return changed;
 }
 
@@ -130,6 +142,21 @@ function updateResults() {
 
     if (!uf) {
         container.innerHTML = `<div class="empty-state">${icon('map-pin')}Selecione o estado para ver os preços.</div>`;
+        return;
+    }
+
+    // Representative: the prices of the region come ready from the server, once per region.
+    if (!hasRegionPrices(uf, cityType)) {
+        const region = `${escapeHtml(uf)} · ${escapeHtml(pracaLabel(uf, cityType))}`;
+        const stillChosen = () => document.getElementById('stateSelect').value === uf && document.getElementById('cityType').value === cityType;
+        container.innerHTML = `<div class="empty-state">${icon('info')}Carregando os preços de ${region}…</div>`;
+        loadRegionPrices(uf, cityType)
+            .then(() => { if (stillChosen()) updateResults(); })
+            .catch(e => {
+                if (!stillChosen()) return;
+                container.innerHTML = `<div class="empty-state">${icon('alert')}Não foi possível carregar os preços de ${region}: ${escapeHtml(e.message)}
+                    <button type="button" class="btn btn--sm" data-action="retryRegionPrices">Tentar de novo</button></div>`;
+            });
         return;
     }
 
@@ -195,7 +222,12 @@ function addToCart(codigo) {
         existing.qty++;
     } else {
         const region = getCurrentRegionFilters();
-        const { fob, cif } = computeItemPrices(p, region);
+        const prices = computeItemPrices(p, region);
+        if (!prices) {
+            showToast('Os preços desta região ainda estão carregando. Tente de novo em instantes.');
+            return;
+        }
+        const { fob, cif } = prices;
         cart.push({
             codigo: p.codigo,
             descricao: p.descricao,

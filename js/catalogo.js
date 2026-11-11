@@ -164,8 +164,11 @@ async function fetchPricingCatalog() {
 }
 
 // Rebuilds the in-memory lookups the screens use (productsData, costsData, freightData).
+// For a representative costLines comes empty and freight has only the regions (no values):
+// their prices come ready from the server (see "Preços prontos do servidor" below).
 function applyCatalog(catalog) {
     pricingCatalog = catalog;
+    clearRegionPrices();
     productsData.length = 0;
     Object.keys(costsData).forEach(key => delete costsData[key]);
     Object.keys(freightData).forEach(uf => delete freightData[uf]);
@@ -252,11 +255,88 @@ function getCurrentRegionFilters() {
     };
 }
 
+// ----- Preços prontos do servidor (representante) -----
+// The representative's browser never receives costs or freight values: it asks the server for
+// the ready prices of one region (pricing.prices, see region_prices in api/lib/catalog.php) and
+// keeps them here until the table changes. Each region brings both weight bands.
+const regionPrices = {};          // 'UF/Praça' -> { codigo: { fob, cif: { tier1, tier2 } } }
+const regionPricesLoading = {};   // 'UF/Praça' -> Promise of the request in progress
+const regionPricesFailed = new Set(); // regions whose last request failed (not retried by themselves)
+let regionPricesGeneration = 0;   // a new table discards answers to requests made before it
+
+function usesServerPrices() {
+    return Boolean(pricingCatalog.pricesOnRequest);
+}
+
+function regionPricesKey(uf, cityType) {
+    return `${uf}/${cityType}`;
+}
+
+function clearRegionPrices() {
+    regionPricesGeneration++;
+    Object.keys(regionPrices).forEach(key => delete regionPrices[key]);
+    Object.keys(regionPricesLoading).forEach(key => delete regionPricesLoading[key]);
+    regionPricesFailed.clear();
+}
+
+function regionPricesFailedFor(uf, cityType) {
+    return regionPricesFailed.has(regionPricesKey(uf, cityType));
+}
+
+// True when the prices of this region can be shown right away (gestor/admin calculate them here).
+function hasRegionPrices(uf, cityType) {
+    return !usesServerPrices() || !uf || Boolean(regionPrices[regionPricesKey(uf, cityType)]);
+}
+
+// Downloads the prices of one region once; several calls at the same time share one request.
+async function loadRegionPrices(uf, cityType) {
+    if (hasRegionPrices(uf, cityType)) return;
+    const key = regionPricesKey(uf, cityType);
+    if (!regionPricesLoading[key]) {
+        const generation = regionPricesGeneration;
+        regionPricesLoading[key] = apiRequest('pricing.prices', { query: { uf, praca: cityType } })
+            .then(data => {
+                if (generation !== regionPricesGeneration) return;
+                regionPricesFailed.delete(key);
+                regionPrices[key] = data.prices || {};
+                // Prices from a newer table than the one on screen: bring the rest of the table too.
+                if (data.version !== pricingCatalog.version && typeof checkPricingVersion === 'function') checkPricingVersion();
+            }, e => {
+                if (generation === regionPricesGeneration) regionPricesFailed.add(key);
+                throw e;
+            })
+            .finally(() => {
+                if (generation === regionPricesGeneration) delete regionPricesLoading[key];
+            });
+    }
+    await regionPricesLoading[key];
+}
+
+// Every region the order uses (drafts and repeated orders can come from any region).
+async function loadCartRegionPrices(items = cart) {
+    const regions = new Map();
+    items.forEach(item => {
+        if (item.uf && !item.priceLocked) regions.set(regionPricesKey(item.uf, item.cityType), item);
+    });
+    await Promise.all([...regions.values()].map(item => loadRegionPrices(item.uf, item.cityType)));
+}
+
 // FOB = preço 100% NF × peso. CIF = (custos + frete da região) ÷ (custos ÷ preço 100% NF) × peso,
 // i.e. the freight is added to the cost and gets the same markup. Same formulas as
 // server_item_prices() in api/lib/catalog.php, which recalculates them when an order is saved.
 // A product with an individual price (set by the gestor) uses price ÷ weight as its 100% NF price.
+// For a representative the result comes from the server's ready prices, or null while the
+// region hasn't been downloaded yet (see loadRegionPrices).
 function computeItemPrices(product, { uf, cityType, weightTier } = {}) {
+    if (usesServerPrices()) {
+        if (!uf) return null;
+        const region = regionPrices[regionPricesKey(uf, cityType)];
+        if (!region) return null;
+        const ready = region[product.codigo];
+        if (!ready) return { fob: 0, cif: 0 };
+        const tier = weightTier === 'tier2' ? 'tier2' : 'tier1';
+        return { fob: ready.fob || 0, cif: (ready.cif && ready.cif[tier]) || 0 };
+    }
     const line = costsData[product.costLineKey];
     if (!line) return { fob: 0, cif: 0, rate: 0 };
     const hasOwnPrice = product.priceOverride != null && product.weightRaw > 0;
@@ -346,6 +426,9 @@ function planCartRepricing(items) {
             return;
         }
         const prices = computeItemPrices(product, item);
+        // Representative: without a region (or if the region couldn't be downloaded) the item stays
+        // as it is; the server recalculates it when the order is saved.
+        if (!prices) return;
         const newCif = item.uf ? prices.cif : item.cif;
         const changed = Math.abs(prices.fob - item.fob) >= 0.005 || Math.abs(newCif - item.cif) >= 0.005;
         changes.push({
@@ -378,6 +461,12 @@ function applyCartRepricing(plan) {
 // 'none' = nothing changed; 'table' = the representative was told and the prices were updated.
 async function reviewCartPrices(reason) {
     if (!cart.length) return 'none';
+    try {
+        await loadCartRegionPrices();
+    } catch (e) {
+        // Items whose region didn't load stay as they are; the server recalculates them on saving.
+        showToast(`Não foi possível conferir os preços do pedido com a tabela atual: ${e.message}`);
+    }
     const plan = planCartRepricing(cart);
     if (!plan.hasDifferences) {
         applyCartRepricing(plan); // only aligns sub-cent differences and weights

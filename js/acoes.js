@@ -22,6 +22,7 @@ const CLICK_ACTIONS = {
 
     // Pedido em montagem
     addToCart: el => addToCart(el.dataset.codigo),
+    retryRegionPrices: () => updateResults(),
     removeFromCart: el => removeFromCart(Number(el.dataset.index)),
     showStatusHistory: el => showStatusHistory(el.dataset.id || undefined),
     closeStatusHistory: () => closeStatusHistory(),

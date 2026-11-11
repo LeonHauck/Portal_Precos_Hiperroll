@@ -20,6 +20,15 @@
     const AVAL_MAX = RULES.invoiceModes.find(m => m.key === 'aval').maxDiscount;
     const GARANTIA_MAX = RULES.invoiceModes.find(m => m.key === 'garantia').maxDiscount;
     const pct = value => `${formatMarginPercent(value)}%`;
+    // Picks a region on screen and waits for its prices (a representative downloads them ready
+    // from the server, one region at a time; gestor/admin calculate them on screen).
+    const chooseRegion = async (uf, praca) => {
+        $('stateSelect').value = uf;
+        onStateChange();
+        if (praca) $('cityType').value = praca;
+        await loadRegionPrices(uf, $('cityType').value);
+        updateResults();
+    };
 
     window.addEventListener('load', async () => {
         try {
@@ -39,8 +48,15 @@
                 //    real portal (CIF = FOB + freight with the same markup); only the inputs are made up.
                 // 2. hideValues() blurs every value and turns percentages (margins, discounts) into 0,
                 //    because a margin would reveal the real "margem do produto" of the table.
-                const useFictitiousPrices = () => {
+                const useFictitiousPrices = async () => {
                     if (!isReadme || !pricingCatalog) return;
+                    // Representative: the prices come ready from the (simulated) server, so the
+                    // invented numbers go into the server's table.
+                    if (usesServerPrices()) {
+                        window.__mockFictitiousPrices();
+                        await refreshPricingCatalog();
+                        return;
+                    }
                     pricingCatalog.costLines.forEach((line, i) => {
                         const price = 9.5 + ((i * 7) % 11) * 0.85;   // invented R$/kg
                         Object.assign(line, { price100: +price.toFixed(2), custoBase: +(price * 0.62).toFixed(2), despCom: +(price * 0.08).toFixed(2), despAdm: +(price * 0.06).toFixed(2) });
@@ -74,20 +90,18 @@
 
                 if (mode === 'readme_login') { window.scrollTo(0, 0); return; }
                 await waitFor(() => window.__mockCalls.some(c => c.action === 'orders.list') && productsData.length > 0);
-                useFictitiousPrices();
+                await useFictitiousPrices();
 
                 if (['readme_precos', 'layout_full', 'layout_mobile'].includes(mode)) {
                     $('productSearch').value = 'sacola';
-                    $('stateSelect').value = 'MG';
-                    updateResults();
+                    await chooseRegion('MG');
                     if (mode === 'layout_mobile') { addToCart(productsData[0].codigo); updateOrderTable(); }
                     hideValues($('resultsContainer'));
                     window.scrollTo(0, 0);
                     return;
                 }
                 if (mode === 'readme_pedido' || mode === 'layout_dark') {
-                    $('stateSelect').value = 'MG';
-                    updateResults();
+                    await chooseRegion('MG');
                     // Three fixed products from the table (the representative's screen has no margins).
                     [0, 40, 45].forEach(i => addToCart(productsData[i].codigo));
                     cart[0].qty = 40; cart[1].qty = 25; cart[2].qty = 12;
@@ -106,7 +120,7 @@
                     document.documentElement.setAttribute('data-theme', 'dark');
                     switchTab('tab-pricing');
                     await waitFor(() => pricingCatalog.source === 'server');
-                    useFictitiousPrices();
+                    await useFictitiousPrices();
                     renderPricingTab();
                     hideValues($('pricingTabContent'));
                     window.scrollTo(0, 0);
@@ -150,7 +164,7 @@
             if (mode === 'shotorder') {
                 const noAnim2 = document.createElement('style'); noAnim2.textContent = '*,*::before,*::after{animation:none!important;transition:none!important}'; document.head.appendChild(noAnim2);
                 await waitFor(() => window.__mockCalls.some(c => c.action === 'orders.list') && productsData.length > 0);
-                $('stateSelect').value = 'MG';
+                await chooseRegion('MG');
                 const shotMargins = [...new Set(productsData.map(p => p.tableMargin))].sort((a, b) => a - b);
                 addToCart(productsData.find(p => p.tableMargin === shotMargins[0]).codigo);
                 addToCart(productsData.find(p => p.tableMargin === shotMargins[1]).codigo);
@@ -228,6 +242,8 @@
                 check('rep: número Hiper Roll vindo do servidor', $('orderNumberHiperroll').value === '00001', $('orderNumberHiperroll').value);
                 check('rep: representante preenchido com o nome', $('representativeName').value === 'João Rep', $('representativeName').value);
                 check('rep: login liberado', !$('loginScreen').classList.contains('active'));
+                const pricesCalls = () => window.__mockCalls.filter(c => c.action === 'pricing.prices');
+                check('rep: nenhum preço baixado ao abrir (só ao escolher a região)', pricesCalls().length === 0, pricesCalls().length);
                 check('rep: sem botão de aprovações/usuários', !visible($('supervisorBtn')) && !visible($('usersBtn')));
 
                 // ----- CSP: código escrito dentro do HTML não roda -----
@@ -271,17 +287,40 @@
                 check('rep: aba de preços oculta', !visible($('btn-tab-pricing')));
                 check('rep: UFs carregadas (inclui TO)', $('stateSelect').options.length > 20 && Boolean(freightData.TO), $('stateSelect').options.length);
 
+                // ----- preços prontos do servidor: custos e fretes nunca chegam ao navegador -----
+                check('rep: tabela chega sem custos (grupos de preço)', pricingCatalog.pricesOnRequest === true && pricingCatalog.costLines.length === 0 && Object.keys(costsData).length === 0);
+                check('rep: regiões chegam sem o valor do frete', pricingCatalog.freight.length > 20 && pricingCatalog.freight.every(f => Object.keys(f).sort().join() === 'label,pracaType,uf'), JSON.stringify(pricingCatalog.freight[0]));
+                check('rep: produtos chegam sem grupo de preço nem preço próprio', pricingCatalog.products.every(p => !('costLineKey' in p) && !('priceOverride' in p) && !('tableMargin' in p)));
+
                 // ----- Juazeiro: praça própria da BA; o Interior da BA usa a linha "Interior" -----
                 $('stateSelect').value = 'BA';
                 onStateChange();
                 const pracasBA = [...$('cityType').options].map(o => [o.value, o.textContent]);
                 check('rep: BA oferece Juazeiro como praça própria', pracasBA.some(([v, t]) => v === 'Especial' && t === 'Juazeiro') && pracasBA.some(([v]) => v === 'Interior'), JSON.stringify(pracasBA));
-                check('rep: BA Interior usa o frete do Interior, não o de Juazeiro', freightData.BA.Interior.label === 'Interior' && freightData.BA.Interior.tier1 !== freightData.BA.Especial.tier1);
+                await loadRegionPrices('BA', 'Interior');
+                await loadRegionPrices('BA', 'Especial');
+                const cifIn = praca => computeItemPrices(productsData[0], { uf: 'BA', cityType: praca, weightTier: 'tier1' }).cif;
+                check('rep: BA Interior usa o frete do Interior, não o de Juazeiro', freightData.BA.Interior.label === 'Interior' && cifIn('Interior') > 0 && cifIn('Interior') !== cifIn('Especial'), `${cifIn('Interior')} / ${cifIn('Especial')}`);
                 check('rep: outros estados sem praça especial', !freightData.MG.Especial && !freightData.SP.Especial);
+                const regionAnswer = await apiRequest('pricing.prices', { query: { uf: 'BA', praca: 'Interior' } });
+                const sampleAnswer = regionAnswer.prices[productsData[0].codigo];
+                check('rep: resposta da região traz só preços prontos (FOB e CIF das duas faixas)', Object.keys(sampleAnswer).sort().join() === 'cif,fob' && Object.keys(sampleAnswer.cif).sort().join() === 'tier1,tier2' && regionAnswer.version === pricingCatalog.version, JSON.stringify(sampleAnswer));
+                check('rep: região inexistente é recusada', (await apiRequest('pricing.prices', { query: { uf: 'MG', praca: 'Fluvial' } }).then(() => null, e => e))?.status === 404);
 
+                clearRegionPrices(); // as if the portal had just opened: MG not downloaded yet
+                const callsBeforeMG = pricesCalls().length;
                 $('stateSelect').value = 'MG';
                 onStateChange();
+                check('rep: enquanto os preços chegam, a lista avisa que está carregando', $('resultsContainer').textContent.includes('Carregando os preços de MG'), $('resultsContainer').textContent.trim());
+                await waitFor(() => $('resultsContainer').querySelectorAll('button[data-codigo]').length > 100);
                 check('rep: resultados com preço CIF', $('resultsContainer').querySelectorAll('button[data-codigo]').length > 100);
+                check('rep: uma única consulta ao servidor para a região', pricesCalls().length === callsBeforeMG + 1 && pricesCalls().pop().uf === 'MG');
+                updateResults();
+                $('productSearch').value = 'sacola';
+                updateResults();
+                $('productSearch').value = '';
+                updateResults();
+                check('rep: buscar e redesenhar não consulta de novo (preços guardados)', pricesCalls().length === callsBeforeMG + 1);
                 addToCart(productsData[0].codigo);
                 check('rep: item guarda a região; faixa pelo peso (1 unidade fica abaixo de 200 kg)', cart[0].uf === 'MG' && cart[0].cityType === 'Capital' && cart[0].weightTier === 'tier1', JSON.stringify([cart[0].uf, cart[0].cityType, cart[0].weightTier]));
                 check('rep: CIF > FOB com frete', cart[0].cif > cart[0].fob, `${cart[0].fob.toFixed(2)} / ${cart[0].cif.toFixed(2)}`);
@@ -344,8 +383,7 @@
                 const CNPJ_AUTO = '11222333000181'; // well-known valid test CNPJ, not a real customer
                 const ordersOf = () => Object.values(window.__mockOrders).filter(o => o.clientCnpj === CNPJ_AUTO).sort((a, b) => a.hiperrollNumber.localeCompare(b.hiperrollNumber));
                 const lastAlert = () => window.__alerts[window.__alerts.length - 1] || '';
-                $('stateSelect').value = 'MG';
-                onStateChange();
+                await chooseRegion('MG');
                 addToCart(productsData[2].codigo);
                 updateCartQty(0, Math.ceil(200 / cart[0].weight));
                 $('clientName').value = 'Mercado Automático';
@@ -433,6 +471,8 @@
                 await correctReturnedOrder(thirdAuto.id);
                 check('rep: tabela mudou, mas o pedido devolvido não abre revisão de preços', !visible($('repriceModal')) && cart.length === 1 && cart[0].priceLocked === true);
                 check('rep: item do pedido devolvido mantém o preço', Math.abs(cart[0].cif - lockedCif) < 1e-9 && Math.abs(cart[0].negotiatedPrice - lockedNegotiated) < 1e-9 && $('orderTableContainer').textContent.includes('preço mantido'));
+                // The table changed: the region's prices are downloaded again (the locked item doesn't need them).
+                await chooseRegion('MG');
                 addToCart(productsData[3].codigo);
                 check('rep: item novo na correção usa a tabela atual', cart[1].priceLocked !== true && Math.abs(cart[1].cif - computeItemPrices(productsData[3], cart[1]).cif) < 1e-9);
                 showSubmitOrderModal();
@@ -884,8 +924,7 @@
                 await waitFor(() => window.__mockCalls.some(c => c.action === 'orders.list') && $('orderNumberHiperroll').value);
                 check('repcat: preços vêm do servidor', pricingCatalog.source === 'server' && pricingCatalog.version === 1);
                 check('repcat: aba de preços oculta', !visible($('btn-tab-pricing')));
-                $('stateSelect').value = 'MG';
-                updateResults();
+                await chooseRegion('MG');
                 addToCart(productsData[0].codigo);
                 $('clientName').value = 'Cliente Teste';
                 await saveDraftCurrentOrder();
@@ -905,6 +944,7 @@
                 await submitOrder();
                 check('repcat: reenvio aceito', window.__alerts.some(a => a.includes('enviado com sucesso')), window.__alerts[window.__alerts.length - 1]);
 
+                await chooseRegion('MG');
                 addToCart(productsData[1].codigo);
                 await saveDraftCurrentOrder();
                 const savedDraftId = activeDraftId;
@@ -924,17 +964,19 @@
                 // ----- atualização automática -----
                 check('repcat: vigia de preços ligado', pricingWatchTimer !== null);
                 check('repcat: sem mudança, não baixa a tabela', (await checkPricingVersion()) === false);
-                const getsBefore = window.__mockCalls.filter(c => c.action === 'pricing.get').length;
-                window.__mockBumpVersion();
-                $('stateSelect').value = 'MG';
-                updateResults();
+                await chooseRegion('MG');
                 const cifShownBefore = $('resultsContainer').querySelector('.price-cif').textContent;
+                const getsBefore = window.__mockCalls.filter(c => c.action === 'pricing.get').length;
+                const regionCallsBefore = window.__mockCalls.filter(c => c.action === 'pricing.prices').length;
+                window.__mockBumpVersion();
                 const watchPromise = checkPricingVersion();
                 await waitFor(() => visible($('repriceModal')));
                 check('repcat: mudança detectada sozinha abre a revisão', visible($('repriceModal')));
                 resolveRepriceModal('table');
                 check('repcat: vigia atualizou', (await watchPromise) === true && pricingCatalog.version === 4, pricingCatalog.version);
                 check('repcat: baixou a tabela uma vez', window.__mockCalls.filter(c => c.action === 'pricing.get').length === getsBefore + 1);
+                await waitFor(() => $('resultsContainer').querySelector('.price-cif'));
+                check('repcat: tabela nova baixa de novo os preços da região', window.__mockCalls.filter(c => c.action === 'pricing.prices').length === regionCallsBefore + 1);
                 check('repcat: busca mostra o preço novo', $('resultsContainer').querySelector('.price-cif').textContent !== cifShownBefore, `${cifShownBefore} → ${$('resultsContainer').querySelector('.price-cif').textContent}`);
             }
 

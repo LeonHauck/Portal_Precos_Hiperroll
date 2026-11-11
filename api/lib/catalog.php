@@ -172,25 +172,75 @@ function find_product(string $codigo): ?array
     return $stmt->fetch() ?: null;
 }
 
-// Representatives only receive active products, and without their margins; gestor/admin also
-// see inactive ones to reactivate them.
+// Gestor/admin receive the whole table (they edit it and see margins), inactive products included.
+// A representative receives no cost, freight value or margin: only the active products (code,
+// description, weight...) and the list of regions. The prices come ready from pricing.prices,
+// one region at a time (region_prices below), so the browser never has what they're made of.
 function get_catalog(array $user): array
 {
-    $where = can_view_pricing_admin($user) ? '' : ' WHERE active = 1';
-    $products = array_map('product_to_client', db()->query('SELECT * FROM products' . $where . ' ORDER BY sort_order, codigo')->fetchAll());
-    if (!can_see_margins($user)) {
-        $products = array_map(function (array $product): array {
-            unset($product['tableMargin']);
-            return $product;
-        }, $products);
-    }
-    return [
+    $base = [
         'imported' => catalog_is_imported(),
         'version' => pricing_version(),
         'canEdit' => can_edit_pricing($user),
-        'costLines' => array_map('cost_line_to_client', all_cost_lines()),
-        'freight' => array_map('freight_to_client', all_freight_rates()),
+    ];
+    if (can_view_pricing_admin($user)) {
+        return $base + [
+            'pricesOnRequest' => false,
+            'costLines' => array_map('cost_line_to_client', all_cost_lines()),
+            'freight' => array_map('freight_to_client', all_freight_rates()),
+            'products' => array_map('product_to_client', db()->query('SELECT * FROM products ORDER BY sort_order, codigo')->fetchAll()),
+        ];
+    }
+    $products = array_map(fn (array $row): array => [
+        'codigo' => $row['codigo'],
+        'descricao' => $row['descricao'],
+        'categoria' => $row['categoria'],
+        'subcat' => $row['subcat'],
+        'weight' => (float) $row['weight'],
+        'ncm' => $row['ncm'],
+        'active' => true,
+    ], db()->query('SELECT * FROM products WHERE active = 1 ORDER BY sort_order, codigo')->fetchAll());
+    return $base + [
+        'pricesOnRequest' => true,
+        'costLines' => [],
+        'freight' => array_map(fn (array $row): array => [
+            'uf' => $row['uf'],
+            'pracaType' => $row['praca_type'],
+            'label' => $row['label'],
+        ], all_freight_rates()),
         'products' => $products,
+    ];
+}
+
+// Ready prices of every active product in one region, for both weight bands (the band follows the
+// order's total weight, which changes while the order is built). Same calculation the server
+// uses when it saves an order (server_item_prices), so the screen and the order always agree.
+// cif = null when the product can't have a CIF (its price group has no costs).
+function region_prices(string $uf, string $pracaType): array
+{
+    if (!catalog_is_imported()) {
+        fail(409, 'A tabela de preços ainda não foi liberada pelo gestor.');
+    }
+    $rate = find_freight_rate($uf, $pracaType);
+    if (!$rate) {
+        fail(404, 'Região não encontrada na tabela de frete.');
+    }
+    $rows = db()->query('
+        SELECT p.codigo, p.weight, p.price_override, c.custo_base, c.desp_com, c.desp_adm, c.price100
+        FROM products p JOIN cost_lines c ON c.key = p.cost_line_key
+        WHERE p.active = 1
+    ')->fetchAll();
+    $prices = [];
+    foreach ($rows as $row) {
+        $tier1 = server_item_prices($row, $rate, 'tier1');
+        $tier2 = server_item_prices($row, $rate, 'tier2');
+        $prices[$row['codigo']] = ['fob' => $tier1['fob'], 'cif' => ['tier1' => $tier1['cif'], 'tier2' => $tier2['cif']]];
+    }
+    return [
+        'uf' => $rate['uf'],
+        'pracaType' => $rate['praca_type'],
+        'version' => pricing_version(),
+        'prices' => (object) $prices,   // {} (not []) when empty, so the browser always gets an object
     ];
 }
 

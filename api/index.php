@@ -234,6 +234,17 @@ switch ($action) {
         json_response(200, ['success' => true, 'catalog' => get_catalog($actor)]);
         break;
 
+    // Ready prices of one region (UF + praça). The representative's browser only gets prices this
+    // way: costs and freight values never leave the server for them (see get_catalog).
+    case 'pricing.prices':
+        expect_method('GET');
+        require_login();
+        json_response(200, ['success' => true] + region_prices(
+            is_string($_GET['uf'] ?? null) ? $_GET['uf'] : '',
+            is_string($_GET['praca'] ?? null) ? $_GET['praca'] : ''
+        ));
+        break;
+
     // Polled by every open portal about once a minute: tiny answer, no session "activity".
     case 'pricing.version':
         expect_method('GET');
